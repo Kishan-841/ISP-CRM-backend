@@ -1,0 +1,2058 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                                 String                @id @default(uuid())
+  email                              String                @unique
+  password                           String
+  name                               String
+  role                               Role                  @default(ISR)
+  isActive                           Boolean               @default(true)
+  createdAt                          DateTime              @default(now())
+  updatedAt                          DateTime              @updatedAt
+  callLogs                           CallLog[]
+  collectionCalls                    CollectionCallLog[]   @relation("CollectionCallsMade")
+  assignedCampaigns                  CampaignAssignment[]
+  createdCampaignData                CampaignData[]        @relation("CampaignDataCreatedBy")
+  deliveryRequestsAreaHeadApproved   DeliveryRequest[]     @relation("DeliveryRequestAreaHeadApproved")
+  deliveryRequestsAreaHeadRejected   DeliveryRequest[]     @relation("DeliveryRequestAreaHeadRejected")
+  deliveryRequestsAssignedToStore    DeliveryRequest[]     @relation("DeliveryRequestAssignedToStore")
+  deliveryRequestsPushedToNoc        DeliveryRequest[]     @relation("DeliveryRequestPushedToNoc")
+  deliveryRequestsCreated            DeliveryRequest[]     @relation("DeliveryRequestCreatedBy")
+  deliveryRequestsSuperAdminApproved DeliveryRequest[]     @relation("DeliveryRequestSuperAdminApproved")
+  deliveryRequestsSuperAdminRejected DeliveryRequest[]     @relation("DeliveryRequestSuperAdminRejected")
+  deliveryRequestLogsPerformed       DeliveryRequestLog[]  @relation("DeliveryRequestLogPerformedBy")
+  uploadLinksCreated                 DocumentUploadLink[]  @relation("UploadLinksCreated")
+  emailsSent                         EmailLog[]            @relation("EmailsSent")
+  inventoryCreated                   InventoryItem[]       @relation("InventoryCreatedBy")
+  invoicesCreated                    Invoice[]             @relation("InvoicesCreatedBy")
+  paymentsCreated                    InvoicePayment[]      @relation("PaymentsCreatedBy")
+  advancePaymentsCreated             AdvancePayment[]      @relation("AdvancePaymentsCreatedBy")
+  creditNotesCreated                 CreditNote[]          @relation("CreditNotesCreatedBy")
+  ledgerEntriesCreated               LedgerEntry[]         @relation("LedgerEntriesCreatedBy")
+  accountsVerifiedLeads              Lead[]                @relation("AccountsVerifiedBy")
+  gstVerifiedLeads                   Lead[]                @relation("GstVerifiedBy")
+  actualPlanCreatedLeads             Lead[]                @relation("ActualPlanCreatedBy")
+  assignedLeads                      Lead[]                @relation("AssignedTo")
+  createdLeads                       Lead[]                @relation("CreatedBy")
+  customerAcceptanceLeads            Lead[]                @relation("CustomerAcceptanceBy")
+  customerAccountsCreated            Lead[]                @relation("CustomerCreatedBy")
+  deliveryAssignedLeads              Lead[]                @relation("DeliveryAssignedTo")
+  demoPlanAssignedLeads              Lead[]                @relation("DemoPlanAssignedBy")
+  feasibilityAssignedLeads           Lead[]                @relation("FeasibilityAssignedTo")
+  nocConfiguredLeads                 Lead[]                @relation("NocConfiguredBy")
+  nocPushedToDeliveryLeads           Lead[]                @relation("NocPushedToDelivery")
+  opsApprovedLeads                   Lead[]                @relation("OpsApprovedBy")
+  superAdmin2ApprovedLeads           Lead[]                @relation("SuperAdmin2ApprovedBy")
+  pushedToInstallation               Lead[]                @relation("PushedToInstallation")
+  speedTestUploadedLeads             Lead[]                @relation("SpeedTestUploadedBy")
+  notifications                      Notification[]
+  receiptBatchesVerified             ReceiptBatchLog[]     @relation("ReceiptBatchVerifiedBy")
+  storeProductsCreated               StoreProduct[]        @relation("StoreProductCreatedBy")
+  storePOsAdminApproved              StorePurchaseOrder[]  @relation("StorePOAdminApproved")
+  storePurchaseOrders                StorePurchaseOrder[]  @relation("StorePOCreatedBy")
+  storePOsReceiptVerified            StorePurchaseOrder[]  @relation("StorePOReceiptVerified")
+  storePOsRejected                   StorePurchaseOrder[]  @relation("StorePORejected")
+  storePOsSuperAdminApproved         StorePurchaseOrder[]  @relation("StorePOSuperAdminApproved")
+  storeSerialAdded                   StoreSerialItem[]     @relation("StoreSerialAddedBy")
+  storeStockAdded                    StoreStock[]          @relation("StoreStockAddedBy")
+  storeIntakesPerformed              StoreStockIntakeLog[] @relation("StoreIntakePerformedBy")
+  vendorsCreated                     Vendor[]              @relation("VendorsCreated")
+  vendorsAdminApproved               Vendor[]              @relation("VendorAdminApproved")
+  vendorsAccountsApproved            Vendor[]              @relation("VendorAccountsApproved")
+  // SAM relations
+  samAssignmentsAsExecutive          SAMAssignment[]       @relation("SAMExecutiveAssignments")
+  samAssignmentsCreated              SAMAssignment[]       @relation("SAMAssignedBy")
+  samAssignmentHistoryAsExecutive    SAMAssignmentHistory[] @relation("SAMAssignmentHistoryExecutive")
+  samAssignmentHistoryAsAssigner     SAMAssignmentHistory[] @relation("SAMAssignmentHistoryAssignedBy")
+  samMeetings                        SAMMeeting[]          @relation("SAMExecutiveMeetings")
+  samVisits                          SAMVisit[]            @relation("SAMExecutiveVisits")
+  samCommunications                  CustomerCommunication[] @relation("SAMCommunications")
+  // Plan upgrade history
+  planUpgradesCreated                PlanUpgradeHistory[]  @relation("PlanUpgradesCreated")
+  // Vendor docs verified
+  vendorDocsVerifiedLeads            Lead[]                @relation("VendorDocsVerifiedBy")
+  // Vendor PO relations
+  vendorPOsCreated                   VendorPurchaseOrder[] @relation("VendorPOsCreated")
+  vendorPOsApproved                  VendorPurchaseOrder[] @relation("VendorPOsApproved")
+  vendorPOsRejected                  VendorPurchaseOrder[] @relation("VendorPOsRejected")
+  // Status change audit trail
+  statusChangeLogs                   StatusChangeLog[]     @relation("StatusChangeLogs")
+  // Complaint relations
+  complaintsCreated                  Complaint[]           @relation("ComplaintsCreatedBy")
+  complaintAssignments               ComplaintAssignment[] @relation("ComplaintAssignments")
+  complaintAssignedBy                ComplaintAssignment[] @relation("ComplaintAssignedBy")
+  complaintAttachmentsUploaded         ComplaintAttachment[] @relation("ComplaintAttachmentUploadedBy")
+  complaintsClosed                     Complaint[]           @relation("ComplaintsClosedBy")
+  // BDM-ISR binding
+  campaignDataAssignedByBdm          CampaignData[]        @relation("CampaignDataAssignedByBdm")
+  campaignDataLastEditedBy           CampaignData[]        @relation("CampaignDataLastEditedBy")
+  // Campaigns created
+  campaignsCreated                   Campaign[]            @relation("CampaignCreatedBy")
+  // Service Order relations
+  serviceOrdersCreated               ServiceOrder[]        @relation("ServiceOrdersCreated")
+  serviceOrdersApproved              ServiceOrder[]        @relation("ServiceOrdersApproved")
+  serviceOrdersProcessed             ServiceOrder[]        @relation("ServiceOrdersProcessed")
+  serviceOrderDocsReviewed           ServiceOrder[]        @relation("ServiceOrderDocsReviewed")
+  serviceOrderNocProcessed           ServiceOrder[]        @relation("ServiceOrderNocProcessed")
+  serviceOrderActivationSet          ServiceOrder[]        @relation("ServiceOrderActivationSet")
+  // Team leader hierarchy
+  teamLeaderId                       String?
+  teamLeader                         User?                 @relation("TeamMemberRelation", fields: [teamLeaderId], references: [id], onDelete: SetNull)
+  teamMembers                        User[]                @relation("TeamMemberRelation")
+
+  @@index([teamLeaderId])
+}
+
+model Campaign {
+  id           String               @id @default(uuid())
+  name         String
+  description  String?
+  isActive     Boolean              @default(true)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  code         String               @unique
+  dataSource   String?
+  status       CampaignStatus       @default(ACTIVE)
+  type         CampaignType         @default(ALL)
+  rejectedRecords Int               @default(0)
+  createdById  String?
+  createdBy    User?                @relation("CampaignCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  assignments  CampaignAssignment[]
+  campaignData CampaignData[]
+
+  @@index([type])
+  @@index([createdById])
+  @@index([type, createdById])
+}
+
+model CampaignAssignment {
+  id         String   @id @default(uuid())
+  userId     String
+  campaignId String
+  assignedAt DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, campaignId])
+}
+
+model CampaignData {
+  id              String     @id @default(uuid())
+  campaignId      String
+  name            String
+  phone           String
+  email           String?
+  address         String?
+  status          DataStatus @default(NEW)
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  assignedToId    String?
+  callLaterAt     DateTime?
+  city            String?
+  company         String
+  firstName       String?
+  industry        String?
+  lastName        String?
+  title           String
+  companySize     String?
+  createdById     String?
+  isSelfGenerated Boolean    @default(false)
+  linkedinUrl     String?
+  source          String?
+  state           String?
+  whatsapp        String?
+  callLogs        CallLog[]
+  campaign        Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdBy       User?      @relation("CampaignDataCreatedBy", fields: [createdById], references: [id])
+  assignedByBdmId String?
+  assignedByBdm   User?      @relation("CampaignDataAssignedByBdm", fields: [assignedByBdmId], references: [id])
+  lastEditedById  String?
+  lastEditedBy    User?      @relation("CampaignDataLastEditedBy", fields: [lastEditedById], references: [id])
+  lastEditedAt    DateTime?
+  lead            Lead?
+
+  @@index([campaignId, status])
+  @@index([campaignId, assignedToId])
+  @@index([assignedToId, status])
+  @@index([campaignId, status, callLaterAt])
+  @@index([assignedByBdmId])
+}
+
+model CallLog {
+  id             String       @id @default(uuid())
+  campaignDataId String
+  userId         String
+  startTime      DateTime
+  endTime        DateTime?
+  duration       Int?
+  status         DataStatus
+  notes          String?
+  createdAt      DateTime     @default(now())
+  campaignData   CampaignData @relation(fields: [campaignDataId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([campaignDataId])
+  @@index([userId])
+  @@index([campaignDataId, userId])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+model Product {
+  id               String                @id @default(uuid())
+  title            String
+  status           ProductStatus         @default(ACTIVE)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  parentId         String?
+  code             String?
+  isSerialized     Boolean               @default(false)
+  leadProducts     LeadProduct[]
+  parent           Product?              @relation("ProductHierarchy", fields: [parentId], references: [id])
+  children         Product[]             @relation("ProductHierarchy")
+  storeSerialItems StoreSerialItem[]
+  storeStock       StoreStock[]
+  intakeLogs       StoreStockIntakeLog[]
+}
+
+model Lead {
+  id                        String               @id @default(uuid())
+  leadNumber                String?              @unique
+  campaignDataId            String               @unique
+  requirements              String?
+  status                    LeadStatus           @default(NEW)
+  createdById               String
+  assignedToId              String?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  sharedVia                 String?
+  type                      LeadType             @default(QUALIFIED)
+  linkedinUrl               String?
+  callLaterAt               DateTime?
+  dropReason                String?
+  location                  String?
+  feasibilityAssignedToId   String?
+  feasibilityNotes          String?
+  feasibilityReviewedAt     DateTime?
+  docsRejectedReason        String?
+  docsVerifiedAt            DateTime?
+  docsVerifiedById          String?
+  documents                 Json?
+  meetingDate               DateTime?
+  meetingNotes              String?
+  meetingOutcome            String?
+  meetingPlace              String?
+  latitude                  Float?
+  longitude                 Float?
+  bandwidthRequirement      String?
+  fullAddress               String?
+  meetingCount              Int                  @default(1)
+  accountsNotes             String?
+  accountsRejectedReason    String?
+  accountsVerifiedAt        DateTime?
+  accountsVerifiedById      String?
+  accountsStatus            AccountsStatus?
+  // GST Verification fields
+  customerGstNo             String?           // GST Number entered by accounts team
+  customerLegalName         String?           // Legal name as per GST certificate
+  gstVerifiedAt             DateTime?         // When GST was verified
+  gstVerifiedById           String?           // Who verified it
+
+  // Additional Customer Details (Accounts Review)
+  panCardNo                 String?           // PAN Card number
+  tanNumber                 String?           // TAN number
+  installationAddress       String?           // Installation address (100 char limit)
+  installationPincode       String?           // Installation pincode
+  poNumber                  String?           // Purchase Order number
+  poExpiryDate              DateTime?         // PO expiry date
+  billDate                  DateTime?         // Bill date
+  technicalInchargeMobile   String?           // Technical incharge mobile
+  technicalInchargeEmail    String?           // Technical incharge email
+  accountsInchargeMobile    String?           // Accounts incharge mobile
+  accountsInchargeEmail     String?           // Accounts incharge email
+  bdmName                   String?           // BDM name
+  serviceManager            String?           // Service manager name
+  advanceAmount             Float?
+  arcAmount                 Float?
+  originalArcAmount         Float?
+  otcAmount                 Float?
+  otcInvoiceId              String?              @unique
+  otcInvoiceGeneratedAt     DateTime?
+  paymentTerms              String?
+  interestLevel             InterestLevel?
+  installationNotes         String?
+  pushedToInstallationAt    DateTime?
+  pushedToInstallationById  String?
+  verificationAttempts      Int                  @default(0)
+  opsApprovalStatus         OpsApprovalStatus?
+  opsApprovedAt             DateTime?
+  opsApprovedById           String?
+  opsRejectedReason         String?
+  superAdmin2ApprovalStatus SuperAdmin2ApprovalStatus?
+  superAdmin2ApprovedAt     DateTime?
+  superAdmin2ApprovedById   String?
+  superAdmin2RejectedReason String?
+  loginCompletedAt          DateTime?
+  loginCompletedById        String?
+  docUploadMethod           String?
+  tentativePrice            Float?
+  deliveryAssignedAt        DateTime?
+  deliveryAssignedToId      String?
+  deliveryNotes             String?
+  deliveryProducts          Json?
+  deliveryStatus            String?
+  deliveryCompletedViewedAt DateTime?
+  fromAddress               String?
+  fromLatitude              Float?
+  fromLongitude             Float?
+  numberOfIPs               Int?
+  customerCreatedAt         DateTime?
+  customerCreatedById       String?
+  customerIpAssigned        String?
+  customerPassword          String?
+  customerSwitchPort        String?
+  customerUserId            String?              @unique
+  customerUsername          String?              @unique
+  nocConfiguredAt           DateTime?
+  nocConfiguredById         String?
+  billingAddress            String?
+  billingPincode            String?
+  expectedDeliveryDate      DateTime?
+  circuitId                 String?              @unique
+  customerIpAddresses       Json?
+  nocPushedToDeliveryAt     DateTime?
+  nocPushedToDeliveryById   String?
+  customerAcceptanceAt      DateTime?
+  customerAcceptanceById    String?
+  customerAcceptanceNotes   String?
+  customerAcceptanceStatus  String?
+  customerAcceptanceScreenshot String?
+  installationCompletedAt   DateTime?
+  installationStartedAt     DateTime?
+  latencyTestScreenshot     String?
+  speedTestScreenshot       String?
+  speedTestUploadedAt       DateTime?
+  speedTestUploadedById     String?
+  demoPlanAssignedAt        DateTime?
+  demoPlanAssignedById      String?
+  demoPlanBandwidth         Int?
+  demoPlanDataLimit         Int?
+  demoPlanIsActive          Boolean              @default(false)
+  demoPlanName              String?
+  demoPlanNotes             String?
+  demoPlanUploadBandwidth   Int?
+  demoPlanValidityDays      Int?
+  actualPlanBandwidth       Int?
+  actualPlanCreatedAt       DateTime?
+  actualPlanCreatedById     String?
+  actualPlanDataLimit       Int?
+  actualPlanEndDate         DateTime?
+  actualPlanIsActive        Boolean              @default(false)
+  actualPlanName            String?
+  actualPlanNotes           String?
+  actualPlanPrice           Float?
+  actualPlanStartDate       DateTime?
+  actualPlanUploadBandwidth Int?
+  actualPlanValidityDays    Int?
+  actualPlanBillingType     String?
+  actualPlanBillingCycle    BillingCycle?         @default(MONTHLY)
+  demoPlanBillingType       String?
+  demoPlanEndDate           DateTime?
+  demoPlanStartDate         DateTime?
+  demoPlanPrice             Float?
+  deliveryRequests          DeliveryRequest[]    @relation("DeliveryRequestLead")
+  uploadLinks               DocumentUploadLink[]
+  invoices                  Invoice[]            @relation("LeadInvoices")
+  ledgerEntries             LedgerEntry[]        @relation("CustomerLedger")
+  advancePayments           AdvancePayment[]     @relation("AdvancePayments")
+  accountsVerifiedBy        User?                @relation("AccountsVerifiedBy", fields: [accountsVerifiedById], references: [id], onDelete: SetNull)
+  gstVerifiedBy             User?                @relation("GstVerifiedBy", fields: [gstVerifiedById], references: [id], onDelete: SetNull)
+  actualPlanCreatedBy       User?                @relation("ActualPlanCreatedBy", fields: [actualPlanCreatedById], references: [id], onDelete: SetNull)
+  assignedTo                User?                @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  campaignData              CampaignData         @relation(fields: [campaignDataId], references: [id], onDelete: Cascade)
+  createdBy                 User                 @relation("CreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  customerAcceptanceBy      User?                @relation("CustomerAcceptanceBy", fields: [customerAcceptanceById], references: [id], onDelete: SetNull)
+  customerCreatedBy         User?                @relation("CustomerCreatedBy", fields: [customerCreatedById], references: [id], onDelete: SetNull)
+  deliveryAssignedTo        User?                @relation("DeliveryAssignedTo", fields: [deliveryAssignedToId], references: [id], onDelete: SetNull)
+  demoPlanAssignedBy        User?                @relation("DemoPlanAssignedBy", fields: [demoPlanAssignedById], references: [id], onDelete: SetNull)
+  feasibilityAssignedTo     User?                @relation("FeasibilityAssignedTo", fields: [feasibilityAssignedToId], references: [id], onDelete: SetNull)
+  nocConfiguredBy           User?                @relation("NocConfiguredBy", fields: [nocConfiguredById], references: [id], onDelete: SetNull)
+  nocPushedToDeliveryBy     User?                @relation("NocPushedToDelivery", fields: [nocPushedToDeliveryById], references: [id], onDelete: SetNull)
+  opsApprovedBy             User?                @relation("OpsApprovedBy", fields: [opsApprovedById], references: [id], onDelete: SetNull)
+  superAdmin2ApprovedBy     User?                @relation("SuperAdmin2ApprovedBy", fields: [superAdmin2ApprovedById], references: [id], onDelete: SetNull)
+  pushedToInstallationBy    User?                @relation("PushedToInstallation", fields: [pushedToInstallationById], references: [id], onDelete: SetNull)
+  speedTestUploadedBy       User?                @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
+  products                  LeadProduct[]
+  moms                      MOM[]
+
+  // SAM Customer Data Fields
+  serviceType               ServiceType?         // ILL, P2P, MPLS, etc.
+  ipDetails                 Json?                // IP allocation details { wan: "", lan: [], gateway: "", subnet: "" }
+  cpeDetails                Json?                // CPE details { make: "", model: "", serialNo: "", macAddress: "" }
+  contractStartDate         DateTime?            // Contract start date
+  contractDurationMonths    Int?                 // Contract duration in months
+  contractEndDate           DateTime?            // Contract end date (calculated)
+  escalationMatrix          Json?                // Array of escalation contacts [{ level: 1, name: "", phone: "", email: "", designation: "" }]
+
+  // SAM relations
+  samAssignment             SAMAssignment?       @relation("SAMCustomer")
+  samAssignmentHistory      SAMAssignmentHistory[] @relation("SAMAssignmentHistoryCustomer")
+  samMeetings               SAMMeeting[]         @relation("SAMCustomerMeetings")
+  samVisits                 SAMVisit[]           @relation("SAMCustomerVisits")
+  customerCommunications    CustomerCommunication[] @relation("CustomerCommunications")
+  // Plan upgrade history
+  planUpgrades              PlanUpgradeHistory[] @relation("PlanUpgrades")
+  // Complaints
+  complaints                Complaint[]
+  customerComplaintRequests CustomerComplaintRequest[]
+  // Customer Enquiries (referrals)
+  customerEnquiries         CustomerEnquiry[]           @relation("CustomerEnquiries")
+  enquiryCreatedFrom        CustomerEnquiry?            @relation("EnquiryCreatedFrom")
+  // Service Orders
+  serviceOrders             ServiceOrder[]              @relation("ServiceOrderCustomer")
+
+  // Vendor linkage
+  vendorId                      String?
+  vendorDocsVerifiedAt          DateTime?
+  vendorDocsVerifiedById        String?
+  vendorDocsRejectedReason      String?
+  vendorCommissionPercentage    Float?            // Commission % set during feasibility review
+  vendor                    Vendor?              @relation("LeadVendor", fields: [vendorId], references: [id])
+  vendorDocsVerifiedBy      User?                @relation("VendorDocsVerifiedBy", fields: [vendorDocsVerifiedById], references: [id], onDelete: SetNull)
+  vendorsCreatedFor         Vendor[]             @relation("VendorCreatedForLead")
+  vendorPurchaseOrders      VendorPurchaseOrder[] @relation("LeadVendorPOs")
+
+  @@index([vendorId])
+  @@index([assignedToId, status])
+  @@index([assignedToId, status, createdAt])
+  @@index([assignedToId, status, callLaterAt])
+  @@index([assignedToId, meetingDate])
+  @@index([assignedToId, deliveryStatus])
+  @@index([feasibilityAssignedToId, status])
+  @@index([opsApprovalStatus, status])
+  @@index([status, opsApprovalStatus, docsVerifiedAt])
+  @@index([docsVerifiedAt, docsRejectedReason, accountsVerifiedAt])
+  @@index([pushedToInstallationAt, deliveryStatus])
+  @@index([pushedToInstallationAt, deliveryAssignedToId])
+  @@index([customerUserId])
+  @@index([customerUsername, actualPlanIsActive])
+  @@index([customerUsername])
+  @@index([status, createdAt])
+  @@index([type, status])
+  @@index([actualPlanIsActive, customerCreatedAt])
+  @@index([customerGstNo])
+  @@index([superAdmin2ApprovalStatus, status])
+}
+
+model LeadProduct {
+  id        String   @id @default(uuid())
+  leadId    String
+  productId String
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, productId])
+}
+
+model MOM {
+  id           String    @id @default(uuid())
+  leadId       String
+  meetingDate  DateTime
+  attendees    String?
+  agenda       String?
+  discussion   String
+  nextSteps    String?
+  followUpDate DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  metadata  Json?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}
+
+model EmailLog {
+  id            String      @id @default(uuid())
+  referenceId   String?
+  referenceType String?
+  to            String
+  cc            String[]
+  subject       String
+  htmlSnapshot  String
+  emailData     Json?
+  attachments   Json?
+  sentByUserId  String
+  sentAt        DateTime    @default(now())
+  status        EmailStatus @default(PENDING)
+  errorMessage  String?
+  resendId      String?
+  sentBy        User        @relation("EmailsSent", fields: [sentByUserId], references: [id])
+
+  @@index([referenceId])
+  @@index([sentByUserId])
+  @@index([sentAt])
+}
+
+model Vendor {
+  id                    String               @id @default(uuid())
+  companyName           String
+  gstNumber             String?
+  gstDocument           String?
+  contactPerson         String?
+  email                 String?
+  phone                 String?
+  panNumber             String?
+  panDocument           String?
+  address               String?
+  city                  String?
+  state                 String?
+  isActive              Boolean              @default(true)
+  // Bank details
+  accountNumber         String?
+  ifscCode              String?
+  accountName           String?
+  bankName              String?
+  branchName            String?
+  cancelledCheque       String?
+  // Category & Approval
+  category              VendorCategory?
+  approvalStatus        VendorApprovalStatus @default(PENDING_ADMIN)
+  adminApprovedById     String?
+  adminApprovedAt       DateTime?
+  adminRejectionReason  String?
+  accountsApprovedById  String?
+  accountsApprovedAt    DateTime?
+  accountsRejectionReason String?
+  rejectedAt            DateTime?
+  // Vendor type & docs
+  vendorType            VendorType?
+  individualName        String?
+  docsStatus            VendorDocsStatus     @default(PENDING)
+  estimatedCapex        Float?
+  estimatedOpex         Float?
+  createdForLeadId      String?
+  // Base fields
+  createdById           String
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  // Relations
+  storePurchaseOrders   StorePurchaseOrder[] @relation("StorePOVendor")
+  vendorPurchaseOrders  VendorPurchaseOrder[] @relation("VendorPOs")
+  createdBy             User                 @relation("VendorsCreated", fields: [createdById], references: [id])
+  adminApprovedBy       User?                @relation("VendorAdminApproved", fields: [adminApprovedById], references: [id])
+  accountsApprovedBy    User?                @relation("VendorAccountsApproved", fields: [accountsApprovedById], references: [id])
+  createdForLead        Lead?                @relation("VendorCreatedForLead", fields: [createdForLeadId], references: [id])
+  leads                 Lead[]               @relation("LeadVendor")
+
+  @@index([companyName])
+  @@index([createdById])
+  @@index([isActive])
+  @@index([approvalStatus])
+  @@index([category])
+  @@index([createdForLeadId])
+  @@index([docsStatus])
+}
+
+model DocumentUploadLink {
+  id                String    @id @default(uuid())
+  leadId            String
+  token             String    @unique
+  expiresAt         DateTime
+  isActive          Boolean   @default(true)
+  createdById       String
+  createdAt         DateTime  @default(now())
+  lastAccessedAt    DateTime?
+  accessCount       Int       @default(0)
+  customerNote      String?
+  requiredDocuments String[]  // Array of document type IDs that customer should upload
+  createdBy         User      @relation("UploadLinksCreated", fields: [createdById], references: [id])
+  lead              Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model InventoryItem {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  quantity    Int      @default(0)
+  unit        String   @default("pcs")
+  minStock    Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  category    String?
+  createdBy   User     @relation("InventoryCreatedBy", fields: [createdById], references: [id])
+
+  @@index([name])
+  @@index([category])
+  @@index([isActive])
+}
+
+model StoreStock {
+  id            String   @id @default(uuid())
+  productId     String
+  storeId       String
+  quantity      Int      @default(0)
+  purchasePrice Float?
+  addedById     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  addedBy       User     @relation("StoreStockAddedBy", fields: [addedById], references: [id])
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, storeId])
+  @@index([storeId])
+  @@index([productId])
+}
+
+model StoreSerialItem {
+  id            String                @id @default(uuid())
+  productId     String
+  storeId       String
+  serialNumber  String                @unique
+  purchasePrice Float?
+  status        StoreSerialItemStatus @default(IN_STORE)
+  addedById     String
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  addedBy       User                  @relation("StoreSerialAddedBy", fields: [addedById], references: [id])
+  product       Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([productId])
+  @@index([serialNumber])
+  @@index([status])
+}
+
+model StoreStockIntakeLog {
+  id            String          @id @default(uuid())
+  productId     String
+  storeId       String
+  type          StoreIntakeType
+  quantity      Int
+  referenceNote String?
+  serialNumbers String[]
+  purchasePrice Float?
+  performedById String
+  createdAt     DateTime        @default(now())
+  performedBy   User            @relation("StoreIntakePerformedBy", fields: [performedById], references: [id])
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([productId])
+  @@index([createdAt])
+}
+
+model StoreProduct {
+  id                   String                   @id @default(uuid())
+  category             StoreProductType
+  modelNumber          String                   @unique
+  serialNumber         String?                  @unique
+  brandName            String
+  price                Float?
+  description          String?
+  unit                 String                   @default("pcs")
+  isActive             Boolean                  @default(true)
+  createdById          String
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  deliveryRequestItems DeliveryRequestItem[]    @relation("DeliveryRequestItemProduct")
+  createdBy            User                     @relation("StoreProductCreatedBy", fields: [createdById], references: [id])
+  poItems              StorePurchaseOrderItem[]
+
+  @@index([category])
+  @@index([modelNumber])
+  @@index([serialNumber])
+  @@index([brandName])
+  @@index([isActive])
+}
+
+model StorePurchaseOrder {
+  id                     String                   @id @default(uuid())
+  poNumber               String                   @unique
+  totalAmount            Float?
+  notes                  String?
+  status                 POStatus                 @default(PENDING_SUPER_ADMIN)
+  createdById            String
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  vendorId               String?
+  brandType              String?
+  remark                 String?
+  warehouse              String?
+  rejectedReason         String?
+  adminApprovedAt        DateTime?
+  adminApprovedById      String?
+  rejectedAt             DateTime?
+  rejectedById           String?
+  superAdminApprovedAt   DateTime?
+  superAdminApprovedById String?
+  receiptRemark          String?
+  receiptStatus          String?
+  receiptVerifiedAt      DateTime?
+  receiptVerifiedById    String?
+  sentToVendorAt         DateTime?
+  signedPOUploadedAt     DateTime?
+  signedPOUrl            String?
+  giirnNumber            String?                  @unique
+  verificationStatement  String?
+  receiptBatches         ReceiptBatchLog[]
+  adminApprovedBy        User?                    @relation("StorePOAdminApproved", fields: [adminApprovedById], references: [id])
+  createdBy              User                     @relation("StorePOCreatedBy", fields: [createdById], references: [id])
+  receiptVerifiedBy      User?                    @relation("StorePOReceiptVerified", fields: [receiptVerifiedById], references: [id])
+  rejectedBy             User?                    @relation("StorePORejected", fields: [rejectedById], references: [id])
+  superAdminApprovedBy   User?                    @relation("StorePOSuperAdminApproved", fields: [superAdminApprovedById], references: [id])
+  vendor                 Vendor?                  @relation("StorePOVendor", fields: [vendorId], references: [id])
+  items                  StorePurchaseOrderItem[]
+
+  @@index([poNumber])
+  @@index([giirnNumber])
+  @@index([vendorId])
+  @@index([warehouse])
+  @@index([createdById])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model StorePurchaseOrderItem {
+  id                   String                @id @default(uuid())
+  poId                 String
+  quantity             Int
+  unitPrice            Float?
+  serialNumbers        String[]
+  status               POItemStatus          @default(PURCHASED)
+  addedToStoreAt       DateTime?
+  createdAt            DateTime              @default(now())
+  productId            String
+  receiptRemark        String?
+  receiptStatus        String?
+  receivedQuantity     Int?
+  deliveryRequestItems DeliveryRequestItem[] @relation("DeliveryRequestItemAssignedFrom")
+  purchaseOrder        StorePurchaseOrder    @relation(fields: [poId], references: [id], onDelete: Cascade)
+  product              StoreProduct          @relation(fields: [productId], references: [id])
+
+  @@index([poId])
+  @@index([productId])
+  @@index([status])
+}
+
+model ReceiptBatchLog {
+  id            String             @id @default(uuid())
+  poId          String
+  batchNumber   Int
+  totalReceived Int
+  totalDamaged  Int                @default(0)
+  resultStatus  String
+  remark        String?
+  verifiedById  String
+  verifiedAt    DateTime           @default(now())
+  itemsSnapshot Json
+  purchaseOrder StorePurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  verifiedBy    User               @relation("ReceiptBatchVerifiedBy", fields: [verifiedById], references: [id])
+
+  @@index([poId])
+  @@index([verifiedAt])
+}
+
+model DeliveryRequest {
+  id                        String                @id @default(uuid())
+  requestNumber             String                @unique
+  leadId                    String
+  requestedById             String
+  requestedAt               DateTime              @default(now())
+  latitude                  Float?
+  longitude                 Float?
+  deliveryAddress           String?
+  notes                     String?
+  urgency                   String?
+  status                    DeliveryRequestStatus @default(PENDING_APPROVAL)
+  superAdminApprovedById    String?
+  superAdminApprovedAt      DateTime?
+  superAdminRejectedById    String?
+  superAdminRejectedAt      DateTime?
+  superAdminRejectionReason String?
+  areaHeadApprovedById      String?
+  areaHeadApprovedAt        DateTime?
+  areaHeadRejectedById      String?
+  areaHeadRejectedAt        DateTime?
+  areaHeadRejectionReason   String?
+  assignedToStoreManagerId  String?
+  assignedAt                DateTime?
+  dispatchedAt              DateTime?
+  completedAt               DateTime?
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  pushedToNocAt             DateTime?
+  pushedToNocById           String?
+  areaHeadApprovedBy        User?                 @relation("DeliveryRequestAreaHeadApproved", fields: [areaHeadApprovedById], references: [id])
+  areaHeadRejectedBy        User?                 @relation("DeliveryRequestAreaHeadRejected", fields: [areaHeadRejectedById], references: [id])
+  assignedToStoreManager    User?                 @relation("DeliveryRequestAssignedToStore", fields: [assignedToStoreManagerId], references: [id])
+  lead                      Lead                  @relation("DeliveryRequestLead", fields: [leadId], references: [id], onDelete: Restrict)
+  pushedToNocBy             User?                 @relation("DeliveryRequestPushedToNoc", fields: [pushedToNocById], references: [id])
+  requestedBy               User                  @relation("DeliveryRequestCreatedBy", fields: [requestedById], references: [id])
+  superAdminApprovedBy      User?                 @relation("DeliveryRequestSuperAdminApproved", fields: [superAdminApprovedById], references: [id])
+  superAdminRejectedBy      User?                 @relation("DeliveryRequestSuperAdminRejected", fields: [superAdminRejectedById], references: [id])
+  items                     DeliveryRequestItem[]
+  logs                      DeliveryRequestLog[]
+
+  @@index([leadId])
+  @@index([requestedById])
+  @@index([status])
+  @@index([createdAt])
+  @@index([pushedToNocAt, leadId])
+}
+
+model DeliveryRequestItem {
+  id                    String                  @id @default(uuid())
+  deliveryRequestId     String
+  productId             String
+  quantity              Int
+  assignedQuantity      Int?
+  assignedSerialNumbers String[]
+  assignedFromPOItemId  String?
+  isAssigned            Boolean                 @default(false)
+  assignedAt            DateTime?
+  usedQuantity          Int?
+  isUsed                Boolean                 @default(false)
+  createdAt             DateTime                @default(now())
+  assignedFromPOItem    StorePurchaseOrderItem? @relation("DeliveryRequestItemAssignedFrom", fields: [assignedFromPOItemId], references: [id])
+  deliveryRequest       DeliveryRequest         @relation(fields: [deliveryRequestId], references: [id], onDelete: Cascade)
+  product               StoreProduct            @relation("DeliveryRequestItemProduct", fields: [productId], references: [id])
+
+  @@index([deliveryRequestId])
+  @@index([productId])
+}
+
+model DeliveryRequestLog {
+  id                String          @id @default(uuid())
+  deliveryRequestId String
+  action            String
+  performedById     String
+  details           Json?
+  createdAt         DateTime        @default(now())
+  deliveryRequest   DeliveryRequest @relation(fields: [deliveryRequestId], references: [id], onDelete: Cascade)
+  performedBy       User            @relation("DeliveryRequestLogPerformedBy", fields: [performedById], references: [id])
+
+  @@index([deliveryRequestId])
+  @@index([createdAt])
+}
+
+model Invoice {
+  id                   String        @id @default(uuid())
+  invoiceNumber        String        @unique
+  leadId               String
+  invoiceDate          DateTime      @default(now())
+  dueDate              DateTime
+  billingPeriodStart   DateTime
+  billingPeriodEnd     DateTime
+  companyName          String
+  customerUsername     String?
+  billingAddress       String?
+  installationAddress  String?
+  buyerGstNo           String?
+  contactPhone         String?
+  contactEmail         String?
+  poNumber             String?
+  planName             String
+  planDescription      String?
+  hsnSacCode           String        @default("998422")
+  baseAmount           Float
+  discountAmount       Float         @default(0)
+  taxableAmount        Float
+  sgstRate             Float         @default(9)
+  cgstRate             Float         @default(9)
+  sgstAmount           Float
+  cgstAmount           Float
+  totalGstAmount       Float
+  grandTotal           Float
+  acknowledgementNo    String?
+  acknowledgementDate  DateTime?
+  irnNumber            String?
+  status               InvoiceStatus @default(GENERATED)
+  paidAt               DateTime?
+  paidAmount           Float?
+  paymentReference     String?
+  notes                String?
+  createdById          String
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  paymentDiscount      Float?
+  paymentMode          String?
+  paymentRemark        String?
+  provisionalReceiptNo String?
+  tdsAmount            Float?
+  transactionDate      DateTime?
+  // Total amount paid across all payments
+  totalPaidAmount      Float         @default(0)
+  // Total credit notes issued against this invoice
+  totalCreditAmount    Float         @default(0)
+  // Remaining balance to be paid (calculated: grandTotal - totalCreditAmount - totalPaidAmount)
+  remainingAmount      Float?
+  createdBy            User          @relation("InvoicesCreatedBy", fields: [createdById], references: [id])
+  lead                 Lead          @relation("LeadInvoices", fields: [leadId], references: [id], onDelete: Restrict)
+  payments             InvoicePayment[] @relation("InvoicePayments")
+  creditNotes          CreditNote[]  @relation("InvoiceCreditNotes")
+  adjustedCreditNotes  CreditNote[]  @relation("CreditNoteAdjustments")
+  collectionCalls      CollectionCallLog[] @relation("InvoiceCollectionCalls")
+
+  @@index([leadId])
+  @@index([invoiceNumber])
+  @@index([status])
+  @@index([invoiceDate])
+  @@index([dueDate])
+  @@index([status, dueDate])
+}
+
+// Track individual payments for an invoice (supports partial payments)
+model InvoicePayment {
+  id                   String    @id @default(uuid())
+  invoiceId            String
+  receiptNumber        String    @unique
+  paymentDate          DateTime  @default(now())
+  amount               Float
+  paymentMode          String    // CHEQUE, NEFT, ONLINE, TDS
+  bankAccount          String?   // Bank account or payment gateway used
+  provisionalReceiptNo String?
+  tdsAmount            Float     @default(0)
+  transactionDate      DateTime?
+  remark               String?
+  createdById          String
+  createdAt            DateTime  @default(now())
+
+  invoice              Invoice   @relation("InvoicePayments", fields: [invoiceId], references: [id])
+  createdBy            User      @relation("PaymentsCreatedBy", fields: [createdById], references: [id])
+
+  @@index([invoiceId])
+  @@index([receiptNumber])
+  @@index([paymentDate])
+}
+
+// Advance Payment - payment received before invoice generation
+model AdvancePayment {
+  id                   String    @id @default(uuid())
+  receiptNumber        String    @unique
+  leadId               String
+  amount               Float
+  paymentMode          String    // CHEQUE, NEFT, ONLINE, CASH
+  bankAccount          String?
+  provisionalReceiptNo String?
+  transactionDate      DateTime?
+  remark               String?
+  createdById          String
+  createdAt            DateTime  @default(now())
+
+  lead                 Lead      @relation("AdvancePayments", fields: [leadId], references: [id])
+  createdBy            User      @relation("AdvancePaymentsCreatedBy", fields: [createdById], references: [id])
+
+  @@index([leadId])
+  @@index([receiptNumber])
+}
+
+// Credit Note - reduces the legal demand on an invoice
+model CreditNote {
+  id                   String              @id @default(uuid())
+  creditNoteNumber     String              @unique
+  invoiceId            String
+  creditNoteDate       DateTime            @default(now())
+
+  // Amounts (must mirror invoice tax structure)
+  baseAmount           Float               // Base credit amount
+  sgstRate             Float               @default(9)
+  cgstRate             Float               @default(9)
+  sgstAmount           Float               // SGST credit
+  cgstAmount           Float               // CGST credit
+  totalGstAmount       Float               // Total GST credit
+  totalAmount          Float               // Total credit (base + GST)
+
+  // Reason and status
+  reason               CreditNoteReason
+  status               CreditNoteStatus    @default(ISSUED)
+  remarks              String?
+
+  // If adjusted against another invoice
+  adjustedAgainstInvoiceId String?
+  adjustedAt           DateTime?
+
+  // If refunded
+  refundedAt           DateTime?
+  refundReference      String?
+  refundMode           String?             // CHEQUE, NEFT, etc.
+
+  // Audit
+  createdById          String
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  // Relations
+  invoice              Invoice             @relation("InvoiceCreditNotes", fields: [invoiceId], references: [id])
+  createdBy            User                @relation("CreditNotesCreatedBy", fields: [createdById], references: [id])
+  adjustedAgainstInvoice Invoice?          @relation("CreditNoteAdjustments", fields: [adjustedAgainstInvoiceId], references: [id])
+
+  @@index([invoiceId])
+  @@index([creditNoteNumber])
+  @@index([status])
+  @@index([creditNoteDate])
+}
+
+// Customer Ledger - Single source of truth for financial transactions
+// This is APPEND-ONLY. No updates. No deletes.
+model LedgerEntry {
+  id                String            @id @default(uuid())
+  customerId        String            // leadId - one ledger per customer
+
+  // Entry details
+  entryDate         DateTime          // Accounting date (when transaction occurred)
+  entryType         LedgerEntryType   // INVOICE, PAYMENT, CREDIT_NOTE, REFUND
+
+  // Reference to source document
+  referenceType     String            // "INVOICE" | "PAYMENT" | "CREDIT_NOTE"
+  referenceId       String            // UUID of source record
+  referenceNumber   String            // Human-readable: Invoice No / Receipt No / CN No
+
+  // Debit/Credit amounts (CRITICAL - follow accounting rules)
+  // Debit = Customer owes more | Credit = Customer owes less
+  debitAmount       Float             @default(0)
+  creditAmount      Float             @default(0)
+
+  // Running balance computed on read, stored for performance
+  // runningBalance = previous.runningBalance + debitAmount - creditAmount
+  runningBalance    Float             @default(0)
+
+  // Human-readable description for customer statements
+  description       String
+
+  // Audit trail
+  createdById       String?
+  createdAt         DateTime          @default(now())
+
+  // Relations
+  customer          Lead              @relation("CustomerLedger", fields: [customerId], references: [id])
+  createdBy         User?             @relation("LedgerEntriesCreatedBy", fields: [createdById], references: [id])
+
+  // Indexes for fast retrieval
+  @@index([customerId])
+  @@index([entryDate])
+  @@index([entryType])
+  @@index([referenceId])
+  @@index([createdAt])
+  // Composite index for ledger queries (customer + date order)
+  @@index([customerId, entryDate, createdAt])
+}
+
+enum LedgerEntryType {
+  INVOICE       // Invoice generated - DEBIT
+  PAYMENT       // Payment received - CREDIT
+  CREDIT_NOTE   // Credit note issued - CREDIT
+  REFUND        // Refund processed - DEBIT
+}
+
+// SAM Assignment - One executive per customer (one-to-one)
+model SAMAssignment {
+  id              String   @id @default(uuid())
+  customerId      String   @unique  // One executive per customer
+  samExecutiveId  String
+  assignedById    String
+  assignedAt      DateTime @default(now())
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  customer        Lead     @relation("SAMCustomer", fields: [customerId], references: [id])
+  samExecutive    User     @relation("SAMExecutiveAssignments", fields: [samExecutiveId], references: [id])
+  assignedBy      User     @relation("SAMAssignedBy", fields: [assignedById], references: [id])
+
+  @@index([customerId])
+  @@index([samExecutiveId])
+}
+
+// SAM Assignment History - Audit trail for customer assignment changes
+model SAMAssignmentHistory {
+  id              String   @id @default(uuid())
+  customerId      String
+  samExecutiveId  String
+  assignedById    String
+  assignedAt      DateTime
+  removedAt       DateTime?
+  reason          String?
+  originalArc     Float?
+  finalArc        Float?
+  createdAt       DateTime @default(now())
+
+  customer        Lead     @relation("SAMAssignmentHistoryCustomer", fields: [customerId], references: [id])
+  samExecutive    User     @relation("SAMAssignmentHistoryExecutive", fields: [samExecutiveId], references: [id])
+  assignedBy      User     @relation("SAMAssignmentHistoryAssignedBy", fields: [assignedById], references: [id])
+
+  @@index([customerId])
+  @@index([samExecutiveId])
+}
+
+// SAM Meeting - MOM (Minutes of Meeting) recorded by SAM executives
+model SAMMeeting {
+  id                  String           @id @default(uuid())
+  customerId          String
+  samExecutiveId      String
+  title               String
+  meetingDate         DateTime
+  meetingType         SAMMeetingType   @default(ONLINE)
+  location            String?
+  meetingLink         String?
+  status              SAMMeetingStatus @default(COMPLETED)
+
+  // Participants
+  clientParticipants  String?
+  gazonParticipants   String?
+
+  // MOM (Minutes of Meeting) fields
+  attendees           String?
+  discussion          String?
+  actionItems         Json?
+  followUpDate        DateTime?
+
+  momEmailSentAt      DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  customer            Lead             @relation("SAMCustomerMeetings", fields: [customerId], references: [id])
+  samExecutive        User             @relation("SAMExecutiveMeetings", fields: [samExecutiveId], references: [id])
+
+  @@index([customerId])
+  @@index([samExecutiveId])
+  @@index([meetingDate])
+  @@index([status])
+  @@index([momEmailSentAt])
+}
+
+enum SAMMeetingType {
+  VIRTUAL
+  IN_PERSON
+  PHONE_CALL
+  ONLINE
+  PHYSICAL
+}
+
+enum SAMMeetingStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum ServiceType {
+  ILL           // Internet Leased Line
+  P2P           // Point to Point
+  MPLS          // MPLS VPN
+  BROADBAND     // Broadband
+  FIBER         // Fiber to Home/Office
+  WIRELESS      // Wireless
+}
+
+enum SAMVisitType {
+  REGULAR       // Regular scheduled visit
+  ESCALATION    // Visit due to escalation/complaint
+  SALES         // Sales/upsell visit
+  INSTALLATION  // Installation support visit
+  MAINTENANCE   // Maintenance visit
+}
+
+enum SAMVisitStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+// SAM Visit - Customer visits by SAM executives
+model SAMVisit {
+  id              String           @id @default(uuid())
+  customerId      String
+  samExecutiveId  String
+  visitDate       DateTime
+  visitType       SAMVisitType     @default(REGULAR)
+  status          SAMVisitStatus   @default(SCHEDULED)
+  purpose         String?          // Purpose of visit
+  location        String?          // Visit location (if different from customer address)
+
+  // Visit Outcome (filled after visit)
+  outcome         String?          // What was achieved
+  customerFeedback String?         // Customer feedback/concerns
+  issuesIdentified String?         // Any issues identified
+  actionRequired  String?          // Follow-up actions needed
+
+  // Next Visit Planning
+  nextVisitDate   DateTime?        // Planned next visit
+  nextVisitPurpose String?         // Purpose of next visit
+
+  // Attachments and notes
+  attachments     Json?            // Array of attachment URLs
+  notes           String?          // Additional notes
+
+  // Timestamps
+  completedAt     DateTime?        // When visit was marked complete
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  customer        Lead             @relation("SAMCustomerVisits", fields: [customerId], references: [id])
+  samExecutive    User             @relation("SAMExecutiveVisits", fields: [samExecutiveId], references: [id])
+
+  @@index([customerId])
+  @@index([samExecutiveId])
+  @@index([visitDate])
+  @@index([status])
+}
+
+// SAM Customer Communication - Tracks all customer communications
+model CustomerCommunication {
+  id                String                  @id @default(uuid())
+  customerId        String
+  samExecutiveId    String?                 // Null if auto-generated
+  communicationType CommunicationType
+
+  // Communication details
+  subject           String
+  content           String                  // Message content
+  channel           CommunicationChannel    @default(EMAIL)
+
+  // For outage notifications
+  ticketNumber      String?                 // Reference ticket number
+  isOutageRelated   Boolean                 @default(false)
+  etaRestoration    DateTime?               // Estimated time of restoration
+
+  // Email details (if sent via email)
+  sentTo            String[]                // Email addresses
+  ccTo              String[]                @default([])
+
+  // Status
+  status            CommunicationStatus     @default(DRAFT)
+  sentAt            DateTime?
+
+  // Attachments
+  attachments       Json?                   // Array of attachment URLs
+
+  // Metadata
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  // Relations
+  customer          Lead                    @relation("CustomerCommunications", fields: [customerId], references: [id])
+  samExecutive      User?                   @relation("SAMCommunications", fields: [samExecutiveId], references: [id])
+
+  @@index([customerId])
+  @@index([samExecutiveId])
+  @@index([communicationType])
+  @@index([createdAt])
+  @@index([isOutageRelated])
+}
+
+enum CommunicationType {
+  INITIAL_OUTAGE          // First notification about outage
+  INTERIM_UPDATE          // Update during outage
+  ETR_UPDATE              // ETA restoration update
+  RESTORATION_CONFIRMED   // Service restored notification
+  GENERAL_UPDATE          // General communication
+  SERVICE_NOTIFICATION    // Service changes notification
+  BILLING_REMINDER        // Payment reminder
+  CONTRACT_RENEWAL        // Contract renewal notification
+}
+
+enum CommunicationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  PHONE_CALL
+}
+
+enum CommunicationStatus {
+  DRAFT
+  SENT
+  FAILED
+  SCHEDULED
+}
+
+enum Role {
+  SUPER_ADMIN
+  SUPER_ADMIN_2
+  ISR
+  BDM
+  BDM_TEAM_LEADER
+  FEASIBILITY_TEAM
+  DOCS_TEAM
+  SAM
+  SAM_HEAD
+  SAM_EXECUTIVE
+  ACCOUNTS_TEAM
+  INSTALLATION_TEAM
+  OPS_TEAM
+  DELIVERY_TEAM
+  STORE_MANAGER
+  ADMIN
+  AREA_HEAD
+  NOC
+  SUPPORT_TEAM
+  TEST_USER
+}
+
+enum OpsApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SuperAdmin2ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AccountsStatus {
+  ACCOUNTS_PENDING
+  ACCOUNTS_APPROVED
+  ACCOUNTS_REJECTED
+}
+
+enum DataStatus {
+  NEW
+  CALLED
+  INTERESTED
+  NOT_INTERESTED
+  NOT_REACHABLE
+  WRONG_NUMBER
+  CALL_LATER
+  RINGING_NOT_PICKED
+  DND
+  DISCONNECTED
+}
+
+enum CampaignStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  AUTOASSIGN
+}
+
+enum CampaignType {
+  OUTBOUND
+  INBOUND
+  ALL
+  CAMPAIGN
+  SELF
+  SOCIAL_MEDIA
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  FOLLOW_UP
+  DROPPED
+  FEASIBLE
+  NOT_FEASIBLE
+  MEETING_SCHEDULED
+}
+
+enum LeadType {
+  QUALIFIED
+  PUSHED_TO_PRESALES
+}
+
+enum InterestLevel {
+  COLD
+  WARM
+  HOT
+}
+
+enum NotificationType {
+  DATA_ASSIGNED
+  LEAD_CONVERTED
+  FOLLOW_UP_REMINDER
+  FEASIBILITY_ASSIGNED
+  FEASIBILITY_RETURNED
+  FEASIBILITY_APPROVED
+  VENDOR_APPROVED
+  VENDOR_REJECTED
+  VENDOR_DOCS_REMINDER
+  COMPLAINT_CREATED
+  COMPLAINT_ASSIGNED
+  COMPLAINT_STATUS_CHANGED
+  COMPLAINT_RESOLVED
+  SAM_ASSIGNMENT
+  CUSTOMER_REFERRAL
+  SERVICE_ORDER
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+  PENDING
+}
+
+enum StoreSerialItemStatus {
+  IN_STORE
+}
+
+enum StoreIntakeType {
+  BULK
+  SERIAL
+}
+
+enum StoreProductType {
+  SWITCH
+  SFP
+  CLOSURE
+  RF
+  PATCH_CORD
+  FIBER
+}
+
+enum POStatus {
+  PENDING_SUPER_ADMIN
+  PENDING_ADMIN
+  APPROVED
+  REJECTED
+  PENDING_RECEIPT
+  RECEIVED
+  PARTIALLY_RECEIVED
+  RECEIPT_REJECTED
+  COMPLETED
+}
+
+enum POItemStatus {
+  PURCHASED
+  IN_STORE
+}
+
+enum DeliveryRequestStatus {
+  PENDING_APPROVAL
+  SUPER_ADMIN_APPROVED
+  AREA_HEAD_APPROVED
+  APPROVED
+  REJECTED
+  ASSIGNED
+  DISPATCHED
+  COMPLETED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  GENERATED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+}
+
+enum CreditNoteReason {
+  SERVICE_DOWNTIME
+  OVERPAYMENT
+  PRICE_ADJUSTMENT
+  CANCELLATION
+  ERROR_CORRECTION
+  PLAN_DOWNGRADE
+}
+
+enum CreditNoteStatus {
+  ISSUED      // Created but not yet adjusted/refunded
+  ADJUSTED    // Used against future invoice
+  REFUNDED    // Money returned to customer
+}
+
+// Document sequence counter for generating unique document numbers
+// Format: PREFIX/DD/MM/YY-XXXX (e.g., GLL/27/01/26-0001)
+// Counter never resets - global per document type
+model DocumentSequence {
+  id            String   @id @default(uuid())
+  documentType  String   @unique  // INVOICE, RECEIPT, CREDIT_NOTE
+  prefix        String             // GLL, RCP, CN
+  lastNumber    Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@index([documentType])
+}
+
+// Collection Call Log - tracks collection calls made by accounts team
+model CollectionCallLog {
+  id              String              @id @default(uuid())
+  invoiceId       String
+  leadId          String
+  userId          String
+  startTime       DateTime
+  endTime         DateTime?
+  duration        Int?                // Duration in seconds
+  outcome         CollectionCallOutcome
+  promiseDate     DateTime?           // For "PROMISE_TO_PAY" outcome
+  remark          String?
+  createdAt       DateTime            @default(now())
+
+  invoice         Invoice             @relation("InvoiceCollectionCalls", fields: [invoiceId], references: [id])
+  user            User                @relation("CollectionCallsMade", fields: [userId], references: [id])
+
+  @@index([invoiceId])
+  @@index([leadId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+enum CollectionCallOutcome {
+  RINGING_NOT_PICKED
+  PROMISE_TO_PAY
+  ALREADY_PAID
+  DISPUTE
+  WRONG_NUMBER
+  NOT_REACHABLE
+  CALL_BACK_LATER
+  PAYMENT_INITIATED
+  OTHER
+}
+
+// Plan Upgrade/Downgrade History - tracks all plan changes for billing and audit
+model PlanUpgradeHistory {
+  id                    String   @id @default(uuid())
+  leadId                String
+
+  // Action type (UPGRADE or DOWNGRADE)
+  actionType            String   @default("UPGRADE") // UPGRADE or DOWNGRADE
+
+  // Previous plan details (snapshot at time of change)
+  previousPlanName      String
+  previousBandwidth     Int
+  previousUploadBandwidth Int?
+  previousArc           Float
+  previousValidityDays  Int
+  previousBillingType   String
+  previousPlanStartDate DateTime
+  previousPlanEndDate   DateTime
+
+  // New plan details
+  newPlanName           String
+  newBandwidth          Int
+  newUploadBandwidth    Int?
+  newArc                Float     // New total ARC (old +/- change)
+  additionalArc         Float?    // Additional ARC added during upgrade
+  degradeArc            Float?    // ARC subtracted during downgrade
+
+  // Change timing
+  upgradeDate           DateTime    // Date change takes effect
+
+  // Pro-rated billing calculation
+  daysOnOldPlan         Int         // Days from plan start to change date
+  daysOnNewPlan         Int         // Days from change date to billing period end
+  oldPlanAmount         Float       // Pro-rated amount for old plan period
+  newPlanAmount         Float       // Pro-rated amount for new plan period
+  totalAmount           Float       // Combined amount for billing period
+  originalAmount        Float       // What it would have been without change
+  differenceAmount      Float       // Additional/credit amount due to change
+
+  // For downgrades - link to credit note
+  creditNoteId          String?     // Credit note created for downgrade
+
+  // Metadata
+  notes                 String?
+  createdById           String
+  createdAt             DateTime    @default(now())
+
+  // Relations
+  lead                  Lead        @relation("PlanUpgrades", fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy             User        @relation("PlanUpgradesCreated", fields: [createdById], references: [id])
+
+  @@index([leadId])
+  @@index([createdAt])
+  @@index([upgradeDate])
+  @@index([actionType])
+}
+
+model VendorPurchaseOrder {
+  id                    String           @id @default(uuid())
+  poNumber              String           @unique
+  poDate                DateTime         @default(now())
+  validityMonths        Int
+  vendorCategory        VendorCategory
+
+  // Linked entities
+  vendorId              String
+  leadId                String
+
+  // Denormalized lead details for display
+  customerName          String
+  popLocation           String?
+  installationLocation  String?
+
+  // Fiber-specific fields
+  distance              Float?
+  rate                  Float?
+
+  // Commission/Channel Partner specific fields
+  commissionPercentage  Float?
+  arcAmount             Float?
+  bandwidthSpeed        String?
+
+  // Third Party specific fields
+  paymentTerms          String?
+  lockInPeriod          Int?
+  noticePeriod          Int?
+
+  // Amount calculation
+  baseAmount            Float
+  gstApplicable         Boolean          @default(false)
+  gstPercentage         Float?
+  gstAmount             Float?
+  totalAmount           Float
+
+  termsAndConditions    String?
+
+  // Approval
+  status                VendorPOStatus   @default(PENDING_APPROVAL)
+  approvedById          String?
+  approvedAt            DateTime?
+  rejectedById          String?
+  rejectedAt            DateTime?
+  rejectionReason       String?
+
+  // Email tracking
+  emailSentAt           DateTime?
+  emailSentTo           String?
+
+  // Audit
+  createdById           String
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  // Relations
+  vendor                Vendor           @relation("VendorPOs", fields: [vendorId], references: [id])
+  lead                  Lead             @relation("LeadVendorPOs", fields: [leadId], references: [id])
+  createdBy             User             @relation("VendorPOsCreated", fields: [createdById], references: [id])
+  approvedBy            User?            @relation("VendorPOsApproved", fields: [approvedById], references: [id])
+  rejectedBy            User?            @relation("VendorPOsRejected", fields: [rejectedById], references: [id])
+
+  @@index([poNumber])
+  @@index([vendorId])
+  @@index([leadId])
+  @@index([status])
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+enum VendorPOStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum VendorApprovalStatus {
+  PENDING_ADMIN
+  PENDING_ACCOUNTS
+  APPROVED
+  REJECTED
+}
+
+enum VendorCategory {
+  FIBER
+  COMMISSION
+  CHANNEL_PARTNER
+  THIRD_PARTY
+}
+
+enum VendorType {
+  COMPANY
+  INDIVIDUAL
+}
+
+enum VendorDocsStatus {
+  PENDING
+  UPLOADED
+  VERIFIED
+  REJECTED
+}
+
+enum ComplaintStatus {
+  OPEN
+  CLOSED
+}
+
+enum ComplaintPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ComplaintCloseOptionType {
+  REASON_FOR_OUTAGE
+  RESOLUTION
+  RESOLUTION_TYPE
+}
+
+enum CustomerComplaintRequestStatus {
+  PENDING
+  OPEN
+  CLOSED
+}
+
+enum CustomerEnquiryStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  CONVERTED
+  CLOSED
+}
+
+// Status Change Audit Trail - tracks all status transitions across entities
+model StatusChangeLog {
+  id          String   @id @default(uuid())
+  entityType  String   // "LEAD", "INVOICE", "DELIVERY_REQUEST", "VENDOR"
+  entityId    String
+  field       String   // "status", "opsApprovalStatus", "feasibilityStatus"
+  oldValue    String?
+  newValue    String
+  changedById String?
+  changedAt   DateTime @default(now())
+  reason      String?
+
+  changedBy   User?    @relation("StatusChangeLogs", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([changedById])
+  @@index([changedAt])
+
+  @@map("status_change_logs")
+}
+
+model ComplaintCloseOption {
+  id        String                    @id @default(uuid())
+  type      ComplaintCloseOptionType
+  label     String
+  isActive  Boolean                   @default(true)
+  sortOrder Int                       @default(0)
+  createdAt DateTime                  @default(now())
+  updatedAt DateTime                  @updatedAt
+
+  @@unique([type, label])
+  @@index([type, isActive])
+}
+
+model ComplaintCategory {
+  id            String                 @id @default(uuid())
+  name          String                 @unique
+  description   String?
+  isActive      Boolean                @default(true)
+  subCategories ComplaintSubCategory[]
+  complaints    Complaint[]
+  customerComplaintRequests CustomerComplaintRequest[]
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+}
+
+model ComplaintSubCategory {
+  id              String              @id @default(uuid())
+  categoryId      String
+  category        ComplaintCategory   @relation(fields: [categoryId], references: [id])
+  name            String
+  description     String?
+  defaultTATHours Int                 @default(24)
+  isActive        Boolean             @default(true)
+  complaints      Complaint[]
+  customerComplaintRequests CustomerComplaintRequest[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@unique([categoryId, name])
+  @@index([categoryId, isActive])
+}
+
+model Complaint {
+  id              String               @id @default(uuid())
+  complaintNumber String               @unique
+  leadId          String
+  lead            Lead                 @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  categoryId      String?
+  category        ComplaintCategory?    @relation(fields: [categoryId], references: [id])
+  subCategoryId   String?
+  subCategory     ComplaintSubCategory? @relation(fields: [subCategoryId], references: [id])
+  status          ComplaintStatus      @default(OPEN)
+  priority        ComplaintPriority    @default(MEDIUM)
+  description     String
+  complaintDate   DateTime             @default(now())
+  tatHours        Int
+  tatDeadline     DateTime
+  notes           String?
+  resolutionNotes String?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  closedById           String?
+  closedBy             User?                @relation("ComplaintsClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+  reasonForOutage      String?
+  resolution           String?
+  resolutionType       String?
+  closeRemark          String?
+  serviceImpact        Boolean?
+  ispImpactFrom        DateTime?
+  ispImpactTo          DateTime?
+  customerImpactFrom   DateTime?
+  customerImpactTo     DateTime?
+  reopenCount     Int                  @default(0)
+  metadata        Json?
+  createdById     String
+  createdBy       User                 @relation("ComplaintsCreatedBy", fields: [createdById], references: [id])
+  assignments     ComplaintAssignment[]
+  attachments     ComplaintAttachment[]
+  customerComplaintRequests CustomerComplaintRequest[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([status, createdAt])
+  @@index([leadId, status])
+  @@index([createdById, status])
+  @@index([tatDeadline, status])
+  @@index([priority, status])
+}
+
+model ComplaintAssignment {
+  id           String    @id @default(uuid())
+  complaintId  String
+  complaint    Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation("ComplaintAssignments", fields: [userId], references: [id])
+  assignedById String
+  assignedBy   User      @relation("ComplaintAssignedBy", fields: [assignedById], references: [id])
+  isActive     Boolean   @default(true)
+  assignedAt   DateTime  @default(now())
+
+  @@index([userId, isActive])
+  @@index([complaintId, isActive])
+  @@unique([complaintId, userId])
+}
+
+model ComplaintAttachment {
+  id           String    @id @default(uuid())
+  complaintId  String
+  complaint    Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  fileName     String
+  fileUrl      String
+  fileType     String
+  fileSize     Int
+  uploadedById String
+  uploadedBy   User      @relation("ComplaintAttachmentUploadedBy", fields: [uploadedById], references: [id])
+  createdAt    DateTime  @default(now())
+
+  @@index([complaintId])
+}
+
+model CustomerComplaintRequest {
+  id              String                            @id @default(uuid())
+  requestNumber   String                            @unique
+  leadId          String
+  lead            Lead                              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  categoryId      String?
+  category        ComplaintCategory?                 @relation(fields: [categoryId], references: [id])
+  subCategoryId   String?
+  subCategory     ComplaintSubCategory?              @relation(fields: [subCategoryId], references: [id])
+  description     String
+  status          CustomerComplaintRequestStatus    @default(PENDING)
+  complaintId     String?
+  complaint       Complaint?                        @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+  attachments     CustomerComplaintRequestAttachment[]
+  createdAt       DateTime                          @default(now())
+  updatedAt       DateTime                          @updatedAt
+
+  @@index([leadId, status])
+  @@index([status, createdAt])
+  @@index([complaintId])
+}
+
+model CustomerComplaintRequestAttachment {
+  id          String                      @id @default(uuid())
+  requestId   String
+  request     CustomerComplaintRequest    @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fileName    String
+  fileUrl     String
+  fileType    String
+  fileSize    Int
+  createdAt   DateTime                    @default(now())
+
+  @@index([requestId])
+}
+
+model CustomerEnquiry {
+  id                String                @id @default(uuid())
+  enquiryNumber     String                @unique
+  referredByLeadId  String
+  referredByLead    Lead                  @relation("CustomerEnquiries", fields: [referredByLeadId], references: [id], onDelete: Cascade)
+  companyName       String
+  contactName       String
+  phone             String
+  email             String?
+  address           String?
+  city              String?
+  state             String?
+  requirements      String?
+  status            CustomerEnquiryStatus @default(SUBMITTED)
+  createdLeadId     String?               @unique
+  createdLead       Lead?                 @relation("EnquiryCreatedFrom", fields: [createdLeadId], references: [id], onDelete: SetNull)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@index([referredByLeadId, status])
+  @@index([status, createdAt])
+}
+
+enum ServiceOrderType {
+  UPGRADE
+  DOWNGRADE
+  RATE_REVISION
+  DISCONNECTION
+}
+
+enum ServiceOrderStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PENDING_DOCS_REVIEW
+  DOCS_REJECTED
+  PENDING_NOC
+  PENDING_SAM_ACTIVATION
+  PENDING_ACCOUNTS
+  COMPLETED
+  CANCELLED
+}
+
+model ServiceOrder {
+  id                    String               @id @default(uuid())
+  orderNumber           String               @unique
+  customerId            String
+  orderType             ServiceOrderType
+  status                ServiceOrderStatus   @default(PENDING_DOCS_REVIEW)
+  createdById           String
+
+  // Current plan snapshot (captured at creation)
+  currentPlanName       String?
+  currentBandwidth      Int?
+  currentArc            Float?
+
+  // New plan details (UPGRADE/DOWNGRADE only)
+  newBandwidth          Int?
+  newArc                Float?
+
+  // Effective date (when the change should take effect)
+  effectiveDate         DateTime?
+
+  // Disconnection fields
+  disconnectionDate     DateTime?
+  disconnectionReason   String?
+  disconnectionCategoryId    String?
+  disconnectionSubCategoryId String?
+
+  disconnectionCategory    DisconnectionCategory?    @relation(fields: [disconnectionCategoryId], references: [id])
+  disconnectionSubCategory DisconnectionSubCategory? @relation(fields: [disconnectionSubCategoryId], references: [id])
+
+  // Attachments: Json array of { url, publicId, originalName }
+  attachments           Json?
+
+  // Approval
+  approvedById          String?
+  approvedAt            DateTime?
+  rejectionReason       String?
+
+  // Processing (Accounts/NOC completion)
+  processedById         String?
+  processedAt           DateTime?
+  processNotes          String?
+
+  notes                 String?
+
+  // Docs Review stage
+  docsReviewedById        String?
+  docsReviewedAt          DateTime?
+  docsRejectionReason     String?
+  docsReviewedBy          User?       @relation("ServiceOrderDocsReviewed", fields: [docsReviewedById], references: [id])
+
+  // NOC stage
+  nocSpeedTestUrl         String?
+  nocSpeedTestUploadedAt  DateTime?
+  nocProcessedById        String?
+  nocProcessedAt          DateTime?
+  nocNotes                String?
+  nocProcessedBy          User?       @relation("ServiceOrderNocProcessed", fields: [nocProcessedById], references: [id])
+
+  // SAM Activation stage
+  activationDate          DateTime?
+  activationSetById       String?
+  activationSetAt         DateTime?
+  activationSetBy         User?       @relation("ServiceOrderActivationSet", fields: [activationSetById], references: [id])
+
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  customer              Lead                 @relation("ServiceOrderCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy             User                 @relation("ServiceOrdersCreated", fields: [createdById], references: [id])
+  approvedBy            User?                @relation("ServiceOrdersApproved", fields: [approvedById], references: [id])
+  processedBy           User?                @relation("ServiceOrdersProcessed", fields: [processedById], references: [id])
+
+  @@index([customerId])
+  @@index([createdById])
+  @@index([status])
+  @@index([orderType, status])
+  @@index([docsReviewedById])
+  @@index([nocProcessedById])
+}
+
+// Disconnection reason categories for service orders
+model DisconnectionCategory {
+  id            String                     @id @default(uuid())
+  name          String                     @unique
+  sortOrder     Int                        @default(0)
+  isActive      Boolean                    @default(true)
+  createdAt     DateTime                   @default(now())
+
+  subCategories DisconnectionSubCategory[]
+  serviceOrders ServiceOrder[]
+}
+
+model DisconnectionSubCategory {
+  id            String                  @id @default(uuid())
+  categoryId    String
+  name          String
+  sortOrder     Int                     @default(0)
+  isActive      Boolean                 @default(true)
+  createdAt     DateTime                @default(now())
+
+  category      DisconnectionCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  serviceOrders ServiceOrder[]
+
+  @@index([categoryId])
+}

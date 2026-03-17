@@ -1,0 +1,124 @@
+import express from 'express';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
+import { v2 as cloudinary } from 'cloudinary';
+import multer from 'multer';
+import prisma from '../config/db.js';
+import {
+  validateUploadToken,
+  customerUploadDocument,
+  customerRemoveDocument,
+  customerCompleteUpload
+} from '../controllers/publicUpload.controller.js';
+
+const router = express.Router();
+
+// Custom storage that gets leadId from token validation
+const createCustomerStorage = () => {
+  return new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: async (req, file) => {
+      // leadId is set by middleware after token validation
+      const leadId = req.leadId || 'unknown';
+      const documentType = req.params.documentType || 'general';
+
+      let resourceType = 'auto';
+      if (file.mimetype === 'application/pdf' ||
+          file.mimetype === 'application/msword' ||
+          file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        resourceType = 'raw';
+      }
+
+      return {
+        folder: `isp_crm/documents/${leadId}/${documentType}`,
+        resource_type: resourceType,
+        allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
+        public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`
+      };
+    }
+  });
+};
+
+// File filter
+const fileFilter = (req, file, cb) => {
+  const allowedMimes = [
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ];
+
+  if (allowedMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only PDF, DOC, DOCX, JPG, and PNG files are allowed'), false);
+  }
+};
+
+const customerUpload = multer({
+  storage: createCustomerStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: fileFilter
+});
+
+// Middleware to validate token and set leadId on request
+const validateTokenMiddleware = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+
+    const uploadLink = await prisma.documentUploadLink.findUnique({
+      where: { token }
+    });
+
+    if (!uploadLink) {
+      return res.status(404).json({ message: 'Invalid upload link' });
+    }
+
+    if (!uploadLink.isActive) {
+      return res.status(410).json({ message: 'This upload link has been revoked' });
+    }
+
+    if (new Date() > new Date(uploadLink.expiresAt)) {
+      return res.status(410).json({ message: 'This upload link has expired' });
+    }
+
+    // Set leadId on request for use by storage and controller
+    req.leadId = uploadLink.leadId;
+    req.uploadLink = uploadLink;
+
+    next();
+  } catch (error) {
+    console.error('Token validation error:', error);
+    res.status(500).json({ message: 'Failed to validate upload link' });
+  }
+};
+
+// ==================== PUBLIC ROUTES (No Auth Required) ====================
+
+// Validate upload token and get lead info
+// GET /api/public/upload/:token
+router.get('/:token', validateUploadToken);
+
+// Upload document via customer link
+// POST /api/public/upload/:token/document/:documentType
+router.post(
+  '/:token/document/:documentType',
+  validateTokenMiddleware,
+  customerUpload.single('document'),
+  customerUploadDocument
+);
+
+// Remove document via customer link
+// DELETE /api/public/upload/:token/document/:documentType
+router.delete(
+  '/:token/document/:documentType',
+  validateTokenMiddleware,
+  customerRemoveDocument
+);
+
+// Mark upload as complete (sends notification to BDM)
+// POST /api/public/upload/:token/complete
+router.post('/:token/complete', validateTokenMiddleware, customerCompleteUpload);
+
+export default router;
