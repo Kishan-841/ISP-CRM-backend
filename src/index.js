@@ -45,7 +45,17 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000'];
 
 const corsOptions = {
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, mobile apps, etc.)
+    if (!origin) return callback(null, true);
+    // Check exact match
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Allow all Vercel preview URLs for this project
+    if (origin.endsWith('.vercel.app') && origin.includes('isp-crm-frontend')) {
+      return callback(null, true);
+    }
+    callback(new Error('Not allowed by CORS'));
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
