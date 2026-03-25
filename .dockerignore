@@ -1,29 +1,4 @@
-# =============================================================
-# WHAT IS THIS FILE?
-# .dockerignore works exactly like .gitignore but for Docker.
-# When Docker copies files into the image (the COPY commands),
-# it will SKIP everything listed here.
-#
-# WHY? Three reasons:
-# 1. Smaller image (don't include unnecessary files)
-# 2. Faster builds (less data to copy)
-# 3. Security (don't include .env with secrets!)
-# =============================================================
-
-# Dependencies — we install fresh inside the container with npm ci
 node_modules
-
-# Environment file — contains secrets (DB password, JWT secret, API keys)
-# NEVER bake secrets into an image! We pass them at runtime instead.
 .env
-
-# Prisma migration files — we use "db push" not migrations
-prisma/migrations
-
-# Local uploads folder — in production, files go to Cloudinary
 uploads
-
-# Development files — not needed in production
-nodemon.json
-.DS_Store
-*.log
+.git

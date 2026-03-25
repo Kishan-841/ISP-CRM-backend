@@ -9,9 +9,13 @@ const userSockets = new Map();
 const MAX_CONNECTIONS_PER_USER = 5;
 
 export const initializeSocket = (httpServer) => {
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+    : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
   io = new Server(httpServer, {
     cors: {
-      origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+      origin: allowedOrigins,
       methods: ['GET', 'POST'],
       credentials: true
     }

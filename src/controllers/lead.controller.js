@@ -1205,18 +1205,21 @@ export const transferAllLeads = asyncHandler(async function transferAllLeads(req
 
 // Get BDM scheduled meetings
 export const getBDMScheduledMeetings = asyncHandler(async function getBDMScheduledMeetings(req, res) {
-    const userId = req.user.id;
     const isBDM = hasRole(req.user, 'BDM');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isAdmin = hasRole(req.user, 'SUPER_ADMIN');
 
-    if (!isBDM && !isTL) {
-      return res.status(403).json({ message: 'Only BDM or Team Leader can access this endpoint.' });
+    if (!isBDM && !isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only BDM, Team Leader or Admin can access this endpoint.' });
     }
+
+    // Admin/TL can view a specific BDM's meetings via ?userId= query param
+    const targetUserId = (isAdmin || isTL) && req.query.userId ? req.query.userId : req.user.id;
 
     // Get all scheduled meetings for this BDM
     const meetings = await prisma.lead.findMany({
       where: {
-        assignedToId: userId,
+        assignedToId: targetUserId,
         status: 'MEETING_SCHEDULED'
       },
       orderBy: [
