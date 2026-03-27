@@ -578,237 +578,488 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
   endOfToday.setHours(23, 59, 59, 999);
 
   let counts = {};
+  const isMaster = userRole === 'MASTER';
 
-  switch (userRole) {
-    case 'ISR': {
-      // ISR counts: follow-ups, calling queue, retry queue
-      const [followUps, callingQueue, retryQueue] = await Promise.all([
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: 'CALL_LATER',
-            callLaterAt: { not: null, lte: endOfToday }
-          }
-        }),
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: 'NEW'
-          }
-        }),
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: { in: ['RINGING_NOT_PICKED', 'NOT_REACHABLE'] },
-            lead: null // Not converted to lead
-          }
-        })
-      ]);
-      counts = { followUps, callingQueue, retryQueue };
-      break;
-    }
-
-    case 'SAM': {
-      // SAM counts: follow-ups, calling queue, retry queue
-      const [followUps, callingQueue, retryQueue] = await Promise.all([
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: 'CALL_LATER',
-            callLaterAt: { not: null, lte: endOfToday }
-          }
-        }),
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: 'NEW'
-          }
-        }),
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: { in: ['RINGING_NOT_PICKED', 'NOT_REACHABLE'] },
-            lead: null // Not converted to lead
-          }
-        })
-      ]);
-      counts = { followUps, callingQueue, retryQueue };
-      break;
-    }
-
-    case 'BDM': {
-      // BDM counts: queue, calling queue, retry queue, meetings, follow-ups, delivery completed, lead pipeline
-      const [queue, callingQueue, retryQueue, meetings, followUps, deliveryCompleted, leadPipeline] = await Promise.all([
-        prisma.lead.count({
-          where: { assignedToId: userId, status: 'NEW' }
-        }),
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: 'NEW',
-            campaign: { status: 'ACTIVE' }
-          }
-        }),
-        prisma.campaignData.count({
-          where: {
-            assignedToId: userId,
-            status: { in: ['RINGING_NOT_PICKED', 'NOT_REACHABLE'] },
-            lead: null
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            assignedToId: userId,
-            meetingDate: { not: null, lte: endOfToday },
-            status: 'MEETING_SCHEDULED'
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            assignedToId: userId,
-            status: 'FOLLOW_UP',
-            callLaterAt: { not: null, lte: endOfToday }
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            assignedToId: userId,
-            deliveryStatus: 'COMPLETED',
-            deliveryCompletedViewedAt: null // Only count unviewed completed deliveries
-          }
-        }),
-        prisma.lead.count({
-          where: { assignedToId: userId, status: 'FEASIBLE', pushedToInstallationAt: null }
-        })
-      ]);
-      counts = { queue, callingQueue, retryQueue, meetings, followUps, deliveryCompleted, leadPipeline };
-      break;
-    }
-
-    case 'BDM_TEAM_LEADER': {
-      // Team leader counts: only their own assigned leads
-      const [queue, meetings, followUps] = await Promise.all([
-        prisma.lead.count({
-          where: { assignedToId: userId, status: 'NEW' }
-        }),
-        prisma.lead.count({
-          where: {
-            assignedToId: userId,
-            meetingDate: { not: null, lte: endOfToday },
-            status: 'MEETING_SCHEDULED'
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            assignedToId: userId,
-            status: 'FOLLOW_UP',
-            callLaterAt: { not: null, lte: endOfToday }
-          }
-        })
-      ]);
-      counts = { queue, meetings, followUps };
-      break;
-    }
-
-    case 'FEASIBILITY_TEAM': {
-      // Feasibility Team counts: pending reviews + vendor docs pending upload + complaints assigned
-      const [pending, vendorDocsPending, complaintsAssigned] = await Promise.all([
-        prisma.lead.count({
-          where: {
-            feasibilityAssignedToId: userId,
-            feasibilityReviewedAt: null,
-            status: 'QUALIFIED'
-          }
-        }),
-        prisma.vendor.count({
-          where: {
-            createdById: userId,
-            approvalStatus: { in: ['PENDING_ACCOUNTS', 'APPROVED'] },
-            docsStatus: { in: ['PENDING', 'REJECTED'] }
-          }
-        }),
-        prisma.complaint.count({
-          where: {
-            assignments: { some: { userId, isActive: true } },
-            status: 'OPEN'
-          }
-        })
-      ]);
-      counts = { pending, vendorDocsPending, complaintsAssigned };
-      break;
-    }
-
-    case 'OPS_TEAM': {
-      // OPS Team counts: pending quotation approvals
-      const pending = await prisma.lead.count({
+  if (userRole === 'ISR' || isMaster) {
+    // ISR counts: follow-ups, calling queue, retry queue
+    const [followUps, callingQueue, retryQueue] = await Promise.all([
+      prisma.campaignData.count({
         where: {
-          opsApprovalStatus: 'PENDING',
-          status: 'FEASIBLE'
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'CALL_LATER',
+          callLaterAt: { not: null, lte: endOfToday }
         }
-      });
-      counts = { pending };
-      break;
-    }
+      }),
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'NEW'
+        }
+      }),
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: { in: ['RINGING_NOT_PICKED', 'NOT_REACHABLE'] },
+          lead: null // Not converted to lead
+        }
+      })
+    ]);
+    Object.assign(counts, { followUps, callingQueue, retryQueue });
+  }
 
-    case 'DOCS_TEAM': {
-      // Docs Team counts: pending verifications (only OPS approved) + service order docs review
-      const [pending, docsOrderReviewPending] = await Promise.all([
+  if (userRole === 'SAM' || isMaster) {
+    // SAM counts: follow-ups, calling queue, retry queue
+    const [samFollowUps, samCallingQueue, samRetryQueue] = await Promise.all([
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'CALL_LATER',
+          callLaterAt: { not: null, lte: endOfToday }
+        }
+      }),
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'NEW'
+        }
+      }),
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: { in: ['RINGING_NOT_PICKED', 'NOT_REACHABLE'] },
+          lead: null // Not converted to lead
+        }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { samFollowUps, samCallingQueue, samRetryQueue });
+    } else {
+      Object.assign(counts, { followUps: samFollowUps, callingQueue: samCallingQueue, retryQueue: samRetryQueue });
+    }
+  }
+
+  if (userRole === 'BDM' || isMaster) {
+    // BDM counts: queue, calling queue, retry queue, meetings, follow-ups, delivery completed, lead pipeline
+    const [queue, bdmCallingQueue, bdmRetryQueue, meetings, bdmFollowUps, deliveryCompleted, leadPipeline] = await Promise.all([
+      prisma.lead.count({
+        where: { ...(!isMaster && { assignedToId: userId }), status: 'NEW' }
+      }),
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'NEW',
+          campaign: { status: 'ACTIVE' }
+        }
+      }),
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: { in: ['RINGING_NOT_PICKED', 'NOT_REACHABLE'] },
+          lead: null
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          meetingDate: { not: null, lte: endOfToday },
+          status: 'MEETING_SCHEDULED'
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'FOLLOW_UP',
+          callLaterAt: { not: null, lte: endOfToday }
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          deliveryStatus: 'COMPLETED',
+          deliveryCompletedViewedAt: null // Only count unviewed completed deliveries
+        }
+      }),
+      prisma.lead.count({
+        where: { ...(!isMaster && { assignedToId: userId }), status: 'FEASIBLE', pushedToInstallationAt: null }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { queue, bdmCallingQueue, bdmRetryQueue, meetings, bdmFollowUps, deliveryCompleted, leadPipeline });
+    } else {
+      Object.assign(counts, { queue, callingQueue: bdmCallingQueue, retryQueue: bdmRetryQueue, meetings, followUps: bdmFollowUps, deliveryCompleted, leadPipeline });
+    }
+  }
+
+  if (userRole === 'BDM_TEAM_LEADER' || isMaster) {
+    // Team leader counts: only their own assigned leads
+    const [btlQueue, btlMeetings, btlFollowUps] = await Promise.all([
+      prisma.lead.count({
+        where: { ...(!isMaster && { assignedToId: userId }), status: 'NEW' }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          meetingDate: { not: null, lte: endOfToday },
+          status: 'MEETING_SCHEDULED'
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'FOLLOW_UP',
+          callLaterAt: { not: null, lte: endOfToday }
+        }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { btlQueue, btlMeetings, btlFollowUps });
+    } else {
+      Object.assign(counts, { queue: btlQueue, meetings: btlMeetings, followUps: btlFollowUps });
+    }
+  }
+
+  if (userRole === 'FEASIBILITY_TEAM' || isMaster) {
+    // Feasibility Team counts: pending reviews + vendor docs pending upload + complaints assigned
+    const [feasibilityPending, vendorDocsPending, feasibilityComplaintsAssigned] = await Promise.all([
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { feasibilityAssignedToId: userId }),
+          feasibilityReviewedAt: null,
+          status: 'QUALIFIED'
+        }
+      }),
+      prisma.vendor.count({
+        where: {
+          ...(!isMaster && { createdById: userId }),
+          approvalStatus: { in: ['PENDING_ACCOUNTS', 'APPROVED'] },
+          docsStatus: { in: ['PENDING', 'REJECTED'] }
+        }
+      }),
+      prisma.complaint.count({
+        where: {
+          ...(!isMaster && { assignments: { some: { userId, isActive: true } } }),
+          status: 'OPEN'
+        }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { feasibilityPending, vendorDocsPending, feasibilityComplaintsAssigned });
+    } else {
+      Object.assign(counts, { pending: feasibilityPending, vendorDocsPending, complaintsAssigned: feasibilityComplaintsAssigned });
+    }
+  }
+
+  if (userRole === 'OPS_TEAM' || isMaster) {
+    // OPS Team counts: pending quotation approvals
+    const opsPending = await prisma.lead.count({
+      where: {
+        opsApprovalStatus: 'PENDING',
+        status: 'FEASIBLE'
+      }
+    });
+    if (isMaster) {
+      Object.assign(counts, { opsPending });
+    } else {
+      Object.assign(counts, { pending: opsPending });
+    }
+  }
+
+  if (userRole === 'DOCS_TEAM' || isMaster) {
+    // Docs Team counts: pending verifications (only OPS approved) + service order docs review
+    const [docsPending, docsOrderReviewPending] = await Promise.all([
+      prisma.lead.count({
+        where: {
+          sharedVia: { contains: 'docs_verification' },
+          opsApprovalStatus: 'APPROVED',
+          docsVerifiedAt: null
+        }
+      }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { docsPending, docsOrderReviewPending });
+    } else {
+      Object.assign(counts, { pending: docsPending, docsOrderReviewPending });
+    }
+  }
+
+  if (userRole === 'ACCOUNTS_TEAM' || isMaster) {
+    // Accounts Team counts: pending verifications, demo plan pending, create plan pending, vendor approval, vendor docs to verify, order requests, complaints assigned
+    const [accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned] = await Promise.all([
+      prisma.lead.count({
+        where: {
+          docsVerifiedAt: { not: null },
+          docsRejectedReason: null,
+          accountsVerifiedAt: null
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          deliveryStatus: 'DEMO_PLAN_PENDING'
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          deliveryStatus: 'COMPLETED',
+          customerAcceptanceStatus: 'ACCEPTED',
+          actualPlanCreatedAt: null
+        }
+      }),
+      prisma.vendor.count({ where: { approvalStatus: 'PENDING_ACCOUNTS' } }),
+      prisma.vendor.count({ where: { docsStatus: 'UPLOADED' } }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_ACCOUNTS', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+      }),
+      prisma.complaint.count({
+        where: {
+          ...(!isMaster && { assignments: { some: { userId, isActive: true } } }),
+          status: 'OPEN'
+        }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned });
+    } else {
+      Object.assign(counts, { pending: accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned });
+    }
+  }
+
+  if (userRole === 'DELIVERY_TEAM' || isMaster) {
+    // Delivery Team counts: pending deliveries (leads pushed to installation)
+    const deliveryPending = await prisma.lead.count({
+      where: {
+        pushedToInstallationAt: { not: null },
+        OR: [
+          { deliveryStatus: null },
+          { deliveryStatus: 'PENDING' }
+        ]
+      }
+    });
+    Object.assign(counts, { deliveryPending });
+  }
+
+  if (userRole === 'STORE_MANAGER' || isMaster) {
+    // Store Manager counts: approved delivery requests awaiting assignment
+    const storeRequests = await prisma.deliveryRequest.count({
+      where: { status: 'APPROVED' }
+    });
+    Object.assign(counts, { storeRequests });
+  }
+
+  if (userRole === 'AREA_HEAD' || isMaster) {
+    // Area Head counts: delivery requests pending their approval
+    const deliveryRequestPending = await prisma.deliveryRequest.count({
+      where: { status: 'PENDING_APPROVAL' }
+    });
+    Object.assign(counts, { deliveryRequestPending });
+  }
+
+  if (userRole === 'NOC' || isMaster) {
+    // NOC Team counts: leads pushed to NOC and customer accounts created
+    // First get all lead IDs that have been pushed to NOC
+    const nocDeliveryRequests = await prisma.deliveryRequest.findMany({
+      where: { pushedToNocAt: { not: null } },
+      select: { leadId: true }
+    });
+    const nocLeadIds = nocDeliveryRequests.map(dr => dr.leadId);
+
+    if (nocLeadIds.length === 0) {
+      Object.assign(counts, { nocPending: 0, nocUserCreated: 0 });
+    } else {
+      const [nocPending, nocUserCreated] = await Promise.all([
+        // Pending: pushed to NOC but no customer user created
         prisma.lead.count({
           where: {
-            sharedVia: { contains: 'docs_verification' },
-            opsApprovalStatus: 'APPROVED',
-            docsVerifiedAt: null
+            id: { in: nocLeadIds },
+            customerUserId: null
           }
         }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+        // User Created: all leads where customer user has been created (cumulative)
+        prisma.lead.count({
+          where: {
+            id: { in: nocLeadIds },
+            customerUserId: { not: null }
+          }
         })
       ]);
-      counts = { pending, docsOrderReviewPending };
-      break;
+      Object.assign(counts, { nocPending, nocUserCreated });
     }
 
-    case 'ACCOUNTS_TEAM': {
-      // Accounts Team counts: pending verifications, demo plan pending, create plan pending, vendor approval, vendor docs to verify, order requests, complaints assigned
-      const [pending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned] = await Promise.all([
-        prisma.lead.count({
-          where: {
-            docsVerifiedAt: { not: null },
-            docsRejectedReason: null,
-            accountsVerifiedAt: null
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            deliveryStatus: 'DEMO_PLAN_PENDING'
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            deliveryStatus: 'COMPLETED',
-            customerAcceptanceStatus: 'ACCEPTED',
-            actualPlanCreatedAt: null
-          }
-        }),
-        prisma.vendor.count({ where: { approvalStatus: 'PENDING_ACCOUNTS' } }),
-        prisma.vendor.count({ where: { docsStatus: 'UPLOADED' } }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_ACCOUNTS', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
-        }),
-        prisma.complaint.count({
-          where: {
-            assignments: { some: { userId, isActive: true } },
-            status: 'OPEN'
-          }
-        })
-      ]);
-      counts = { pending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned };
-      break;
-    }
+    // Add service order NOC queue count
+    const nocOrdersPending = await prisma.serviceOrder.count({
+      where: { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+    });
+    counts.nocOrdersPending = nocOrdersPending;
 
-    case 'DELIVERY_TEAM': {
-      // Delivery Team counts: pending deliveries (leads pushed to installation)
-      const deliveryPending = await prisma.lead.count({
+    // Add complaint counts + customer requests to NOC
+    const [nocComplaintCount, customerRequestsPending] = await Promise.all([
+      prisma.complaint.count({
+        where: {
+          ...(!isMaster && { assignments: { some: { userId, isActive: true } } }),
+          status: 'OPEN',
+        }
+      }),
+      prisma.customerComplaintRequest.count({
+        where: { status: 'PENDING' }
+      })
+    ]);
+    if (isMaster) {
+      counts.nocComplaintsAssigned = nocComplaintCount;
+    } else {
+      counts.complaintsAssigned = nocComplaintCount;
+    }
+    counts.customerRequestsPending = customerRequestsPending;
+  }
+
+  if (userRole === 'SUPPORT_TEAM' || isMaster) {
+    const [supportComplaintsAssigned, complaintsCreated] = await Promise.all([
+      prisma.complaint.count({
+        where: {
+          ...(!isMaster && { assignments: { some: { userId, isActive: true } } }),
+          status: 'OPEN',
+        }
+      }),
+      prisma.complaint.count({
+        where: {
+          ...(!isMaster && { createdById: userId }),
+          status: 'OPEN',
+        }
+      }),
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { supportComplaintsAssigned, complaintsCreated });
+    } else {
+      Object.assign(counts, { complaintsAssigned: supportComplaintsAssigned, complaintsCreated });
+    }
+  }
+
+  if (userRole === 'ADMIN' || isMaster) {
+    // Admin counts: POs pending admin approval (level 1)
+    const adminPoApprovalPending = await prisma.storePurchaseOrder.count({
+      where: { status: 'PENDING_ADMIN' }
+    });
+    if (isMaster) {
+      Object.assign(counts, { adminPoApprovalPending });
+    } else {
+      Object.assign(counts, { poApprovalPending: adminPoApprovalPending });
+    }
+  }
+
+  if (userRole === 'SAM_HEAD' || isMaster) {
+    const [unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries, samActivationPending] = await Promise.all([
+      prisma.lead.count({
+        where: {
+          customerUserId: { not: null },
+          samAssignment: null
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          customerUserId: { not: null },
+          contractEndDate: { not: null, lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+          samAssignment: { isNot: null }
+        }
+      }),
+      prisma.serviceOrder.count({
+        where: { status: { in: ['PENDING_APPROVAL', 'APPROVED'] } }
+      }),
+      prisma.customerEnquiry.count({
+        where: { status: 'SUBMITTED' }
+      }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_SAM_ACTIVATION' }
+      }),
+    ]);
+    Object.assign(counts, { unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries, samActivationPending });
+  }
+
+  if (userRole === 'SAM_EXECUTIVE' || isMaster) {
+    const [pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending, samExecActivationPending] = await Promise.all([
+      prisma.sAMMeeting.count({
+        where: {
+          ...(!isMaster && { samExecutiveId: userId }),
+          status: 'COMPLETED',
+          momEmailSentAt: null
+        }
+      }),
+      prisma.sAMVisit.count({
+        where: {
+          ...(!isMaster && { samExecutiveId: userId }),
+          status: 'SCHEDULED',
+          visitDate: { lt: new Date() }
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          customerUserId: { not: null },
+          contractEndDate: { not: null, lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+          ...(!isMaster && { samAssignment: { samExecutiveId: userId } })
+        }
+      }),
+      prisma.serviceOrder.count({
+        where: { ...(!isMaster && { createdById: userId }), status: { in: ['PENDING_APPROVAL', 'APPROVED'] } }
+      }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_SAM_ACTIVATION', ...(!isMaster && { createdById: userId }) }
+      }),
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending, samExecActivationPending });
+    } else {
+      Object.assign(counts, { pendingMomEmails, overdueVisits, contractExpiring: samExecContractExpiring, ordersPending: samExecOrdersPending, samActivationPending: samExecActivationPending });
+    }
+  }
+
+  if (userRole === 'SUPER_ADMIN_2' || isMaster) {
+    // Super Admin 2 counts: pending quotation approvals (after OPS approval)
+    const sa2Pending = await prisma.lead.count({
+      where: {
+        superAdmin2ApprovalStatus: 'PENDING',
+        opsApprovalStatus: 'APPROVED',
+        status: 'FEASIBLE'
+      }
+    });
+    if (isMaster) {
+      Object.assign(counts, { sa2Pending });
+    } else {
+      Object.assign(counts, { pending: sa2Pending });
+    }
+  }
+
+  if (userRole === 'SUPER_ADMIN' || isMaster) {
+    // Super Admin counts: overview of all queues + POs pending super admin approval (level 2) + delivery request approval + vendor approval
+    const [
+      isrQueue,
+      bdmQueue,
+      feasibilityQueue,
+      docsQueue,
+      accountsQueue,
+      deliveryQueue,
+      poApprovalPending,
+      saDeliveryRequestPending,
+      vendorsPendingAdmin,
+      complaintsOpen,
+      orderApprovalPending,
+      saDocsOrderReviewPending,
+      saNocOrdersPending,
+      accountsOrdersPending,
+      saSamActivationPending,
+      saSa2Pending
+    ] = await Promise.all([
+      prisma.campaignData.count({ where: { status: 'NEW' } }),
+      prisma.lead.count({ where: { status: 'NEW' } }),
+      prisma.lead.count({
+        where: { feasibilityAssignedToId: { not: null }, feasibilityReviewedAt: null, status: 'QUALIFIED' }
+      }),
+      prisma.lead.count({
+        where: { sharedVia: { contains: 'docs_verification' }, docsVerifiedAt: null }
+      }),
+      prisma.lead.count({
+        where: { docsVerifiedAt: { not: null }, docsRejectedReason: null, accountsVerifiedAt: null }
+      }),
+      prisma.lead.count({
         where: {
           pushedToInstallationAt: { not: null },
           OR: [
@@ -816,257 +1067,35 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
             { deliveryStatus: 'PENDING' }
           ]
         }
-      });
-      counts = { deliveryPending };
-      break;
-    }
-
-    case 'STORE_MANAGER': {
-      // Store Manager counts: approved delivery requests awaiting assignment
-      const storeRequests = await prisma.deliveryRequest.count({
-        where: { status: 'APPROVED' }
-      });
-      counts = { storeRequests };
-      break;
-    }
-
-    case 'AREA_HEAD': {
-      // Area Head counts: delivery requests pending their approval
-      const deliveryRequestPending = await prisma.deliveryRequest.count({
-        where: { status: 'PENDING_APPROVAL' }
-      });
-      counts = { deliveryRequestPending };
-      break;
-    }
-
-    case 'NOC': {
-      // NOC Team counts: leads pushed to NOC and customer accounts created
-      // First get all lead IDs that have been pushed to NOC
-      const nocDeliveryRequests = await prisma.deliveryRequest.findMany({
-        where: { pushedToNocAt: { not: null } },
-        select: { leadId: true }
-      });
-      const nocLeadIds = nocDeliveryRequests.map(dr => dr.leadId);
-
-      if (nocLeadIds.length === 0) {
-        counts = { nocPending: 0, nocUserCreated: 0 };
-      } else {
-        const [nocPending, nocUserCreated] = await Promise.all([
-          // Pending: pushed to NOC but no customer user created
-          prisma.lead.count({
-            where: {
-              id: { in: nocLeadIds },
-              customerUserId: null
-            }
-          }),
-          // User Created: all leads where customer user has been created (cumulative)
-          prisma.lead.count({
-            where: {
-              id: { in: nocLeadIds },
-              customerUserId: { not: null }
-            }
-          })
-        ]);
-        counts = { nocPending, nocUserCreated };
-      }
-
-      // Add service order NOC queue count
-      const nocOrdersPending = await prisma.serviceOrder.count({
+      }),
+      prisma.storePurchaseOrder.count({ where: { status: 'PENDING_SUPER_ADMIN' } }),
+      prisma.deliveryRequest.count({ where: { status: 'PENDING_APPROVAL' } }),
+      prisma.vendor.count({ where: { approvalStatus: 'PENDING_ADMIN' } }),
+      prisma.complaint.count({
+        where: { status: { notIn: ['CLOSED'] } }
+      }),
+      prisma.serviceOrder.count({ where: { status: 'PENDING_APPROVAL' } }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+      }),
+      prisma.serviceOrder.count({
         where: { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
-      });
-      counts.nocOrdersPending = nocOrdersPending;
-
-      // Add complaint counts + customer requests to NOC
-      const [nocComplaintCount, customerRequestsPending] = await Promise.all([
-        prisma.complaint.count({
-          where: {
-            assignments: { some: { userId, isActive: true } },
-            status: 'OPEN',
-          }
-        }),
-        prisma.customerComplaintRequest.count({
-          where: { status: 'PENDING' }
-        })
-      ]);
-      counts.complaintsAssigned = nocComplaintCount;
-      counts.customerRequestsPending = customerRequestsPending;
-
-      break;
+      }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_ACCOUNTS', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+      }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_SAM_ACTIVATION' }
+      }),
+      prisma.lead.count({
+        where: { superAdmin2ApprovalStatus: 'PENDING', opsApprovalStatus: 'APPROVED', status: 'FEASIBLE' }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSamActivationPending, saSa2Pending });
+    } else {
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, samActivationPending: saSamActivationPending, sa2Pending: saSa2Pending });
     }
-
-    case 'SUPPORT_TEAM': {
-      const [complaintsAssigned, complaintsCreated] = await Promise.all([
-        prisma.complaint.count({
-          where: {
-            assignments: { some: { userId, isActive: true } },
-            status: 'OPEN',
-          }
-        }),
-        prisma.complaint.count({
-          where: {
-            createdById: userId,
-            status: 'OPEN',
-          }
-        }),
-      ]);
-      counts = { complaintsAssigned, complaintsCreated };
-      break;
-    }
-
-    case 'ADMIN': {
-      // Admin counts: POs pending admin approval (level 1)
-      const poApprovalPending = await prisma.storePurchaseOrder.count({
-        where: { status: 'PENDING_ADMIN' }
-      });
-      counts = { poApprovalPending };
-      break;
-    }
-
-    case 'SAM_HEAD': {
-      const [unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries, samActivationPending] = await Promise.all([
-        prisma.lead.count({
-          where: {
-            customerUserId: { not: null },
-            samAssignment: null
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            customerUserId: { not: null },
-            contractEndDate: { not: null, lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
-            samAssignment: { isNot: null }
-          }
-        }),
-        prisma.serviceOrder.count({
-          where: { status: { in: ['PENDING_APPROVAL', 'APPROVED'] } }
-        }),
-        prisma.customerEnquiry.count({
-          where: { status: 'SUBMITTED' }
-        }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_SAM_ACTIVATION' }
-        }),
-      ]);
-      counts = { unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries, samActivationPending };
-      break;
-    }
-
-    case 'SAM_EXECUTIVE': {
-      const [pendingMomEmails, overdueVisits, contractExpiring, ordersPending, samActivationPending] = await Promise.all([
-        prisma.sAMMeeting.count({
-          where: {
-            samExecutiveId: userId,
-            status: 'COMPLETED',
-            momEmailSentAt: null
-          }
-        }),
-        prisma.sAMVisit.count({
-          where: {
-            samExecutiveId: userId,
-            status: 'SCHEDULED',
-            visitDate: { lt: new Date() }
-          }
-        }),
-        prisma.lead.count({
-          where: {
-            customerUserId: { not: null },
-            contractEndDate: { not: null, lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
-            samAssignment: { samExecutiveId: userId }
-          }
-        }),
-        prisma.serviceOrder.count({
-          where: { createdById: userId, status: { in: ['PENDING_APPROVAL', 'APPROVED'] } }
-        }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_SAM_ACTIVATION', createdById: userId }
-        }),
-      ]);
-      counts = { pendingMomEmails, overdueVisits, contractExpiring, ordersPending, samActivationPending };
-      break;
-    }
-
-    case 'SUPER_ADMIN_2': {
-      // Super Admin 2 counts: pending quotation approvals (after OPS approval)
-      const sa2Pending = await prisma.lead.count({
-        where: {
-          superAdmin2ApprovalStatus: 'PENDING',
-          opsApprovalStatus: 'APPROVED',
-          status: 'FEASIBLE'
-        }
-      });
-      counts = { pending: sa2Pending };
-      break;
-    }
-
-    case 'SUPER_ADMIN': {
-      // Super Admin counts: overview of all queues + POs pending super admin approval (level 2) + delivery request approval + vendor approval
-      const [
-        isrQueue,
-        bdmQueue,
-        feasibilityQueue,
-        docsQueue,
-        accountsQueue,
-        deliveryQueue,
-        poApprovalPending,
-        deliveryRequestPending,
-        vendorsPendingAdmin,
-        complaintsOpen,
-        orderApprovalPending,
-        docsOrderReviewPending,
-        nocOrdersPending,
-        accountsOrdersPending,
-        samActivationPending,
-        sa2Pending
-      ] = await Promise.all([
-        prisma.campaignData.count({ where: { status: 'NEW' } }),
-        prisma.lead.count({ where: { status: 'NEW' } }),
-        prisma.lead.count({
-          where: { feasibilityAssignedToId: { not: null }, feasibilityReviewedAt: null, status: 'QUALIFIED' }
-        }),
-        prisma.lead.count({
-          where: { sharedVia: { contains: 'docs_verification' }, docsVerifiedAt: null }
-        }),
-        prisma.lead.count({
-          where: { docsVerifiedAt: { not: null }, docsRejectedReason: null, accountsVerifiedAt: null }
-        }),
-        prisma.lead.count({
-          where: {
-            pushedToInstallationAt: { not: null },
-            OR: [
-              { deliveryStatus: null },
-              { deliveryStatus: 'PENDING' }
-            ]
-          }
-        }),
-        prisma.storePurchaseOrder.count({ where: { status: 'PENDING_SUPER_ADMIN' } }),
-        prisma.deliveryRequest.count({ where: { status: 'PENDING_APPROVAL' } }),
-        prisma.vendor.count({ where: { approvalStatus: 'PENDING_ADMIN' } }),
-        prisma.complaint.count({
-          where: { status: { notIn: ['CLOSED'] } }
-        }),
-        prisma.serviceOrder.count({ where: { status: 'PENDING_APPROVAL' } }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
-        }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
-        }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_ACCOUNTS', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
-        }),
-        prisma.serviceOrder.count({
-          where: { status: 'PENDING_SAM_ACTIVATION' }
-        }),
-        prisma.lead.count({
-          where: { superAdmin2ApprovalStatus: 'PENDING', opsApprovalStatus: 'APPROVED', status: 'FEASIBLE' }
-        })
-      ]);
-      counts = { isrQueue, bdmQueue, feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, docsOrderReviewPending, nocOrdersPending, accountsOrdersPending, samActivationPending, sa2Pending };
-      break;
-    }
-
-    default:
-      counts = {};
   }
 
   res.json(counts);

@@ -235,6 +235,7 @@ model Lead {
   updatedAt                 DateTime             @updatedAt
   sharedVia                 String?
   type                      LeadType             @default(QUALIFIED)
+  isImported                Boolean              @default(false)
   linkedinUrl               String?
   callLaterAt               DateTime?
   dropReason                String?
@@ -1297,6 +1298,7 @@ enum CommunicationStatus {
 }
 
 enum Role {
+  MASTER
   SUPER_ADMIN
   SUPER_ADMIN_2
   ISR

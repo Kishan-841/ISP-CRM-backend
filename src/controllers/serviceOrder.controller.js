@@ -62,8 +62,8 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     }
   }
 
-  // SAM_EXECUTIVE: verify customer is assigned to them
-  if (hasRole(req.user, 'SAM_EXECUTIVE')) {
+  // SAM_EXECUTIVE: verify customer is assigned to them (MASTER/admin bypasses)
+  if (hasRole(req.user, 'SAM_EXECUTIVE') && req.user.role === 'SAM_EXECUTIVE') {
     const assignment = await prisma.sAMAssignment.findFirst({
       where: { samExecutiveId: req.user.id, customerId }
     });

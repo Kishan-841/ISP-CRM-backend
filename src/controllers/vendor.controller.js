@@ -319,7 +319,7 @@ export const getPendingVendors = asyncHandler(async function getPendingVendors(r
   const userRole = req.user.role;
   let where = {};
 
-  if (userRole === 'SUPER_ADMIN') {
+  if (userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
     where.approvalStatus = 'PENDING_ADMIN';
   } else if (userRole === 'ACCOUNTS_TEAM') {
     where.approvalStatus = 'PENDING_ACCOUNTS';
@@ -355,7 +355,7 @@ export const approveVendor = asyncHandler(async function approveVendor(req, res)
   }
 
   // Stage 1: SUPER_ADMIN approves PENDING_ADMIN → PENDING_ACCOUNTS
-  if (userRole === 'SUPER_ADMIN' && vendor.approvalStatus === 'PENDING_ADMIN') {
+  if ((userRole === 'SUPER_ADMIN' || userRole === 'MASTER') && vendor.approvalStatus === 'PENDING_ADMIN') {
     const updated = await prisma.vendor.update({
       where: { id },
       data: {
@@ -417,7 +417,7 @@ export const rejectVendor = asyncHandler(async function rejectVendor(req, res) {
     rejectedAt: new Date()
   };
 
-  if (userRole === 'SUPER_ADMIN' && vendor.approvalStatus === 'PENDING_ADMIN') {
+  if ((userRole === 'SUPER_ADMIN' || userRole === 'MASTER') && vendor.approvalStatus === 'PENDING_ADMIN') {
     updateData.adminRejectionReason = reason.trim();
     updateData.adminApprovedById = req.user.id;
   } else if (userRole === 'ACCOUNTS_TEAM' && vendor.approvalStatus === 'PENDING_ACCOUNTS') {

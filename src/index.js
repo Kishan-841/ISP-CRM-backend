@@ -30,6 +30,7 @@ import complaintCloseOptionRoutes from './routes/complaintCloseOption.routes.js'
 import customer360Routes from './routes/customer360.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import serviceOrderRoutes from './routes/serviceOrder.routes.js';
+import customerImportRoutes from './routes/customerImport.routes.js';
 import { auth } from './middleware/auth.js';
 import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
@@ -102,6 +103,7 @@ app.use('/api/complaint-close-options', complaintCloseOptionRoutes);
 app.use('/api/customer-360', customer360Routes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/service-orders', serviceOrderRoutes);
+app.use('/api/customer-import', customerImportRoutes);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);

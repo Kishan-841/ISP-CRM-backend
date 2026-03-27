@@ -30,7 +30,7 @@ const generateCampaignCode = async () => {
 export const getCampaigns = asyncHandler(async function getCampaigns(req, res) {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const isAdmin = userRole === 'SUPER_ADMIN';
+    const isAdmin = isAdminOrTestUser(req.user);
 
     // Build role-based where clause, exclude SELF (shown in Self Data tab)
     const conditions = [{ type: { not: 'SELF' } }];
@@ -487,51 +487,84 @@ export const assignUsersToCampaign = asyncHandler(async function assignUsersToCa
 // Get campaigns assigned to current ISR
 export const getMyAssignedCampaigns = asyncHandler(async function getMyAssignedCampaigns(req, res) {
     const userId = req.user.id;
+    const isMasterUser = req.user.role === 'MASTER' || req.user.role === 'SUPER_ADMIN';
 
-    const assignments = await prisma.campaignAssignment.findMany({
-      where: { userId },
-      include: {
-        campaign: {
-          include: {
-            createdBy: {
-              select: { id: true, name: true, role: true }
-            },
-            _count: {
-              select: {
-                campaignData: true
+    let assignments;
+
+    if (isMasterUser) {
+      // MASTER/SUPER_ADMIN: return ALL active campaigns with ALL data
+      const allCampaigns = await prisma.campaign.findMany({
+        where: { status: 'ACTIVE' },
+        include: {
+          createdBy: {
+            select: { id: true, name: true, role: true }
+          },
+          _count: {
+            select: { campaignData: true }
+          },
+          campaignData: {
+            select: {
+              status: true,
+              lead: { select: { id: true } }
+            }
+          },
+          assignments: {
+            include: {
+              user: {
+                select: { id: true, name: true, email: true, isActive: true }
               }
-            },
-            campaignData: {
-              where: {
-                // Only show data specifically assigned to this ISR
-                assignedToId: userId
+            }
+          }
+        }
+      });
+      // Wrap in assignment-like structure for compatibility with the rest of the function
+      assignments = allCampaigns.map(campaign => ({ campaign, userId }));
+    } else {
+      assignments = await prisma.campaignAssignment.findMany({
+        where: { userId },
+        include: {
+          campaign: {
+            include: {
+              createdBy: {
+                select: { id: true, name: true, role: true }
               },
-              select: {
-                status: true,
-                lead: {
-                  select: {
-                    id: true
+              _count: {
+                select: {
+                  campaignData: true
+                }
+              },
+              campaignData: {
+                where: {
+                  // Only show data specifically assigned to this ISR
+                  assignedToId: userId
+                },
+                select: {
+                  status: true,
+                  lead: {
+                    select: {
+                      id: true
+                    }
                   }
                 }
-              }
-            },
-            // Include all assignments to show team members
-            assignments: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    isActive: true
+              },
+              // Include all assignments to show team members
+              assignments: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      isActive: true
+                    }
                   }
                 }
               }
             }
           }
         }
-      }
-    });
+      });
+    }
 
     // Single groupBy query to get per-ISR data counts across all campaigns (replaces N+1 individual count queries)
     const campaignIds = assignments.map(a => a.campaign.id);
@@ -1584,13 +1617,16 @@ export const getISRDashboardStats = asyncHandler(async function getISRDashboardS
 
     const dateRange = getDateRange();
 
-    // Get all campaigns assigned to this user
+    // Get all campaigns (admin sees all, ISR sees only assigned)
+    const assignmentWhere = isAdmin ? {} : { userId };
     const assignments = await prisma.campaignAssignment.findMany({
-      where: { userId },
+      where: assignmentWhere,
       select: { campaignId: true }
     });
 
-    const campaignIds = assignments.map(a => a.campaignId);
+    const campaignIds = isAdmin
+      ? (await prisma.campaign.findMany({ select: { id: true } })).map(c => c.id)
+      : assignments.map(a => a.campaignId);
 
     if (campaignIds.length === 0) {
       return res.json({
@@ -1626,10 +1662,10 @@ export const getISRDashboardStats = asyncHandler(async function getISRDashboardS
       });
     }
 
-    // Get all data for assigned campaigns (for ISR, only data specifically assigned to them)
+    // Get all data for assigned campaigns (admin sees all, ISR sees only data assigned to them)
     const whereClause = {
       campaignId: { in: campaignIds },
-      assignedToId: userId
+      ...(isAdmin ? {} : { assignedToId: userId })
     };
 
     // Period-filtered where clause for stats (alltime = no date filter)
@@ -1648,7 +1684,7 @@ export const getISRDashboardStats = asyncHandler(async function getISRDashboardS
 
     // Call activity stats (filtered by period)
     const callLogWhere = {
-      userId,
+      ...(isAdmin ? {} : { userId }),
       campaignData: { campaignId: { in: campaignIds } }
     };
     if (!isAllTime) callLogWhere.createdAt = { gte: dateRange.start };
@@ -3461,9 +3497,9 @@ export const getMyCampaignPerformance = asyncHandler(async function getMyCampaig
 export const getAllCampaignData = asyncHandler(async function getAllCampaignData(req, res) {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const isAdmin = userRole === 'SUPER_ADMIN';
+    const isAdmin = isAdminOrTestUser(req.user);
 
-    // Only SUPER_ADMIN, BDM, ISR, BDM_TEAM_LEADER can access
+    // Only admins, BDM, ISR, BDM_TEAM_LEADER can access
     if (!isAdmin && userRole !== 'BDM' && userRole !== 'ISR' && userRole !== 'BDM_TEAM_LEADER') {
       return res.status(403).json({ message: 'Access denied.' });
     }

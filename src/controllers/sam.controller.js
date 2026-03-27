@@ -555,12 +555,14 @@ export const getSAMHeadDashboardStats = asyncHandler(async function getSAMHeadDa
  * Get customers assigned to current SAM executive
  */
 export const getMyAssignedCustomers = asyncHandler(async function getMyAssignedCustomers(req, res) {
-    const samExecutiveId = req.user.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
     const { search } = req.query;
     const { page, limit, skip } = parsePagination(req.query, 20);
+    const isAdminUser = userRole === 'SUPER_ADMIN' || userRole === 'MASTER';
 
     const where = {
-      samExecutiveId
+      ...(isAdminUser ? {} : { samExecutiveId: userId })
     };
 
     if (search) {
@@ -752,7 +754,7 @@ export const createMeeting = asyncHandler(async function createMeeting(req, res)
 
     // For SAM_EXECUTIVE: verify assignment. For SAM_HEAD/SUPER_ADMIN: verify customer has any assignment
     let assignment;
-    if (userRole === 'SAM_HEAD' || userRole === 'SUPER_ADMIN') {
+    if (userRole === 'SAM_HEAD' || userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
       assignment = await prisma.sAMAssignment.findFirst({
         where: { customerId },
         include: { customer: { select: { campaignData: { select: { company: true } } } } }
@@ -768,8 +770,8 @@ export const createMeeting = asyncHandler(async function createMeeting(req, res)
       return res.status(403).json({ message: 'Not authorized to create meeting for this customer.' });
     }
 
-    // SAM_HEAD/SUPER_ADMIN uses the assigned executive; SAM_EXECUTIVE uses themselves
-    const samExecutiveId = (userRole === 'SAM_HEAD' || userRole === 'SUPER_ADMIN')
+    // SAM_HEAD/SUPER_ADMIN/MASTER uses the assigned executive; SAM_EXECUTIVE uses themselves
+    const samExecutiveId = (userRole === 'SAM_HEAD' || userRole === 'SUPER_ADMIN' || userRole === 'MASTER')
       ? assignment.samExecutiveId
       : userId;
 
@@ -958,7 +960,7 @@ export const updateMeeting = asyncHandler(async function updateMeeting(req, res)
     }
 
     const userRole = req.user.role;
-    if (userRole !== 'SAM_HEAD' && userRole !== 'SUPER_ADMIN' && existingMeeting.samExecutiveId !== userId) {
+    if (userRole !== 'SAM_HEAD' && userRole !== 'SUPER_ADMIN' && userRole !== 'MASTER' && existingMeeting.samExecutiveId !== userId) {
       return res.status(403).json({ message: 'Not authorized to update this MOM.' });
     }
 
@@ -1253,7 +1255,7 @@ export const sendMOMEmail = asyncHandler(async function sendMOMEmail(req, res) {
     }
 
     const userRole = req.user.role;
-    if (userRole !== 'SAM_HEAD' && userRole !== 'SUPER_ADMIN' && meeting.samExecutiveId !== userId) {
+    if (userRole !== 'SAM_HEAD' && userRole !== 'SUPER_ADMIN' && userRole !== 'MASTER' && meeting.samExecutiveId !== userId) {
       return res.status(403).json({ message: 'Not authorized to send email for this meeting.' });
     }
 
@@ -1325,7 +1327,9 @@ export const sendMOMEmail = asyncHandler(async function sendMOMEmail(req, res) {
  * Get SAM Executive dashboard stats
  */
 export const getSAMExecutiveDashboardStats = asyncHandler(async function getSAMExecutiveDashboardStats(req, res) {
-    const samExecutiveId = req.user.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const isAdminUser = userRole === 'SUPER_ADMIN' || userRole === 'MASTER';
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfToday = new Date(startOfToday);
@@ -1337,9 +1341,9 @@ export const getSAMExecutiveDashboardStats = asyncHandler(async function getSAME
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 7);
 
-    // Get assigned customer IDs for this SAM
+    // Get assigned customer IDs for this SAM (admin/MASTER sees all)
     const assignments = await prisma.sAMAssignment.findMany({
-      where: { samExecutiveId },
+      where: isAdminUser ? {} : { samExecutiveId: userId },
       select: { customerId: true }
     });
     const customerIds = assignments.map(a => a.customerId);
@@ -1355,14 +1359,14 @@ export const getSAMExecutiveDashboardStats = asyncHandler(async function getSAME
       assignments.length,
       prisma.sAMMeeting.count({
         where: {
-          samExecutiveId,
+          ...(isAdminUser ? {} : { samExecutiveId: userId }),
           status: 'COMPLETED',
           momEmailSentAt: null
         }
       }),
       prisma.sAMMeeting.count({
         where: {
-          samExecutiveId,
+          ...(isAdminUser ? {} : { samExecutiveId: userId }),
           meetingDate: {
             gte: startOfWeek,
             lt: endOfWeek
@@ -1371,7 +1375,7 @@ export const getSAMExecutiveDashboardStats = asyncHandler(async function getSAME
       }),
       prisma.sAMMeeting.count({
         where: {
-          samExecutiveId,
+          ...(isAdminUser ? {} : { samExecutiveId: userId }),
           status: 'COMPLETED'
         }
       }),
@@ -1580,17 +1584,21 @@ export const getCustomerServiceDetails = asyncHandler(async function getCustomer
  * Create a new visit
  */
 export const createVisit = asyncHandler(async function createVisit(req, res) {
-    const samExecutiveId = req.user.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const isAdminUser = userRole === 'SUPER_ADMIN' || userRole === 'MASTER';
     const { customerId, visitDate, visitType, purpose, location } = req.body;
 
-    // Verify the executive is assigned to this customer
+    // Verify the executive is assigned to this customer (admin/MASTER bypass)
     const assignment = await prisma.sAMAssignment.findFirst({
-      where: { customerId, samExecutiveId }
+      where: isAdminUser ? { customerId } : { customerId, samExecutiveId: userId }
     });
 
     if (!assignment) {
       return res.status(403).json({ message: 'Not authorized to create visit for this customer.' });
     }
+
+    const samExecutiveId = isAdminUser ? assignment.samExecutiveId : userId;
 
     const visit = await prisma.sAMVisit.create({
       data: {
@@ -1754,6 +1762,7 @@ export const getVisitById = asyncHandler(async function getVisitById(req, res) {
 export const updateVisit = asyncHandler(async function updateVisit(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
+    const userRole = req.user.role;
     const { visitDate, visitType, purpose, location } = req.body;
 
     const existingVisit = await prisma.sAMVisit.findUnique({
@@ -1764,7 +1773,7 @@ export const updateVisit = asyncHandler(async function updateVisit(req, res) {
       return res.status(404).json({ message: 'Visit not found.' });
     }
 
-    if (existingVisit.samExecutiveId !== userId) {
+    if (existingVisit.samExecutiveId !== userId && userRole !== 'SUPER_ADMIN' && userRole !== 'MASTER') {
       return res.status(403).json({ message: 'Not authorized to update this visit.' });
     }
 
@@ -1802,6 +1811,7 @@ export const updateVisit = asyncHandler(async function updateVisit(req, res) {
 export const completeVisit = asyncHandler(async function completeVisit(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
+    const userRole = req.user.role;
     const {
       outcome,
       customerFeedback,
@@ -1821,7 +1831,7 @@ export const completeVisit = asyncHandler(async function completeVisit(req, res)
       return res.status(404).json({ message: 'Visit not found.' });
     }
 
-    if (existingVisit.samExecutiveId !== userId) {
+    if (existingVisit.samExecutiveId !== userId && userRole !== 'SUPER_ADMIN' && userRole !== 'MASTER') {
       return res.status(403).json({ message: 'Not authorized to complete this visit.' });
     }
 
@@ -1864,6 +1874,7 @@ export const completeVisit = asyncHandler(async function completeVisit(req, res)
 export const cancelVisit = asyncHandler(async function cancelVisit(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
+    const userRole = req.user.role;
 
     const existingVisit = await prisma.sAMVisit.findUnique({
       where: { id }
@@ -1873,7 +1884,7 @@ export const cancelVisit = asyncHandler(async function cancelVisit(req, res) {
       return res.status(404).json({ message: 'Visit not found.' });
     }
 
-    if (existingVisit.samExecutiveId !== userId) {
+    if (existingVisit.samExecutiveId !== userId && userRole !== 'SUPER_ADMIN' && userRole !== 'MASTER') {
       return res.status(403).json({ message: 'Not authorized to cancel this visit.' });
     }
 
@@ -2353,7 +2364,7 @@ export const updateCommunication = asyncHandler(async function updateCommunicati
       return res.status(404).json({ message: 'Communication not found.' });
     }
 
-    const isManagerOrAdmin = ['SAM_HEAD', 'SUPER_ADMIN'].includes(req.user.role);
+    const isManagerOrAdmin = ['SAM_HEAD', 'SUPER_ADMIN', 'MASTER'].includes(req.user.role);
     if (existingComm.samExecutiveId !== userId && !isManagerOrAdmin) {
       return res.status(403).json({ message: 'Not authorized to update this communication.' });
     }
@@ -2409,7 +2420,7 @@ export const sendCommunication = asyncHandler(async function sendCommunication(r
       return res.status(404).json({ message: 'Communication not found.' });
     }
 
-    const isManagerOrAdmin = ['SAM_HEAD', 'SUPER_ADMIN'].includes(req.user.role);
+    const isManagerOrAdmin = ['SAM_HEAD', 'SUPER_ADMIN', 'MASTER'].includes(req.user.role);
     if (communication.samExecutiveId !== userId && !isManagerOrAdmin) {
       return res.status(403).json({ message: 'Not authorized to send this communication.' });
     }
@@ -2480,7 +2491,7 @@ export const deleteCommunication = asyncHandler(async function deleteCommunicati
       return res.status(404).json({ message: 'Communication not found.' });
     }
 
-    const isManagerOrAdmin = ['SAM_HEAD', 'SUPER_ADMIN'].includes(req.user.role);
+    const isManagerOrAdmin = ['SAM_HEAD', 'SUPER_ADMIN', 'MASTER'].includes(req.user.role);
     if (communication.samExecutiveId !== userId && !isManagerOrAdmin) {
       return res.status(403).json({ message: 'Not authorized to delete this communication.' });
     }

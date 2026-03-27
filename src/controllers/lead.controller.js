@@ -677,9 +677,11 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
 
     const { page, limit, skip } = parsePagination(req.query, 50);
 
-    // BDMs see only their assigned leads, TLs see their own + team's leads, Admins see all
+    // Admins/MASTER see all, TLs see their own + team's leads, BDMs see only their assigned leads
     let whereClause = {};
-    if (isTL) {
+    if (isAdmin) {
+      // Admin/MASTER: see all leads — whereClause stays empty
+    } else if (isTL) {
       const teamMemberIds = (await prisma.user.findMany({
         where: { teamLeaderId: userId, isActive: true },
         select: { id: true }
@@ -714,18 +716,20 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
         },
         distinct: ['campaignDataId']
       }),
-      // Count for pagination (TL sees own working leads + team NEW; others see only NEW)
+      // Count for pagination (Admin/MASTER: all; TL: own working + team NEW; others: only NEW)
       prisma.lead.count({
         where: {
           ...whereClause,
-          ...(isTL
-            ? {
-                OR: [
-                  { status: 'NEW' },
-                  { assignedToId: userId, status: { in: ['FOLLOW_UP', 'MEETING_SCHEDULED', 'QUALIFIED', 'FEASIBLE', 'NOT_FEASIBLE', 'DROPPED'] } }
-                ]
-              }
-            : { status: 'NEW' }
+          ...(isAdmin
+            ? {}
+            : isTL
+              ? {
+                  OR: [
+                    { status: 'NEW' },
+                    { assignedToId: userId, status: { in: ['FOLLOW_UP', 'MEETING_SCHEDULED', 'QUALIFIED', 'FEASIBLE', 'NOT_FEASIBLE', 'DROPPED'] } }
+                  ]
+                }
+              : { status: 'NEW' }
           ),
           ...(campaignId && { campaignData: { campaignId } })
         }
@@ -794,16 +798,17 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
 
     const campaigns = Array.from(campaignsMap.values());
 
-    // For TL: include their own working leads (non-NEW) + all team NEW leads
-    // For BDM/Admin: only NEW leads
-    const statusFilter = isTL
-      ? {
-          OR: [
-            { status: 'NEW' },
-            { assignedToId: userId, status: { in: ['FOLLOW_UP', 'MEETING_SCHEDULED', 'QUALIFIED', 'FEASIBLE', 'NOT_FEASIBLE', 'DROPPED'] } }
-          ]
-        }
-      : { status: 'NEW' };
+    // Admin/MASTER: show all statuses; TL: own working + team NEW; BDM: only NEW
+    const statusFilter = isAdmin
+      ? {}
+      : isTL
+        ? {
+            OR: [
+              { status: 'NEW' },
+              { assignedToId: userId, status: { in: ['FOLLOW_UP', 'MEETING_SCHEDULED', 'QUALIFIED', 'FEASIBLE', 'NOT_FEASIBLE', 'DROPPED'] } }
+            ]
+          }
+        : { status: 'NEW' };
 
     const queueLeads = await prisma.lead.findMany({
       where: {
@@ -1214,12 +1219,14 @@ export const getBDMScheduledMeetings = asyncHandler(async function getBDMSchedul
     }
 
     // Admin/TL can view a specific BDM's meetings via ?userId= query param
+    // Admin/MASTER without userId param sees ALL meetings
     const targetUserId = (isAdmin || isTL) && req.query.userId ? req.query.userId : req.user.id;
+    const showAll = isAdmin && !req.query.userId;
 
-    // Get all scheduled meetings for this BDM
+    // Get all scheduled meetings for this BDM (or all if admin without filter)
     const meetings = await prisma.lead.findMany({
       where: {
-        assignedToId: targetUserId,
+        ...(!showAll && { assignedToId: targetUserId }),
         status: 'MEETING_SCHEDULED'
       },
       orderBy: [
@@ -1296,7 +1303,7 @@ export const getBDMScheduledMeetings = asyncHandler(async function getBDMSchedul
     // Count completed meetings (leads that had meetings and have meetingOutcome set)
     const completedMeetingsCount = await prisma.lead.count({
       where: {
-        assignedToId: userId,
+        ...(!showAll && { assignedToId: targetUserId }),
         meetingOutcome: { not: null }
       }
     });
@@ -1733,14 +1740,15 @@ export const getBDMFollowUps = asyncHandler(async function getBDMFollowUps(req, 
     const userId = req.user.id;
     const isBDM = hasRole(req.user, 'BDM');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isAdmin = isAdminOrTestUser(req.user);
 
-    if (!isBDM && !isTL) {
-      return res.status(403).json({ message: 'Only BDM or Team Leader can access this endpoint.' });
+    if (!isBDM && !isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only BDM, Team Leader or Admin can access this endpoint.' });
     }
 
     const leads = await prisma.lead.findMany({
       where: {
-        assignedToId: userId,
+        ...(!isAdmin && { assignedToId: userId }),
         status: 'FOLLOW_UP',
         callLaterAt: { not: null }
       },
@@ -1819,14 +1827,15 @@ export const getBDMDeliveryCompleted = asyncHandler(async function getBDMDeliver
     const userId = req.user.id;
     const isBDM = hasRole(req.user, 'BDM');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isAdmin = isAdminOrTestUser(req.user);
 
-    if (!isBDM && !isTL) {
-      return res.status(403).json({ message: 'Only BDM or Team Leader can access this endpoint.' });
+    if (!isBDM && !isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only BDM, Team Leader or Admin can access this endpoint.' });
     }
 
     const leads = await prisma.lead.findMany({
       where: {
-        assignedToId: userId,
+        ...(!isAdmin && { assignedToId: userId }),
         deliveryStatus: 'COMPLETED'
       },
       orderBy: { updatedAt: 'desc' },
@@ -6567,9 +6576,9 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
       return leadStage === stage;
     });
 
-    // If delivery team member, filter to only their leads or unassigned
+    // If delivery team member (but not admin/MASTER), filter to only their leads or unassigned
     let leadsToReturn = filteredLeads;
-    if (isDeliveryTeam) {
+    if (isDeliveryTeam && !isAdmin) {
       leadsToReturn = filteredLeads.filter(lead =>
         lead.deliveryAssignedToId === userId || !lead.deliveryAssignedToId
       );
@@ -8549,6 +8558,7 @@ export const getCompletedLeadsQueue = asyncHandler(async function getCompletedLe
       actualPlanNotes: lead.actualPlanNotes,
       // Dates
       customerAcceptanceAt: lead.customerAcceptanceAt,
+      isImported: lead.isImported,
       assignedTo: lead.assignedTo
     }));
 
@@ -9215,10 +9225,10 @@ export const getPlanUpgradeHistory = asyncHandler(async function getPlanUpgradeH
 export const bypassPipelineApproval = asyncHandler(async function bypassPipelineApproval(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
-    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN' || req.user.role === 'MASTER';
 
     if (!isSuperAdmin) {
-      return res.status(403).json({ message: 'Only SUPER_ADMIN can bypass pipeline approvals.' });
+      return res.status(403).json({ message: 'Only SUPER_ADMIN or MASTER can bypass pipeline approvals.' });
     }
 
     const lead = await prisma.lead.findUnique({

@@ -274,7 +274,7 @@ export const getPendingApprovalRequests = asyncHandler(async function getPending
   // Determine which requests to show based on role
   let whereClause = {};
 
-  if (isTestUser || userRole === 'SUPER_ADMIN') {
+  if (isTestUser || userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
     // Super Admin/Test User sees all requests that need approval
     whereClause = {
       status: {
@@ -330,7 +330,8 @@ export const getPendingApprovalRequests = asyncHandler(async function getPending
 
 // Get approval stats
 const getApprovalStats = async (userRole) => {
-  const baseWhere = userRole === 'SUPER_ADMIN'
+  const isSuperOrMaster = userRole === 'SUPER_ADMIN' || userRole === 'MASTER';
+  const baseWhere = isSuperOrMaster
     ? { superAdminApprovedById: null, superAdminRejectedById: null }
     : { areaHeadApprovedById: null, areaHeadRejectedById: null };
 
@@ -338,7 +339,7 @@ const getApprovalStats = async (userRole) => {
     prisma.deliveryRequest.count({
       where: {
         ...baseWhere,
-        status: { in: ['PENDING_APPROVAL', userRole === 'SUPER_ADMIN' ? 'AREA_HEAD_APPROVED' : 'SUPER_ADMIN_APPROVED'] }
+        status: { in: ['PENDING_APPROVAL', isSuperOrMaster ? 'AREA_HEAD_APPROVED' : 'SUPER_ADMIN_APPROVED'] }
       }
     }),
     prisma.deliveryRequest.count({
@@ -384,7 +385,7 @@ export const approveDeliveryRequest = asyncHandler(async function approveDeliver
     let txNewStatus = request.status;
     let txAction = '';
 
-    if (isTestUser || userRole === 'SUPER_ADMIN') {
+    if (isTestUser || userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
       if (request.superAdminApprovedById) {
         throw Object.assign(new Error('You have already approved this request'), { statusCode: 400 });
       }
@@ -498,7 +499,7 @@ export const rejectDeliveryRequest = asyncHandler(async function rejectDeliveryR
   let updateData = {};
   let action = '';
 
-  if (isTestUser || userRole === 'SUPER_ADMIN') {
+  if (isTestUser || userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
     updateData = {
       superAdminRejectedById: userId,
       superAdminRejectedAt: new Date(),
