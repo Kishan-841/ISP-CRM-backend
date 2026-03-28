@@ -238,7 +238,7 @@ export const getLead = asyncHandler(async function getLead(req, res) {
 
 // Convert campaign data to lead
 export const convertToLead = asyncHandler(async function convertToLead(req, res) {
-    const { campaignDataId, requirements, productIds, assignedToId, type, sharedVia } = req.body;
+    const { campaignDataId, requirements, productIds, assignedToId, type, sharedVia, bandwidthRequirement } = req.body;
     const userId = req.user.id;
 
     if (!campaignDataId) {
@@ -299,6 +299,9 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
     }
     if (sharedVia) {
       leadData.sharedVia = sharedVia;
+    }
+    if (bandwidthRequirement) {
+      leadData.bandwidthRequirement = bandwidthRequirement;
     }
 
     // Create lead + update campaign data atomically in a transaction
@@ -1273,6 +1276,8 @@ export const getBDMScheduledMeetings = asyncHandler(async function getBDMSchedul
       industry: lead.campaignData.industry,
       // Campaign info
       campaign: lead.campaignData.campaign,
+      // Bandwidth
+      bandwidthRequirement: lead.bandwidthRequirement,
       // Products
       products: lead.products.map(lp => lp.product),
       // Created by

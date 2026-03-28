@@ -106,6 +106,7 @@ model User {
   teamLeaderId                       String?
   teamLeader                         User?                 @relation("TeamMemberRelation", fields: [teamLeaderId], references: [id], onDelete: SetNull)
   teamMembers                        User[]                @relation("TeamMemberRelation")
+  popLocationsCreated                PopLocation[]         @relation("PopLocationCreatedBy")
 
   @@index([teamLeaderId])
 }
@@ -2057,4 +2058,18 @@ model DisconnectionSubCategory {
   serviceOrders ServiceOrder[]
 
   @@index([categoryId])
+}
+
+model PopLocation {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  latitude    Float?
+  longitude   Float?
+  address     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("PopLocationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([name])
 }
