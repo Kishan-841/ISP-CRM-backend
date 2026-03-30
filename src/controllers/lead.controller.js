@@ -7197,7 +7197,7 @@ export const createCustomerUser = asyncHandler(async function createCustomerUser
     const { username, password } = req.body;
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = hasRole(req.user, 'NOC');
+    const isNOC = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD');
 
     if (!isAdmin && !isNOC) {
       return res.status(403).json({ message: 'Only NOC team can create customer accounts.' });
@@ -7414,7 +7414,7 @@ export const assignCustomerIP = asyncHandler(async function assignCustomerIP(req
     const { ipAddress, ipAddresses } = req.body;
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = hasRole(req.user, 'NOC');
+    const isNOC = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD');
 
     if (!isAdmin && !isNOC) {
       return res.status(403).json({ message: 'Only NOC team can assign IPs.' });
@@ -7479,7 +7479,7 @@ export const generateCircuitId = asyncHandler(async function generateCircuitId(r
     const { id } = req.params;
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = hasRole(req.user, 'NOC');
+    const isNOC = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD');
 
     if (!isAdmin && !isNOC) {
       return res.status(403).json({ message: 'Only NOC team can generate circuit IDs.' });
@@ -7566,7 +7566,7 @@ export const configureCustomerSwitch = asyncHandler(async function configureCust
     const userRole = req.user.role;
     const isDeliveryTeam = userRole === 'DELIVERY_TEAM';
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = userRole === 'NOC';
+    const isNOC = userRole === 'NOC' || userRole === 'NOC_HEAD';
 
     if (!isDeliveryTeam && !isAdmin && !isNOC) {
       return res.status(403).json({ message: 'Only Delivery Team or NOC can configure switch.' });
@@ -7615,11 +7615,12 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
     const { page, limit, skip } = parsePagination(req.query, 50);
 
     const userRole = req.user.role;
-    const isNOC = hasRole(req.user, 'NOC');
+    const isNOC = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD');
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
 
-    if (!isNOC && !isTL && !isAdmin) {
+    if (!isNOC && !isNOCHead && !isTL && !isAdmin) {
       return res.status(403).json({ message: 'Only NOC team can access this endpoint.' });
     }
 
@@ -7654,6 +7655,11 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
     }
 
     whereClause.id = { in: leadIds };
+
+    // NOC users only see leads assigned to them; NOC_HEAD and admins see all
+    if (isNOC && !isNOCHead && !isAdmin) {
+      whereClause.nocAssignedToId = req.user.id;
+    }
 
     // Filter by status (new flow: pending -> user_created -> ip_assigned -> completed)
     if (status === 'pending') {
@@ -7703,6 +7709,8 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
           customerIpAssigned: true,
           customerIpAddresses: true,
           circuitId: true,
+          nocAssignedToId: true,
+          nocAssignedAt: true,
           nocConfiguredAt: true,
           deliveryStatus: true,
           nocPushedToDeliveryAt: true,
@@ -7727,6 +7735,7 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
           assignedTo: { select: { id: true, name: true, email: true } },
           deliveryAssignedTo: { select: { id: true, name: true, email: true } },
           customerCreatedBy: { select: { id: true, name: true, email: true } },
+          nocAssignedTo: { select: { id: true, name: true, email: true } },
           nocConfiguredBy: { select: { id: true, name: true, email: true } },
           enquiryCreatedFrom: {
             select: { id: true }
@@ -7806,6 +7815,7 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
         customerIpAssigned: lead.customerIpAssigned,
         customerIpAddresses: lead.customerIpAddresses || [],
         circuitId: lead.circuitId,
+        nocAssignedTo: lead.nocAssignedTo,
         nocConfiguredAt: lead.nocConfiguredAt,
         nocConfiguredBy: lead.nocConfiguredBy,
         // Delivery info
@@ -7834,11 +7844,109 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
     });
 });
 
+/**
+ * NOC Head: Assign lead to a NOC user
+ * POST /leads/noc/:id/assign
+ */
+export const nocAssignLead = asyncHandler(async function nocAssignLead(req, res) {
+    const { id } = req.params;
+    const { nocUserId } = req.body;
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
+    const isAdmin = isAdminOrTestUser(req.user);
+
+    if (!isNOCHead && !isAdmin) {
+      return res.status(403).json({ message: 'Only NOC Head can assign leads.' });
+    }
+
+    if (!nocUserId) {
+      return res.status(400).json({ message: 'NOC user ID is required.' });
+    }
+
+    const lead = await prisma.lead.findUnique({ where: { id } });
+    if (!lead) return res.status(404).json({ message: 'Lead not found.' });
+
+    const nocUser = await prisma.user.findUnique({ where: { id: nocUserId }, select: { id: true, name: true, role: true } });
+    if (!nocUser || (nocUser.role !== 'NOC' && nocUser.role !== 'NOC_HEAD')) {
+      return res.status(400).json({ message: 'Invalid NOC user.' });
+    }
+
+    const updated = await prisma.lead.update({
+      where: { id },
+      data: { nocAssignedToId: nocUserId, nocAssignedAt: new Date() }
+    });
+
+    emitSidebarRefresh(nocUserId);
+
+    res.json({ message: `Lead assigned to ${nocUser.name}.`, lead: updated });
+});
+
+/**
+ * NOC Head: Get NOC team stats
+ * GET /leads/noc/team-stats
+ */
+export const getNocTeamStats = asyncHandler(async function getNocTeamStats(req, res) {
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
+    const isAdmin = isAdminOrTestUser(req.user);
+
+    if (!isNOCHead && !isAdmin) {
+      return res.status(403).json({ message: 'Only NOC Head can view team stats.' });
+    }
+
+    // Get all NOC users
+    const nocUsers = await prisma.user.findMany({
+      where: { role: 'NOC', isActive: true },
+      select: { id: true, name: true, email: true }
+    });
+
+    // Get all NOC-pushed leads
+    const deliveryRequests = await prisma.deliveryRequest.findMany({
+      where: { pushedToNocAt: { not: null } },
+      select: { leadId: true }
+    });
+    const leadIds = deliveryRequests.map(dr => dr.leadId);
+
+    if (leadIds.length === 0) {
+      return res.json({ nocUsers: nocUsers.map(u => ({ ...u, stats: { assigned: 0, pending: 0, customerCreated: 0, ipAssigned: 0, configured: 0 } })), unassigned: 0 });
+    }
+
+    // Get all leads with NOC data
+    const leads = await prisma.lead.findMany({
+      where: { id: { in: leadIds } },
+      select: {
+        id: true,
+        nocAssignedToId: true,
+        customerUserId: true,
+        customerIpAddresses: true,
+        circuitId: true
+      }
+    });
+
+    const hasIps = (lead) => lead.customerIpAddresses && Array.isArray(lead.customerIpAddresses) && lead.customerIpAddresses.length > 0;
+
+    const unassigned = leads.filter(l => !l.nocAssignedToId).length;
+
+    const userStats = nocUsers.map(user => {
+      const userLeads = leads.filter(l => l.nocAssignedToId === user.id);
+      return {
+        ...user,
+        stats: {
+          assigned: userLeads.length,
+          pending: userLeads.filter(l => !l.customerUserId).length,
+          customerCreated: userLeads.filter(l => l.customerUserId && !hasIps(l)).length,
+          ipAssigned: userLeads.filter(l => hasIps(l) && !l.circuitId).length,
+          configured: userLeads.filter(l => !!l.circuitId).length
+        }
+      };
+    });
+
+    res.json({ nocUsers: userStats, unassigned, totalLeads: leads.length });
+});
+
 // Get NOC lead details
 export const getNocLeadDetails = asyncHandler(async function getNocLeadDetails(req, res) {
     const { id } = req.params;
     const userRole = req.user.role;
-    const isNOC = userRole === 'NOC';
+    const isNOC = userRole === 'NOC' || userRole === 'NOC_HEAD';
     const isAdmin = isAdminOrTestUser(req.user);
 
     if (!isNOC && !isAdmin) {
@@ -7914,6 +8022,7 @@ export const getNocLeadDetails = asyncHandler(async function getNocLeadDetails(r
         customerIpAssigned: lead.customerIpAssigned,
         customerIpAddresses: lead.customerIpAddresses || [],
         circuitId: lead.circuitId,
+        nocAssignedTo: lead.nocAssignedTo,
         nocConfiguredAt: lead.nocConfiguredAt,
         nocConfiguredBy: lead.nocConfiguredBy,
         // Delivery info
@@ -7940,7 +8049,7 @@ export const nocPushToDelivery = asyncHandler(async function nocPushToDelivery(r
     const { id } = req.params;
     const userId = req.user.id;
     const userRole = req.user.role;
-    const isNOC = userRole === 'NOC';
+    const isNOC = userRole === 'NOC' || userRole === 'NOC_HEAD';
     const isAdmin = isAdminOrTestUser(req.user);
 
     if (!isNOC && !isAdmin) {
@@ -8241,7 +8350,7 @@ export const getSpeedTestDetails = asyncHandler(async function getSpeedTestDetai
     const userRole = req.user.role;
     const isDeliveryTeam = userRole === 'DELIVERY_TEAM';
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = userRole === 'NOC';
+    const isNOC = userRole === 'NOC' || userRole === 'NOC_HEAD';
 
     if (!isDeliveryTeam && !isAdmin && !isNOC) {
       return res.status(403).json({ message: 'Access denied.' });

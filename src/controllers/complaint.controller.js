@@ -17,10 +17,10 @@ const VALID_TRANSITIONS = {
 };
 
 // Roles allowed to create complaints
-const CREATOR_ROLES = ['NOC', 'SUPPORT_TEAM', 'SUPER_ADMIN'];
+const CREATOR_ROLES = ['NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'SUPER_ADMIN'];
 
 // Roles allowed to view all complaints (not just their own)
-const ADMIN_VIEW_ROLES = ['SUPER_ADMIN', 'ADMIN', 'NOC', 'OPS_TEAM'];
+const ADMIN_VIEW_ROLES = ['SUPER_ADMIN', 'ADMIN', 'NOC', 'NOC_HEAD', 'OPS_TEAM'];
 
 // Select clause for complaint list (lightweight)
 const complaintListSelect = {

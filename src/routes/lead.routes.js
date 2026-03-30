@@ -81,6 +81,8 @@ import {
   // NOC Team functions
   getNocQueue,
   getNocLeadDetails,
+  nocAssignLead,
+  getNocTeamStats,
   nocPushToDelivery,
   // Speed Test & Customer Acceptance functions
   uploadSpeedTest,
@@ -450,6 +452,12 @@ router.patch('/delivery-team/:id/customer-switch', configureCustomerSwitch);
 
 // Get NOC queue (leads pushed to NOC)
 router.get('/noc/queue', getNocQueue);
+
+// NOC Head: team stats
+router.get('/noc/team-stats', getNocTeamStats);
+
+// NOC Head: assign lead to NOC user
+router.post('/noc/:id/assign', nocAssignLead);
 
 // Get NOC lead details
 router.get('/noc/:id/details', getNocLeadDetails);

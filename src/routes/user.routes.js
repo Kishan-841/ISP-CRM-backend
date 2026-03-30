@@ -24,7 +24,7 @@ router.get('/sidebar-counts', getSidebarCounts);
 router.get('/isr-list', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'), getISRUsersForAssignment);
 
 // Users by role - accessible by BDM (for delivery user assignment), complaint-handling roles, and SUPER_ADMIN
-router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 'SAM_EXECUTIVE', 'NOC', 'SUPPORT_TEAM', 'OPS_TEAM', 'SUPER_ADMIN'), getUsersByRole);
+router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 'SAM_EXECUTIVE', 'NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'OPS_TEAM', 'SUPER_ADMIN'), getUsersByRole);
 
 // Routes below require SUPER_ADMIN or BDM_TEAM_LEADER role
 router.use(requireRole('SUPER_ADMIN', 'BDM_TEAM_LEADER'));

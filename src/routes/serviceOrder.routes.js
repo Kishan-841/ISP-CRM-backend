@@ -58,12 +58,12 @@ router.post(
 // NOC service order queue and processing
 router.get(
   '/noc/queue',
-  requireRole('NOC', 'SUPER_ADMIN'),
+  requireRole('NOC', 'NOC_HEAD', 'SUPER_ADMIN'),
   getNocServiceOrderQueue
 );
 router.post(
   '/:id/noc-process',
-  requireRole('NOC', 'SUPER_ADMIN'),
+  requireRole('NOC', 'NOC_HEAD', 'SUPER_ADMIN'),
   uploadOrderAttachments.single('speedTest'),
   nocProcessServiceOrder
 );

@@ -46,6 +46,7 @@ model User {
   deliveryAssignedLeads              Lead[]                @relation("DeliveryAssignedTo")
   demoPlanAssignedLeads              Lead[]                @relation("DemoPlanAssignedBy")
   feasibilityAssignedLeads           Lead[]                @relation("FeasibilityAssignedTo")
+  nocAssignedLeads                   Lead[]                @relation("NocAssignedTo")
   nocConfiguredLeads                 Lead[]                @relation("NocConfiguredBy")
   nocPushedToDeliveryLeads           Lead[]                @relation("NocPushedToDelivery")
   opsApprovedLeads                   Lead[]                @relation("OpsApprovedBy")
@@ -323,6 +324,8 @@ model Lead {
   customerSwitchPort        String?
   customerUserId            String?              @unique
   customerUsername          String?              @unique
+  nocAssignedToId           String?
+  nocAssignedAt             DateTime?
   nocConfiguredAt           DateTime?
   nocConfiguredById         String?
   billingAddress            String?
@@ -386,6 +389,7 @@ model Lead {
   deliveryAssignedTo        User?                @relation("DeliveryAssignedTo", fields: [deliveryAssignedToId], references: [id], onDelete: SetNull)
   demoPlanAssignedBy        User?                @relation("DemoPlanAssignedBy", fields: [demoPlanAssignedById], references: [id], onDelete: SetNull)
   feasibilityAssignedTo     User?                @relation("FeasibilityAssignedTo", fields: [feasibilityAssignedToId], references: [id], onDelete: SetNull)
+  nocAssignedTo             User?                @relation("NocAssignedTo", fields: [nocAssignedToId], references: [id], onDelete: SetNull)
   nocConfiguredBy           User?                @relation("NocConfiguredBy", fields: [nocConfiguredById], references: [id], onDelete: SetNull)
   nocPushedToDeliveryBy     User?                @relation("NocPushedToDelivery", fields: [nocPushedToDeliveryById], references: [id], onDelete: SetNull)
   opsApprovedBy             User?                @relation("OpsApprovedBy", fields: [opsApprovedById], references: [id], onDelete: SetNull)
@@ -1318,6 +1322,7 @@ enum Role {
   ADMIN
   AREA_HEAD
   NOC
+  NOC_HEAD
   SUPPORT_TEAM
   TEST_USER
 }
