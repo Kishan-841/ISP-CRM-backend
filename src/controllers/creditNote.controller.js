@@ -150,179 +150,40 @@ export const createCreditNote = asyncHandler(async function createCreditNote(req
     });
   }
 
-  // Generate credit note number and advance payment receipt number (if needed)
+  // Generate credit note number
   const creditNoteNumber = await generateCreditNoteNumber();
 
-  // Create credit note, update invoice, and create ledger entry in a single transaction.
-  // Wrapped in try/catch for race condition handling.
-  // The ledger entry MUST be inside the transaction to guarantee consistency:
-  // a credit note must never exist without its corresponding ledger entry.
-  let result;
-  try {
-  result = await prisma.$transaction(async (tx) => {
-    // Create credit note
-    const creditNote = await tx.creditNote.create({
-      data: {
-        creditNoteNumber,
-        invoiceId,
-        baseAmount,
-        sgstRate,
-        cgstRate,
-        sgstAmount,
-        cgstAmount,
-        totalGstAmount,
-        totalAmount,
-        reason,
-        status: 'ISSUED',
-        remarks,
-        createdById: userId
-      },
-      include: {
-        createdBy: { select: { id: true, name: true } }
-      }
-    });
-
-    // Recalculate invoice amounts from actual credit notes (atomic check inside transaction)
-    const totalCredits = await tx.creditNote.aggregate({
-      where: { invoiceId: invoice.id },
-      _sum: { totalAmount: true },
-    });
-    const totalCreditAmount = totalCredits._sum.totalAmount || 0;
-
-    // Re-validate credit cap INSIDE transaction to prevent race condition
-    if (totalCreditAmount > invoice.grandTotal + 1) {
-      throw new Error('CREDIT_CAP_EXCEEDED');
+  // Create credit note as PENDING_APPROVAL - no invoice/ledger changes until admin approves
+  const creditNote = await prisma.creditNote.create({
+    data: {
+      creditNoteNumber,
+      invoiceId,
+      baseAmount,
+      sgstRate,
+      cgstRate,
+      sgstAmount,
+      cgstAmount,
+      totalGstAmount,
+      totalAmount,
+      reason,
+      status: 'PENDING_APPROVAL',
+      remarks,
+      createdById: userId
+    },
+    include: {
+      createdBy: { select: { id: true, name: true } },
+      invoice: { select: { invoiceNumber: true } }
     }
-
-    const netPayableAmount = invoice.grandTotal - totalCreditAmount;
-    const newRemainingAmount = netPayableAmount - (invoice.totalPaidAmount || 0);
-
-    // Determine new status
-    let newStatus = invoice.status;
-    if (netPayableAmount <= 0) {
-      newStatus = 'CANCELLED';
-    } else if (newRemainingAmount <= 1) {
-      newStatus = 'PAID';
-    } else if (newRemainingAmount > 0 && (invoice.totalPaidAmount || 0) > 0) {
-      newStatus = 'PARTIALLY_PAID';
-    } else if (invoice.dueDate < new Date() && newRemainingAmount > 0) {
-      newStatus = 'OVERDUE';
-    } else {
-      newStatus = 'GENERATED';
-    }
-
-    const updatedInvoice = await tx.invoice.update({
-      where: { id: invoiceId },
-      data: {
-        totalCreditAmount,
-        remainingAmount: Math.max(0, newRemainingAmount),
-        status: newStatus
-      }
-    });
-
-    // Create ledger entry for the credit note INSIDE the transaction
-    const reasonMap = {
-      'SERVICE_DOWNTIME': 'Service Downtime',
-      'OVERPAYMENT': 'Overpayment',
-      'PRICE_ADJUSTMENT': 'Price Adjustment',
-      'CANCELLATION': 'Cancellation',
-      'ERROR_CORRECTION': 'Error Correction',
-      'PLAN_DOWNGRADE': 'Plan Downgrade'
-    };
-    const reasonLabel = reasonMap[creditNote.reason] || creditNote.reason;
-
-    // Get previous balance for running balance calculation
-    const lastEntry = await tx.ledgerEntry.findFirst({
-      where: { customerId: invoice.leadId },
-      orderBy: [
-        { entryDate: 'desc' },
-        { createdAt: 'desc' }
-      ],
-      select: { runningBalance: true }
-    });
-    const previousBalance = lastEntry?.runningBalance || 0;
-    const runningBalance = previousBalance - creditNote.totalAmount; // Credit reduces balance
-
-    await tx.ledgerEntry.create({
-      data: {
-        customerId: invoice.leadId,
-        entryDate: creditNote.creditNoteDate || new Date(),
-        entryType: 'CREDIT_NOTE',
-        referenceType: 'CREDIT_NOTE',
-        referenceId: creditNote.id,
-        referenceNumber: creditNote.creditNoteNumber,
-        debitAmount: 0,
-        creditAmount: creditNote.totalAmount,
-        runningBalance,
-        description: `Credit Note ${creditNote.creditNoteNumber} issued - ${reasonLabel} against ${invoice.invoiceNumber}`,
-        createdById: userId
-      }
-    });
-
-    // If invoice was PAID and credit note is issued, create advance payment
-    let advancePayment = null;
-    if (isPaidInvoice) {
-      // Generate a unique receipt number for the advance payment
-      const timestamp = Date.now();
-      const random = Math.floor(Math.random() * 1000);
-      const advanceReceiptNumber = `ADV-CN-${timestamp}-${random}`;
-
-      advancePayment = await tx.advancePayment.create({
-        data: {
-          receiptNumber: advanceReceiptNumber,
-          leadId: invoice.leadId,
-          amount: totalAmount,
-          paymentMode: 'CREDIT_NOTE',
-          remark: `Advance payment from Credit Note ${creditNoteNumber} for Invoice ${invoice.invoiceNumber}. Reason: ${reason}`,
-          provisionalReceiptNo: creditNoteNumber,
-          transactionDate: new Date(),
-          createdById: userId
-        }
-      });
-      // NOTE: No separate ledger entry for advance payment — the CREDIT_NOTE
-      // ledger entry above already credits the customer's balance. The advance
-      // payment record tracks the amount available for future invoice settlement.
-    }
-
-    return { creditNote, invoice: updatedInvoice, advancePayment };
   });
-  } catch (error) {
-    if (error.message === 'CREDIT_CAP_EXCEEDED') {
-      return res.status(400).json({ message: 'Total credit notes exceed invoice amount. Another credit note may have been created concurrently.' });
-    }
-    throw error;
-  }
 
-  const response = {
-    message: result.advancePayment
-      ? 'Credit note created successfully. Amount added to advance payment for future invoices.'
-      : 'Credit note created successfully.',
-    creditNote: result.creditNote,
-    invoice: {
-      id: result.invoice.id,
-      invoiceNumber: invoice.invoiceNumber,
-      grandTotal: result.invoice.grandTotal,
-      totalCreditAmount: result.invoice.totalCreditAmount,
-      totalPaidAmount: result.invoice.totalPaidAmount,
-      netPayableAmount: result.invoice.grandTotal - result.invoice.totalCreditAmount,
-      remainingAmount: result.invoice.remainingAmount,
-      status: result.invoice.status
-    }
-  };
-
-  if (result.advancePayment) {
-    response.advancePayment = {
-      receiptNumber: result.advancePayment.receiptNumber,
-      amount: result.advancePayment.amount,
-      remark: result.advancePayment.remark
-    };
-  }
-
-  // Notify accounts team of credit note creation
-  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+  // Notify admin for approval
   emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('ADMIN');
 
-  res.status(201).json(response);
+  res.status(201).json({
+    message: 'Credit note created and sent for admin approval.',
+    creditNote
+  });
 });
 
 /**
@@ -728,4 +589,209 @@ export const getCustomerCreditSummary = asyncHandler(async function getCustomerC
     },
     recentCreditNotes: allCreditNotes.slice(0, 5)
   });
+});
+
+/**
+ * Get pending credit notes for admin approval
+ * GET /credit-notes/pending-approval
+ */
+export const getPendingCreditNotes = asyncHandler(async function getPendingCreditNotes(req, res) {
+  if (!isAdminOrTestUser(req.user)) {
+    return res.status(403).json({ message: 'Only admins can view pending credit notes.' });
+  }
+
+  const creditNotes = await prisma.creditNote.findMany({
+    where: { status: 'PENDING_APPROVAL' },
+    include: {
+      invoice: {
+        select: {
+          id: true, invoiceNumber: true, grandTotal: true, totalCreditAmount: true,
+          totalPaidAmount: true, remainingAmount: true, status: true,
+          lead: { select: { id: true, campaignData: { select: { company: true, name: true } } } }
+        }
+      },
+      createdBy: { select: { id: true, name: true, role: true } }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  res.json({ creditNotes, total: creditNotes.length });
+});
+
+/**
+ * Approve a credit note - applies invoice/ledger changes
+ * POST /credit-notes/:id/approve
+ */
+export const approveCreditNote = asyncHandler(async function approveCreditNote(req, res) {
+  if (!isAdminOrTestUser(req.user)) {
+    return res.status(403).json({ message: 'Only admins can approve credit notes.' });
+  }
+
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  const creditNote = await prisma.creditNote.findUnique({
+    where: { id },
+    include: {
+      invoice: {
+        include: {
+          lead: { include: { campaignData: { select: { company: true } } } }
+        }
+      }
+    }
+  });
+
+  if (!creditNote) {
+    return res.status(404).json({ message: 'Credit note not found.' });
+  }
+
+  if (creditNote.status !== 'PENDING_APPROVAL') {
+    return res.status(400).json({ message: 'Only pending credit notes can be approved.' });
+  }
+
+  const invoice = creditNote.invoice;
+  const isPaidInvoice = invoice.status === 'PAID' && invoice.totalPaidAmount >= invoice.grandTotal;
+
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      // Update credit note status to ISSUED
+      const updatedCreditNote = await tx.creditNote.update({
+        where: { id },
+        data: { status: 'ISSUED' },
+        include: { createdBy: { select: { id: true, name: true } } }
+      });
+
+      // Recalculate invoice amounts from ISSUED credit notes
+      const totalCredits = await tx.creditNote.aggregate({
+        where: { invoiceId: invoice.id, status: { in: ['ISSUED', 'ADJUSTED'] } },
+        _sum: { totalAmount: true }
+      });
+      const totalCreditAmount = totalCredits._sum.totalAmount || 0;
+
+      if (totalCreditAmount > invoice.grandTotal + 1) {
+        throw new Error('CREDIT_CAP_EXCEEDED');
+      }
+
+      const netPayableAmount = invoice.grandTotal - totalCreditAmount;
+      const newRemainingAmount = netPayableAmount - (invoice.totalPaidAmount || 0);
+
+      let newStatus = invoice.status;
+      if (netPayableAmount <= 0) newStatus = 'CANCELLED';
+      else if (newRemainingAmount <= 1) newStatus = 'PAID';
+      else if (newRemainingAmount > 0 && (invoice.totalPaidAmount || 0) > 0) newStatus = 'PARTIALLY_PAID';
+      else if (invoice.dueDate < new Date() && newRemainingAmount > 0) newStatus = 'OVERDUE';
+      else newStatus = 'GENERATED';
+
+      const updatedInvoice = await tx.invoice.update({
+        where: { id: invoice.id },
+        data: { totalCreditAmount, remainingAmount: Math.max(0, newRemainingAmount), status: newStatus }
+      });
+
+      // Create ledger entry
+      const reasonMap = {
+        'SERVICE_DOWNTIME': 'Service Downtime', 'OVERPAYMENT': 'Overpayment',
+        'PRICE_ADJUSTMENT': 'Price Adjustment', 'CANCELLATION': 'Cancellation',
+        'ERROR_CORRECTION': 'Error Correction', 'PLAN_DOWNGRADE': 'Plan Downgrade'
+      };
+      const reasonLabel = reasonMap[creditNote.reason] || creditNote.reason;
+
+      const lastEntry = await tx.ledgerEntry.findFirst({
+        where: { customerId: invoice.leadId },
+        orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
+        select: { runningBalance: true }
+      });
+      const previousBalance = lastEntry?.runningBalance || 0;
+      const runningBalance = previousBalance - creditNote.totalAmount;
+
+      await tx.ledgerEntry.create({
+        data: {
+          customerId: invoice.leadId,
+          entryDate: new Date(),
+          entryType: 'CREDIT_NOTE',
+          referenceType: 'CREDIT_NOTE',
+          referenceId: creditNote.id,
+          referenceNumber: creditNote.creditNoteNumber,
+          debitAmount: 0,
+          creditAmount: creditNote.totalAmount,
+          runningBalance,
+          description: `Credit Note ${creditNote.creditNoteNumber} approved - ${reasonLabel} against ${invoice.invoiceNumber}`,
+          createdById: userId
+        }
+      });
+
+      // If invoice was PAID, create advance payment
+      let advancePayment = null;
+      if (isPaidInvoice) {
+        const timestamp = Date.now();
+        const random = Math.floor(Math.random() * 1000);
+        advancePayment = await tx.advancePayment.create({
+          data: {
+            receiptNumber: `ADV-CN-${timestamp}-${random}`,
+            leadId: invoice.leadId,
+            amount: creditNote.totalAmount,
+            paymentMode: 'CREDIT_NOTE',
+            remark: `Advance from Credit Note ${creditNote.creditNoteNumber} for Invoice ${invoice.invoiceNumber}`,
+            provisionalReceiptNo: creditNote.creditNoteNumber,
+            transactionDate: new Date(),
+            createdById: userId
+          }
+        });
+      }
+
+      return { creditNote: updatedCreditNote, invoice: updatedInvoice, advancePayment };
+    });
+  } catch (error) {
+    if (error.message === 'CREDIT_CAP_EXCEEDED') {
+      return res.status(400).json({ message: 'Total credit notes exceed invoice amount.' });
+    }
+    throw error;
+  }
+
+  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+
+  res.json({
+    message: 'Credit note approved and applied successfully.',
+    creditNote: result.creditNote,
+    invoice: result.invoice
+  });
+});
+
+/**
+ * Reject a credit note
+ * POST /credit-notes/:id/reject
+ */
+export const rejectCreditNote = asyncHandler(async function rejectCreditNote(req, res) {
+  if (!isAdminOrTestUser(req.user)) {
+    return res.status(403).json({ message: 'Only admins can reject credit notes.' });
+  }
+
+  const { id } = req.params;
+  const { rejectionReason } = req.body;
+
+  const creditNote = await prisma.creditNote.findUnique({ where: { id } });
+
+  if (!creditNote) {
+    return res.status(404).json({ message: 'Credit note not found.' });
+  }
+
+  if (creditNote.status !== 'PENDING_APPROVAL') {
+    return res.status(400).json({ message: 'Only pending credit notes can be rejected.' });
+  }
+
+  const updated = await prisma.creditNote.update({
+    where: { id },
+    data: {
+      status: 'REJECTED',
+      remarks: creditNote.remarks
+        ? `${creditNote.remarks}\n[REJECTED: ${rejectionReason || 'No reason provided'}]`
+        : `[REJECTED: ${rejectionReason || 'No reason provided'}]`
+    },
+    include: { createdBy: { select: { id: true, name: true } } }
+  });
+
+  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+
+  res.json({ message: 'Credit note rejected.', creditNote: updated });
 });

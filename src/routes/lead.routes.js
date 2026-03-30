@@ -51,6 +51,7 @@ import {
   getOpsTeamReviewHistory,
   opsTeamDisposition,
   getOpsTeamSidebarCounts,
+  getOpsInstallationQueue,
   // Super Admin 2 functions
   getSuperAdmin2Queue,
   superAdmin2Disposition,
@@ -251,6 +252,9 @@ router.get('/ops-team/history', getOpsTeamReviewHistory);
 
 // OPS Team disposition (Approve / Reject)
 router.post('/ops-team/:id/disposition', opsTeamDisposition);
+
+// OPS Team installation assignment queue
+router.get('/ops-team/installation-queue', getOpsInstallationQueue);
 
 // ========== END OPS TEAM ROUTES ==========
 

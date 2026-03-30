@@ -7,7 +7,10 @@ import {
   getCreditNoteById,
   adjustCreditNote,
   refundCreditNote,
-  getCustomerCreditSummary
+  getCustomerCreditSummary,
+  getPendingCreditNotes,
+  approveCreditNote,
+  rejectCreditNote
 } from '../controllers/creditNote.controller.js';
 
 const router = express.Router();
@@ -17,6 +20,9 @@ router.use(auth);
 
 // Get all credit notes with filters
 router.get('/', getAllCreditNotes);
+
+// Admin approval workflow (must be before /:id)
+router.get('/admin/pending-approval', getPendingCreditNotes);
 
 // Get credit note by ID
 router.get('/:id', getCreditNoteById);
@@ -35,5 +41,9 @@ router.patch('/:id/adjust', adjustCreditNote);
 
 // Mark credit note as refunded
 router.patch('/:id/refund', refundCreditNote);
+
+// Admin credit note approval/rejection
+router.post('/:id/approve', approveCreditNote);
+router.post('/:id/reject', rejectCreditNote);
 
 export default router;

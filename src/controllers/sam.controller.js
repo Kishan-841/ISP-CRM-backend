@@ -1231,7 +1231,8 @@ export const getMOMEmailPreview = asyncHandler(async function getMOMEmailPreview
 export const sendMOMEmail = asyncHandler(async function sendMOMEmail(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
-    const { to, cc = [], subject: customSubject, designation, phone, bodyText } = req.body;
+    const { to, cc: rawCC, subject: customSubject, designation, phone, bodyText } = req.body;
+    const cc = Array.isArray(rawCC) ? rawCC : (rawCC ? [rawCC] : []);
 
     // Get meeting with all required data
     const meeting = await prisma.sAMMeeting.findUnique({
@@ -1279,6 +1280,14 @@ export const sendMOMEmail = asyncHandler(async function sendMOMEmail(req, res) {
 
     if (cc.length > 0) {
       emailOptions.cc = cc;
+    }
+
+    // Add attachments if provided
+    if (req.files && req.files.length > 0) {
+      emailOptions.attachments = req.files.map(file => ({
+        filename: file.originalname,
+        content: file.buffer
+      }));
     }
 
     const { data, error } = await resendClient.emails.send(emailOptions);
@@ -2934,4 +2943,108 @@ export const getBusinessImpact = asyncHandler(async function getBusinessImpact(r
         totalPages: Math.ceil(filteredCustomers.length / limitNum)
       }
     });
+});
+
+/**
+ * Get SAM-generated lead stats grouped by creator
+ * GET /sam/lead-stats
+ */
+export const getSAMLeadStats = asyncHandler(async function getSAMLeadStats(req, res) {
+    const allowedRoles = ['SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'MASTER'];
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ message: 'Access denied.' });
+    }
+
+    // Find SAM-generated campaigns
+    const samCampaigns = await prisma.campaign.findMany({
+      where: { code: 'SAM-GENERATED' },
+      select: { id: true }
+    });
+    const campaignIds = samCampaigns.map(c => c.id);
+
+    if (campaignIds.length === 0) {
+      return res.json({ stats: [], totals: { total: 0, converted: 0, pending: 0 } });
+    }
+
+    // Get all SAM-generated campaign data with creator info and lead status
+    const campaignData = await prisma.campaignData.findMany({
+      where: {
+        campaignId: { in: campaignIds },
+        isSelfGenerated: true
+      },
+      select: {
+        id: true,
+        status: true,
+        company: true,
+        name: true,
+        phone: true,
+        createdAt: true,
+        source: true,
+        createdById: true,
+        createdBy: { select: { id: true, name: true, role: true } },
+        lead: {
+          select: {
+            id: true,
+            status: true,
+            opsApprovalStatus: true,
+            accountsStatus: true,
+            actualPlanIsActive: true,
+            assignedTo: { select: { id: true, name: true } }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Group by creator
+    const creatorMap = new Map();
+    for (const cd of campaignData) {
+      const creatorId = cd.createdById || 'unknown';
+      if (!creatorMap.has(creatorId)) {
+        creatorMap.set(creatorId, {
+          creator: cd.createdBy || { id: 'unknown', name: 'Unknown', role: '-' },
+          leads: [],
+          statusCounts: { NEW: 0, INTERESTED: 0, NOT_INTERESTED: 0, CALL_LATER: 0, CONVERTED: 0, total: 0 },
+          pipelineCounts: { FEASIBLE: 0, OPS_APPROVED: 0, ACCOUNTS_APPROVED: 0, LIVE: 0, DROPPED: 0 }
+        });
+      }
+
+      const entry = creatorMap.get(creatorId);
+      entry.statusCounts.total++;
+      entry.statusCounts[cd.status] = (entry.statusCounts[cd.status] || 0) + 1;
+
+      // Track pipeline status if converted to lead
+      if (cd.lead) {
+        if (cd.lead.actualPlanIsActive) entry.pipelineCounts.LIVE++;
+        else if (cd.lead.status === 'DROPPED' || cd.lead.status === 'NOT_FEASIBLE') entry.pipelineCounts.DROPPED++;
+        else if (cd.lead.accountsStatus === 'ACCOUNTS_APPROVED') entry.pipelineCounts.ACCOUNTS_APPROVED++;
+        else if (cd.lead.opsApprovalStatus === 'APPROVED') entry.pipelineCounts.OPS_APPROVED++;
+        else if (cd.lead.status === 'FEASIBLE') entry.pipelineCounts.FEASIBLE++;
+      }
+
+      entry.leads.push({
+        id: cd.id,
+        company: cd.company,
+        contactName: cd.name,
+        phone: cd.phone,
+        source: cd.source,
+        status: cd.status,
+        createdAt: cd.createdAt,
+        leadId: cd.lead?.id || null,
+        leadStatus: cd.lead?.status || null,
+        assignedTo: cd.lead?.assignedTo?.name || null,
+        isLive: cd.lead?.actualPlanIsActive || false
+      });
+    }
+
+    const stats = Array.from(creatorMap.values()).sort((a, b) => b.statusCounts.total - a.statusCounts.total);
+
+    const totals = {
+      total: campaignData.length,
+      converted: campaignData.filter(cd => cd.lead).length,
+      pending: campaignData.filter(cd => !cd.lead).length,
+      live: campaignData.filter(cd => cd.lead?.actualPlanIsActive).length
+    };
+
+    res.json({ stats, totals });
 });

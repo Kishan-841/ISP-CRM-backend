@@ -2784,7 +2784,65 @@ export const getOpsTeamSidebarCounts = asyncHandler(async function getOpsTeamSid
       }
     });
 
-    res.json({ pending: pendingCount });
+    const installationPendingCount = await prisma.lead.count({
+      where: {
+        status: 'FEASIBLE',
+        accountsStatus: 'ACCOUNTS_APPROVED',
+        accountsVerifiedAt: { not: null },
+        pushedToInstallationAt: null
+      }
+    });
+
+    res.json({ pending: pendingCount, installationPending: installationPendingCount });
+});
+
+/**
+ * Get leads pending installation assignment (for OPS team)
+ * GET /leads/ops-team/installation-queue
+ */
+export const getOpsInstallationQueue = asyncHandler(async function getOpsInstallationQueue(req, res) {
+    const isOpsTeam = hasRole(req.user, 'OPS_TEAM');
+    if (!isOpsTeam && !isAdminOrTestUser(req.user)) {
+      return res.status(403).json({ message: 'Only OPS Team can access this endpoint.' });
+    }
+
+    const { page = 1, limit = 50, search = '' } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const whereClause = {
+      status: 'FEASIBLE',
+      accountsStatus: 'ACCOUNTS_APPROVED',
+      accountsVerifiedAt: { not: null },
+      pushedToInstallationAt: null
+    };
+
+    if (search) {
+      whereClause.OR = [
+        { companyName: { contains: search, mode: 'insensitive' } },
+        { campaignData: { contactPerson: { contains: search, mode: 'insensitive' } } },
+        { campaignData: { email: { contains: search, mode: 'insensitive' } } }
+      ];
+    }
+
+    const [leads, total] = await Promise.all([
+      prisma.lead.findMany({
+        where: whereClause,
+        include: {
+          campaignData: { include: { campaign: { select: { id: true, code: true, name: true } } } },
+          assignedTo: { select: { id: true, name: true, email: true, role: true } },
+          createdBy: { select: { id: true, name: true } }
+        },
+        orderBy: { accountsVerifiedAt: 'asc' },
+        take: parseInt(limit),
+        skip
+      }),
+      prisma.lead.count({ where: whereClause })
+    ]);
+
+    res.json({
+      leads,
+      pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / parseInt(limit)) }
+    });
 });
 
 // ========== END OPS TEAM FUNCTIONS ==========
@@ -5580,15 +5638,6 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
       if (!poNumber || poNumber.trim().length === 0) {
         return res.status(400).json({ message: 'PO number is required for approval.' });
       }
-      if (!accountsInchargeMobile || accountsInchargeMobile.trim().length === 0) {
-        return res.status(400).json({ message: 'Accounts incharge mobile is required for approval.' });
-      }
-      if (!accountsInchargeEmail || accountsInchargeEmail.trim().length === 0) {
-        return res.status(400).json({ message: 'Accounts incharge email is required for approval.' });
-      }
-      if (!bdmName || bdmName.trim().length === 0) {
-        return res.status(400).json({ message: 'BDM name is required for approval.' });
-      }
     }
 
     const lead = await prisma.lead.findUnique({
@@ -6078,9 +6127,9 @@ export const pushToInstallation = asyncHandler(async function pushToInstallation
     const userRole = req.user.role;
     const userName = req.user.name;
 
-    // Only BDM, Team Leader, or SUPER_ADMIN can push to installation
-    if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
-      return res.status(403).json({ message: 'Only BDM or Team Leader can push leads to installation.' });
+    // Only OPS_TEAM, BDM, Team Leader, or SUPER_ADMIN can push to installation
+    if (!hasRole(req.user, 'OPS_TEAM') && !hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
+      return res.status(403).json({ message: 'Only OPS Team, BDM or Team Leader can push leads to installation.' });
     }
 
     // Get the lead
@@ -6096,8 +6145,8 @@ export const pushToInstallation = asyncHandler(async function pushToInstallation
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    // Verify lead is assigned to this BDM (unless admin/test user)
-    if (!isAdminOrTestUser(req.user) && lead.assignedToId !== userId) {
+    // Verify lead is assigned to this BDM (unless admin/test user or OPS_TEAM)
+    if (!isAdminOrTestUser(req.user) && !hasRole(req.user, 'OPS_TEAM') && lead.assignedToId !== userId) {
       return res.status(403).json({ message: 'You can only push leads assigned to you.' });
     }
 
@@ -7461,26 +7510,25 @@ export const generateCircuitId = asyncHandler(async function generateCircuitId(r
       return res.status(400).json({ message: 'Circuit ID already generated for this lead.' });
     }
 
-    // Generate circuit ID + update atomically inside a serialized transaction
+    // Use manually provided circuit ID from request body
+    const { circuitId: manualCircuitId } = req.body;
+
+    if (!manualCircuitId || manualCircuitId.trim().length === 0) {
+      return res.status(400).json({ message: 'Circuit ID is required.' });
+    }
+
+    // Check for duplicate circuit ID
+    const existingCircuit = await prisma.lead.findFirst({
+      where: { circuitId: manualCircuitId.trim() }
+    });
+    if (existingCircuit) {
+      return res.status(400).json({ message: `Circuit ID "${manualCircuitId.trim()}" is already in use.` });
+    }
+
+    const circuitId_gen = manualCircuitId.trim();
+
     const now = new Date();
-    const updated = await prisma.$transaction(async (tx) => {
-      const latestCircuit = await tx.lead.findFirst({
-        where: { circuitId: { not: null } },
-        orderBy: { nocConfiguredAt: 'desc' },
-        select: { circuitId: true }
-      });
-
-      let nextCircuitNumber = 1;
-      if (latestCircuit && latestCircuit.circuitId) {
-        const match = latestCircuit.circuitId.match(/CIRCUIT-(\d+)/);
-        if (match) {
-          nextCircuitNumber = parseInt(match[1]) + 1;
-        }
-      }
-
-      const circuitId_gen = `CIRCUIT-${String(nextCircuitNumber).padStart(5, '0')}`;
-
-      return tx.lead.update({
+    const updated = await prisma.lead.update({
         where: { id },
         data: {
           circuitId: circuitId_gen,
@@ -7496,7 +7544,6 @@ export const generateCircuitId = asyncHandler(async function generateCircuitId(r
           deliveryAssignedTo: { select: { id: true, name: true, email: true } }
         }
       });
-    }, { isolationLevel: 'Serializable' });
 
     const circuitId = updated.circuitId;
 
@@ -8590,6 +8637,8 @@ export const createActualPlan = asyncHandler(async function createActualPlan(req
       price,
       isActive,
       startDate,
+      poNumber,
+      poExpiryDate,
       notes
     } = req.body;
 
@@ -8604,6 +8653,12 @@ export const createActualPlan = asyncHandler(async function createActualPlan(req
 
     if (!planName || !bandwidth) {
       return res.status(400).json({ message: 'Plan name and bandwidth are required.' });
+    }
+    if (!poNumber || !poNumber.trim()) {
+      return res.status(400).json({ message: 'PO Number is required.' });
+    }
+    if (!poExpiryDate) {
+      return res.status(400).json({ message: 'PO Expiry Date is required.' });
     }
 
     const lead = await prisma.lead.findUnique({
@@ -8639,6 +8694,8 @@ export const createActualPlan = asyncHandler(async function createActualPlan(req
         actualPlanCreatedAt: new Date(),
         actualPlanCreatedById: userId,
         actualPlanNotes: notes || null,
+        poNumber: poNumber || undefined,
+        poExpiryDate: poExpiryDate ? new Date(poExpiryDate) : undefined,
         // Deactivate demo plan when actual plan is created
         demoPlanIsActive: false
       },

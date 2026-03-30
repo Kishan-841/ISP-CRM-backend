@@ -1436,6 +1436,8 @@ enum StoreProductType {
   RF
   PATCH_CORD
   FIBER
+  MEDIA_CONVERTER
+  ROUTER
 }
 
 enum POStatus {
@@ -1492,9 +1494,11 @@ enum CreditNoteReason {
 }
 
 enum CreditNoteStatus {
-  ISSUED      // Created but not yet adjusted/refunded
-  ADJUSTED    // Used against future invoice
-  REFUNDED    // Money returned to customer
+  PENDING_APPROVAL  // Awaiting admin approval
+  REJECTED          // Rejected by admin
+  ISSUED            // Approved and applied
+  ADJUSTED          // Used against future invoice
+  REFUNDED          // Money returned to customer
 }
 
 // Document sequence counter for generating unique document numbers

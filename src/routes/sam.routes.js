@@ -1,5 +1,8 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { auth, requireRole } from '../middleware/auth.js';
+
+const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 import {
   // SAM HEAD endpoints
   getCustomersWithInvoices,
@@ -43,7 +46,8 @@ import {
   sendCommunication,
   deleteCommunication,
   getCommunicationTemplates,
-  getBusinessImpact
+  getBusinessImpact,
+  getSAMLeadStats
 } from '../controllers/sam.controller.js';
 
 const router = Router();
@@ -201,10 +205,11 @@ router.post(
   getMOMEmailPreview
 );
 
-// Send MOM email
+// Send MOM email (with optional attachments)
 router.post(
   '/meetings/:id/send-mom',
   requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'),
+  memoryUpload.array('attachments', 5),
   sendMOMEmail
 );
 
@@ -308,6 +313,13 @@ router.delete(
   '/communications/:id',
   requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'),
   deleteCommunication
+);
+
+// SAM Lead Stats
+router.get(
+  '/lead-stats',
+  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'),
+  getSAMLeadStats
 );
 
 export default router;

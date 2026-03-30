@@ -94,7 +94,7 @@ export const generateUploadLink = asyncHandler(async function generateUploadLink
   });
 
   // Generate the full URL
-  const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const baseUrl = req.headers.origin || process.env.FRONTEND_URL || 'https://crm.gazonindia.com';
   const uploadUrl = `${baseUrl}/upload/${token}`;
 
   res.json({
@@ -124,7 +124,7 @@ export const getUploadLinks = asyncHandler(async function getUploadLinks(req, re
     }
   });
 
-  const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const baseUrl = req.headers.origin || process.env.FRONTEND_URL || 'https://crm.gazonindia.com';
   const formattedLinks = links.map(link => ({
     id: link.id,
     token: link.token,
