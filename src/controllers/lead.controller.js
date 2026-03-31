@@ -443,7 +443,7 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
       // Contact details (CampaignData fields)
       company, name, firstName, lastName, title, email, phone, whatsapp, industry, city,
       // Quotation fields
-      bandwidthRequirement, arcAmount, otcAmount,
+      bandwidthRequirement, arcAmount, otcAmount, quotationAttachments,
       // OPS approval fields
       opsApprovalStatus
     } = req.body;
@@ -505,6 +505,7 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
       }
     }
     if (otcAmount !== undefined) updateData.otcAmount = parseFloat(otcAmount) || 0;
+    if (quotationAttachments !== undefined) updateData.quotationAttachments = quotationAttachments;
     // OPS approval fields
     if (opsApprovalStatus !== undefined) {
       updateData.opsApprovalStatus = opsApprovalStatus;
@@ -2440,6 +2441,7 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
           otcAmount: true,
           advanceAmount: true,
           paymentTerms: true,
+          quotationAttachments: true,
           billingAddress: true,
           billingPincode: true,
           expectedDeliveryDate: true,
@@ -2520,6 +2522,7 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
       otcAmount: lead.otcAmount,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
+      quotationAttachments: lead.quotationAttachments,
       // Campaign data
       company: lead.campaignData.company,
       name: lead.campaignData.name || `${lead.campaignData.firstName || ''} ${lead.campaignData.lastName || ''}`.trim(),
@@ -2896,6 +2899,7 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
           otcAmount: true,
           advanceAmount: true,
           paymentTerms: true,
+          quotationAttachments: true,
           billingAddress: true,
           billingPincode: true,
           expectedDeliveryDate: true,
@@ -2973,6 +2977,7 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
       otcAmount: lead.otcAmount,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
+      quotationAttachments: lead.quotationAttachments,
       company: lead.campaignData.company,
       name: lead.campaignData.name || `${lead.campaignData.firstName || ''} ${lead.campaignData.lastName || ''}`.trim(),
       firstName: lead.campaignData.firstName,

@@ -47,7 +47,7 @@ const router = express.Router();
 router.use(auth);
 
 // Admin + BDM + BDM_TEAM_LEADER campaign routes
-router.get('/', requireRole('SUPER_ADMIN', 'BDM', 'BDM_TEAM_LEADER'), getCampaigns);
+router.get('/', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM', 'BDM_TEAM_LEADER'), getCampaigns);
 router.post('/', requireRole('SUPER_ADMIN', 'BDM', 'BDM_TEAM_LEADER'), createCampaign);
 router.put('/:id', requireRole('SUPER_ADMIN'), updateCampaign);
 router.delete('/:id', requireRole('SUPER_ADMIN'), deleteCampaign);
@@ -87,8 +87,8 @@ router.get('/reports/my-performance', getMyCampaignPerformance);
 router.get('/reports/export-campaign-data', exportCampaignData);
 
 // ISR Pipeline Funnel routes
-router.get('/reports/pipeline-funnel', requireRole('SUPER_ADMIN', 'ISR', 'BDM_TEAM_LEADER'), getISRPipelineFunnel);
-router.get('/reports/pipeline-comparison', requireRole('SUPER_ADMIN', 'BDM_TEAM_LEADER'), getISRPipelineComparison);
+router.get('/reports/pipeline-funnel', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'ISR', 'BDM_TEAM_LEADER'), getISRPipelineFunnel);
+router.get('/reports/pipeline-comparison', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'), getISRPipelineComparison);
 
 // Shared routes (both Admin and assigned ISR)
 router.get('/:id', getCampaign);

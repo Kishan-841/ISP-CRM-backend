@@ -20,7 +20,7 @@ const VALID_TRANSITIONS = {
 const CREATOR_ROLES = ['NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'SUPER_ADMIN'];
 
 // Roles that see ALL complaints (not just their own)
-const ALL_VIEW_ROLES = ['SUPER_ADMIN', 'ADMIN', 'NOC_HEAD'];
+const ALL_VIEW_ROLES = ['SUPER_ADMIN', 'ADMIN', 'NOC_HEAD', 'SALES_DIRECTOR'];
 
 // Roles that only see complaints assigned to them
 const ASSIGNED_ONLY_ROLES = ['NOC', 'OPS_TEAM'];

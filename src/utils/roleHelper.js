@@ -7,7 +7,7 @@
  * Check if user is SUPER_ADMIN or MASTER (has full access)
  */
 export const isAdmin = (user) => {
-  return user?.role === 'SUPER_ADMIN' || user?.role === 'MASTER';
+  return user?.role === 'SUPER_ADMIN' || user?.role === 'MASTER' || user?.role === 'SALES_DIRECTOR';
 };
 
 // Alias for backward compatibility

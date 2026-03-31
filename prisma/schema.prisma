@@ -287,6 +287,7 @@ model Lead {
   arcAmount                 Float?
   originalArcAmount         Float?
   otcAmount                 Float?
+  quotationAttachments      Json?
   otcInvoiceId              String?              @unique
   otcInvoiceGeneratedAt     DateTime?
   paymentTerms              String?
@@ -1324,6 +1325,7 @@ enum Role {
   NOC
   NOC_HEAD
   SUPPORT_TEAM
+  SALES_DIRECTOR
   TEST_USER
 }
 

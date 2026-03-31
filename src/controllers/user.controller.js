@@ -1028,7 +1028,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     }
   }
 
-  if (userRole === 'SUPER_ADMIN' || isMaster) {
+  if (userRole === 'SUPER_ADMIN' || userRole === 'SALES_DIRECTOR' || isMaster) {
     // Super Admin counts: overview of all queues + POs pending super admin approval (level 2) + delivery request approval + vendor approval
     const [
       isrQueue,

@@ -44,7 +44,13 @@ export const requireRole = (...roles) => {
       return res.status(401).json({ message: 'Authentication required.' });
     }
 
-    if (req.user.role !== 'MASTER' && !roles.includes(req.user.role)) {
+    // MASTER bypasses all role checks
+    if (req.user.role === 'MASTER') return next();
+
+    // SALES_DIRECTOR gets access wherever SUPER_ADMIN is allowed (view-level parity)
+    if (req.user.role === 'SALES_DIRECTOR' && roles.includes('SUPER_ADMIN')) return next();
+
+    if (!roles.includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied. Insufficient permissions.' });
     }
 

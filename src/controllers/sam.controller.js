@@ -2950,7 +2950,7 @@ export const getBusinessImpact = asyncHandler(async function getBusinessImpact(r
  * GET /sam/lead-stats
  */
 export const getSAMLeadStats = asyncHandler(async function getSAMLeadStats(req, res) {
-    const allowedRoles = ['SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'MASTER'];
+    const allowedRoles = ['SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'SALES_DIRECTOR', 'MASTER'];
     if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied.' });
     }
