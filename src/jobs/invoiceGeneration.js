@@ -36,11 +36,42 @@ const addMonthsUTC = (date, months) => {
 };
 
 /**
+ * Get the number of full cycle months for a billing cycle
+ */
+const getCycleMonths = (billingCycle) => {
+  switch (billingCycle) {
+    case 'MONTHLY': return 1;
+    case 'QUARTERLY': return 3;
+    case 'HALF_YEARLY': return 6;
+    case 'YEARLY': return 12;
+    default: return 1;
+  }
+};
+
+/**
+ * Check if a date is the 1st of a month (already aligned to month boundary)
+ */
+const isFirstOfMonth = (date) => date.getUTCDate() === 1;
+
+/**
+ * Get the last day of a given month/year in UTC
+ */
+const lastDayOfMonthUTC = (year, month) => {
+  return new Date(Date.UTC(year, month + 1, 0));
+};
+
+/**
  * Calculate billing period end based on start date and billing cycle
  * Supports: MONTHLY, QUARTERLY, HALF_YEARLY, YEARLY
  *
- * The billing period is inclusive: Jan 30 QUARTERLY → ends Apr 30
- * Next billing period starts May 1
+ * For MONTHLY billing type (Month End):
+ *   - First period (mid-month start): remaining days of start month + (cycle - 1) full months
+ *     e.g., March 15 QUARTERLY → March 15 to May 31 (16 days of March + April + May)
+ *   - Subsequent periods (1st of month): full cycle months aligned to month end
+ *     e.g., June 1 QUARTERLY → June 1 to Aug 31 (full 3 months)
+ *
+ * For DAY_TO_DAY billing type:
+ *   - Always adds validityDays from start (no month-end alignment)
  */
 const calculateBillingPeriodEnd = (startDate, billingCycle, validityDays, billingType) => {
   const start = normalizeDate(startDate);
@@ -48,33 +79,26 @@ const calculateBillingPeriodEnd = (startDate, billingCycle, validityDays, billin
 
   // Use billing cycle if available, otherwise fall back to billing type
   if (billingCycle) {
-    let monthsToAdd;
-    switch (billingCycle) {
-      case 'MONTHLY':
-        monthsToAdd = 1;
-        break;
-      case 'QUARTERLY':
-        monthsToAdd = 3;
-        break;
-      case 'HALF_YEARLY':
-        monthsToAdd = 6;
-        break;
-      case 'YEARLY':
-        monthsToAdd = 12;
-        break;
-      default:
-        monthsToAdd = 1;
+    const cycleMonths = getCycleMonths(billingCycle);
+
+    if (billingType === 'MONTHLY') {
+      // MONTHLY billing type = Month End billing
+      // If starting on 1st of month, it's a full cycle → end at last day of (start + cycleMonths - 1) month
+      // If starting mid-month (first invoice), partial month counts as month 1
+      //   → end at last day of (start + cycleMonths - 1) month
+      // Example: March 15 QUARTERLY → end May 31 (March partial + April + May = 3 months)
+      // Example: June 1 QUARTERLY → end Aug 31 (June + July + Aug = 3 months)
+      end = lastDayOfMonthUTC(start.getUTCFullYear(), start.getUTCMonth() + cycleMonths - 1);
+    } else {
+      // DAY_TO_DAY billing: add exact cycle months from start date
+      end = addMonthsUTC(start, cycleMonths);
     }
-    // End date is the same day of the month, X months later
-    // Example: Jan 30 + 3 months = Apr 30 (QUARTERLY)
-    end = addMonthsUTC(start, monthsToAdd);
   } else if (billingType === 'MONTHLY') {
-    // Legacy: For MONTHLY billing type, end at the last day of the month
+    // Legacy: For MONTHLY billing type without cycle, end at the last day of the month
     end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0));
   } else {
     // Legacy: For DAY_TO_DAY billing, add validity days
     // Subtract 1 because period is inclusive: Day 1 = start, Day N = start + (N-1)
-    // e.g., 90-day plan starting Jan 31: end = Jan 31 + 89 = Apr 30
     end = new Date(start);
     end.setUTCDate(end.getUTCDate() + (validityDays || 30) - 1);
   }
@@ -111,10 +135,51 @@ const invoiceExistsForPeriod = async (leadId, periodStart, periodEnd) => {
 };
 
 /**
+ * Calculate the number of days in a billing period (inclusive of both start and end)
+ */
+const daysBetween = (start, end) => {
+  const s = normalizeDate(start);
+  const e = normalizeDate(end);
+  return Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+};
+
+/**
+ * Get the total number of days in a full billing cycle for Month End billing
+ * Used to calculate the pro-rated fraction for partial periods
+ */
+const getFullCycleDays = (billingCycle) => {
+  switch (billingCycle) {
+    case 'MONTHLY': return 30;
+    case 'QUARTERLY': return 90;
+    case 'HALF_YEARLY': return 180;
+    case 'YEARLY': return 365;
+    default: return 30;
+  }
+};
+
+/**
  * Generate a single invoice for a lead
+ * For Month End billing, the first invoice is pro-rated based on actual days
  */
 const createInvoice = async (lead, billingPeriodStart, billingPeriodEnd, systemUserId) => {
-  const baseAmount = lead.actualPlanPrice;
+  const billingType = lead.actualPlanBillingType || 'DAY_TO_DAY';
+  const billingCycle = lead.actualPlanBillingCycle || 'MONTHLY';
+  const fullCyclePrice = lead.actualPlanPrice;
+
+  // Pro-rate for Month End billing if this is a partial period (mid-month start)
+  let baseAmount = fullCyclePrice;
+  if (billingType === 'MONTHLY') {
+    const periodStart = normalizeDate(billingPeriodStart);
+    // A period starting on the 1st of a month is a full cycle — charge full price
+    // A period starting mid-month is a partial first period — pro-rate
+    if (periodStart.getUTCDate() !== 1) {
+      const actualDays = daysBetween(billingPeriodStart, billingPeriodEnd);
+      const fullCycleDays = getFullCycleDays(billingCycle);
+      baseAmount = Math.round((actualDays / fullCycleDays) * fullCyclePrice * 100) / 100;
+      console.log(`  Pro-rated: ${actualDays}/${fullCycleDays} days = ₹${baseAmount} (full: ₹${fullCyclePrice})`);
+    }
+  }
+
   const discountAmount = 0;
   const taxableAmount = baseAmount - discountAmount;
   const sgstRate = 9;

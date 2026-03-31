@@ -8475,23 +8475,33 @@ export const getDemoPlanQueue = asyncHandler(async function getDemoPlanQueue(req
 });
 
 // Helper function to calculate end date based on billing type
-const calculateEndDate = (startDate, validityDays, billingType) => {
+const calculateEndDate = (startDate, validityDays, billingType, billingCycle) => {
   if (!validityDays) return null;
+
+  // For Month End billing with a billing cycle, align to month boundaries
+  // The partial start month counts as month 1 of the cycle
+  // e.g., March 15 QUARTERLY → end May 31 (March partial + April + May)
+  // e.g., June 1 QUARTERLY → end Aug 31 (June + July + Aug)
+  if (billingType === 'MONTHLY' && billingCycle) {
+    let cycleMonths;
+    switch (billingCycle) {
+      case 'MONTHLY': cycleMonths = 1; break;
+      case 'QUARTERLY': cycleMonths = 3; break;
+      case 'HALF_YEARLY': cycleMonths = 6; break;
+      case 'YEARLY': cycleMonths = 12; break;
+      default: cycleMonths = 1;
+    }
+    const start = new Date(startDate);
+    // End at last day of (startMonth + cycleMonths - 1)
+    const endDate = new Date(start.getFullYear(), start.getMonth() + cycleMonths, 0);
+    endDate.setHours(23, 59, 59, 999);
+    return endDate;
+  }
 
   const endDate = new Date(startDate);
   // Subtract 1 because: Day 1 = startDate, Day N = startDate + (N-1)
   // e.g., 90-day plan starting Jan 31: Day 90 = Jan 31 + 89 = Apr 30
   endDate.setDate(endDate.getDate() + parseInt(validityDays) - 1);
-
-  // If monthly billing, round to end of month
-  if (billingType === 'MONTHLY') {
-    // Get the last day of the end date's month
-    const year = endDate.getFullYear();
-    const month = endDate.getMonth();
-    // Set to last day of the month (day 0 of next month = last day of current month)
-    endDate.setFullYear(year, month + 1, 0);
-    endDate.setHours(23, 59, 59, 999);
-  }
 
   return endDate;
 };
@@ -8784,7 +8794,7 @@ export const createActualPlan = asyncHandler(async function createActualPlan(req
 
     // Calculate start and end dates using billing type logic
     const planStartDate = startDate ? new Date(startDate) : new Date();
-    const planEndDate = calculateEndDate(planStartDate, validityDays, billingType);
+    const planEndDate = calculateEndDate(planStartDate, validityDays, billingType, billingCycle);
 
     const updated = await prisma.lead.update({
       where: { id },

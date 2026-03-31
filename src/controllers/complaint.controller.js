@@ -19,8 +19,11 @@ const VALID_TRANSITIONS = {
 // Roles allowed to create complaints
 const CREATOR_ROLES = ['NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'SUPER_ADMIN'];
 
-// Roles allowed to view all complaints (not just their own)
-const ADMIN_VIEW_ROLES = ['SUPER_ADMIN', 'ADMIN', 'NOC', 'NOC_HEAD', 'OPS_TEAM'];
+// Roles that see ALL complaints (not just their own)
+const ALL_VIEW_ROLES = ['SUPER_ADMIN', 'ADMIN', 'NOC_HEAD'];
+
+// Roles that only see complaints assigned to them
+const ASSIGNED_ONLY_ROLES = ['NOC', 'OPS_TEAM'];
 
 // Select clause for complaint list (lightweight)
 const complaintListSelect = {
@@ -210,10 +213,10 @@ export const createComplaint = asyncHandler(async function createComplaint(req, 
       return res.status(400).json({ message: 'Accounts assignee must have Accounts Team role.' });
     }
   } else {
-    // Validate NOC user has NOC role
+    // Validate NOC user has NOC or NOC_HEAD role
     const nocUser = assignees.find(a => a.id === nocAssigneeId);
-    if (!nocUser || nocUser.role !== 'NOC') {
-      return res.status(400).json({ message: 'NOC assignee must have NOC role.' });
+    if (!nocUser || (nocUser.role !== 'NOC' && nocUser.role !== 'NOC_HEAD')) {
+      return res.status(400).json({ message: 'NOC assignee must have NOC or NOC Head role.' });
     }
     // Validate OPS user has OPS_TEAM role (if provided)
     if (opsAssigneeId) {
@@ -271,11 +274,25 @@ export const createComplaint = asyncHandler(async function createComplaint(req, 
     createdByName: req.user.name,
   });
 
-  // Sidebar refresh for assignees
+  // Sidebar refresh for assignees + NOC_HEAD
   assigneeIds.forEach(id => emitSidebarRefresh(id));
   emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('NOC_HEAD');
   emitSidebarRefreshByRole('OPS_TEAM');
   emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+
+  // Log complaint creation in status history
+  await prisma.statusChangeLog.create({
+    data: {
+      entityType: 'COMPLAINT',
+      entityId: complaint.id,
+      field: 'status',
+      oldValue: null,
+      newValue: 'OPEN',
+      changedById: req.user.id,
+      reason: `Complaint created by ${req.user.name}. Assigned to: ${assignees.map(a => `${a.name} (${a.role})`).join(', ')}`,
+    }
+  });
 
   res.status(201).json({ message: 'Complaint created.', data: complaint });
 });
@@ -290,9 +307,17 @@ export const getComplaints = asyncHandler(async function getComplaints(req, res)
   // Build where clause
   const where = {};
 
-  // Role-based filtering
-  if (!hasAnyRole(req.user, ADMIN_VIEW_ROLES)) {
-    // Non-admin: see complaints they created OR are assigned to
+  // Role-based filtering:
+  // NOC_HEAD / SUPER_ADMIN / ADMIN → see ALL complaints
+  // NOC / OPS_TEAM → see only complaints assigned to them
+  // Others → see complaints they created OR are assigned to
+  if (hasAnyRole(req.user, ALL_VIEW_ROLES)) {
+    // No filter — see everything
+  } else if (hasAnyRole(req.user, ASSIGNED_ONLY_ROLES)) {
+    // NOC and OPS only see complaints assigned to them
+    where.assignments = { some: { userId: req.user.id, isActive: true } };
+  } else {
+    // Other roles: see complaints they created OR are assigned to
     where.OR = [
       { createdById: req.user.id },
       { assignments: { some: { userId: req.user.id, isActive: true } } }
@@ -422,8 +447,8 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
 
   let counts = { myAssigned, myCreatedOpen };
 
-  // Admin gets extra stats
-  if (isAdmin(req.user)) {
+  // Admin and NOC_HEAD get extra stats (total open across system)
+  if (isAdmin(req.user) || hasRole(req.user, 'NOC_HEAD')) {
     const [totalOpen, tatBreached] = await Promise.all([
       prisma.complaint.count({
         where: { status: { not: 'CLOSED' } }
@@ -443,7 +468,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
 
 // GET /api/complaints/dashboard/stats
 export const getDashboardStats = asyncHandler(async function getDashboardStats(req, res) {
-  if (!hasAnyRole(req.user, ADMIN_VIEW_ROLES)) {
+  if (!hasAnyRole(req.user, [...ALL_VIEW_ROLES, ...ASSIGNED_ONLY_ROLES])) {
     return res.status(403).json({ message: 'Access denied.' });
   }
 
@@ -636,8 +661,8 @@ export const getComplaintById = asyncHandler(async function getComplaintById(req
     return res.status(404).json({ message: 'Complaint not found.' });
   }
 
-  // Access check: creator, assignee, or admin
-  if (!isAdmin(req.user) && complaint.createdBy.id !== req.user.id && !isAssigned(complaint, req.user.id)) {
+  // Access check: NOC_HEAD/admin sees all, others need to be creator or assignee
+  if (!isAdmin(req.user) && !hasRole(req.user, 'NOC_HEAD') && complaint.createdBy.id !== req.user.id && !isAssigned(complaint, req.user.id)) {
     return res.status(403).json({ message: 'Access denied.' });
   }
 
@@ -730,8 +755,8 @@ export const updateStatus = asyncHandler(async function updateStatus(req, res) {
 
 // PUT /api/complaints/:id/close
 export const closeComplaint = asyncHandler(async function closeComplaint(req, res) {
-  // Only NOC users can close
-  if (!hasRole(req.user, 'NOC') && !isAdmin(req.user)) {
+  // Only NOC/NOC_HEAD users can close
+  if (!hasRole(req.user, 'NOC') && !hasRole(req.user, 'NOC_HEAD') && !isAdmin(req.user)) {
     return res.status(403).json({ message: 'Only NOC users can close complaints.' });
   }
 
@@ -845,8 +870,8 @@ export const assignComplaint = asyncHandler(async function assignComplaint(req, 
     return res.status(400).json({ message: 'Cannot reassign a closed complaint.' });
   }
 
-  if (!isAdmin(req.user) && complaint.createdById !== req.user.id) {
-    return res.status(403).json({ message: 'Only the creator or admin can reassign.' });
+  if (!isAdmin(req.user) && !hasRole(req.user, 'NOC_HEAD') && complaint.createdById !== req.user.id) {
+    return res.status(403).json({ message: 'Only the creator, NOC Head, or admin can reassign.' });
   }
 
   // Validate new assignees
@@ -895,37 +920,85 @@ export const assignComplaint = asyncHandler(async function assignComplaint(req, 
 
   assigneeIds.forEach(uid => emitSidebarRefresh(uid));
   currentAssigneeIds.forEach(uid => emitSidebarRefresh(uid));
+  emitSidebarRefreshByRole('NOC_HEAD');
   emitSidebarRefreshByRole('OPS_TEAM');
   emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+
+  // Log reassignment in status history
+  const assigneeNames = users.map(u => u.name).join(', ');
+  await prisma.statusChangeLog.create({
+    data: {
+      entityType: 'COMPLAINT',
+      entityId: id,
+      field: 'assignment',
+      oldValue: null,
+      newValue: assigneeNames,
+      changedById: req.user.id,
+      reason: `Reassigned by ${req.user.name} to: ${assigneeNames}`,
+    }
+  });
 
   res.json({ message: 'Complaint reassigned.', data: updated });
 });
 
 // PUT /api/complaints/:id/update-details
 export const updateComplaintDetails = asyncHandler(async function updateComplaintDetails(req, res) {
-  // Only NOC users can update
-  if (!hasRole(req.user, 'NOC') && !isAdmin(req.user)) {
-    return res.status(403).json({ message: 'Only NOC users can update complaints.' });
+  const isOps = hasRole(req.user, 'OPS_TEAM');
+  const isNocOrAdmin = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD') || isAdmin(req.user);
+
+  // OPS can update TAT, category, subcategory, remark; NOC/NOC_HEAD can do everything
+  if (!isOps && !isNocOrAdmin) {
+    return res.status(403).json({ message: 'Access denied.' });
   }
 
   const { id } = req.params;
-  const { tatHours, categoryId, subCategoryId, nocAssigneeId, opsAssigneeId, accountsAssigneeId } = req.body;
+  const { tatHours, categoryId, subCategoryId, nocAssigneeId, opsAssigneeId, accountsAssigneeId, remark } = req.body;
 
   const complaint = await prisma.complaint.findUnique({
     where: { id },
-    select: { id: true, status: true, complaintDate: true, categoryId: true, category: { select: { name: true } }, assignments: { where: { isActive: true }, select: { userId: true } } }
+    select: {
+      id: true, status: true, complaintDate: true, tatHours: true,
+      categoryId: true, category: { select: { name: true } },
+      subCategoryId: true, subCategory: { select: { name: true } },
+      createdById: true, notes: true,
+      assignments: { where: { isActive: true }, select: { userId: true, user: { select: { role: true } } } }
+    }
   });
   if (!complaint) return res.status(404).json({ message: 'Complaint not found.' });
   if (complaint.status === 'CLOSED') return res.status(400).json({ message: 'Cannot update a closed complaint.' });
 
+  // OPS must be assigned to this complaint
+  if (isOps) {
+    const isAssignedToComplaint = complaint.assignments.some(a => a.userId === req.user.id);
+    if (!isAssignedToComplaint) {
+      return res.status(403).json({ message: 'You can only update complaints assigned to you.' });
+    }
+    // OPS cannot reassign
+    if (nocAssigneeId || opsAssigneeId || accountsAssigneeId) {
+      return res.status(403).json({ message: 'OPS users cannot reassign complaints.' });
+    }
+  }
+
   const updateData = {};
+  const changeDetails = []; // Track what changed for audit log
 
   // Update TAT
   if (tatHours !== undefined) {
     const hours = parseInt(tatHours);
     if (isNaN(hours) || hours < 1) return res.status(400).json({ message: 'TAT hours must be a positive number.' });
+    if (complaint.tatHours !== hours) {
+      changeDetails.push(`TAT: ${complaint.tatHours}h → ${hours}h`);
+    }
     updateData.tatHours = hours;
     updateData.tatDeadline = new Date(new Date(complaint.complaintDate).getTime() + hours * 60 * 60 * 1000);
+  }
+
+  // Update remark/notes (OPS and NOC can both update)
+  if (remark !== undefined) {
+    updateData.notes = remark?.trim() || null;
+    if (complaint.notes !== (remark?.trim() || null)) {
+      changeDetails.push(`Remark updated`);
+    }
   }
 
   // Determine effective category name (after potential update)
@@ -935,11 +1008,19 @@ export const updateComplaintDetails = asyncHandler(async function updateComplain
   if (categoryId) {
     updateData.categoryId = categoryId;
     const cat = await prisma.complaintCategory.findUnique({ where: { id: categoryId }, select: { name: true } });
-    if (cat) effectiveCategoryName = cat.name;
+    if (cat) {
+      if (effectiveCategoryName !== cat.name) {
+        changeDetails.push(`Category: ${effectiveCategoryName} → ${cat.name}`);
+      }
+      effectiveCategoryName = cat.name;
+    }
     if (subCategoryId) {
-      const subCat = await prisma.complaintSubCategory.findUnique({ where: { id: subCategoryId } });
+      const subCat = await prisma.complaintSubCategory.findUnique({ where: { id: subCategoryId }, select: { id: true, categoryId: true, name: true } });
       if (!subCat || subCat.categoryId !== categoryId) {
         return res.status(400).json({ message: 'Invalid sub-category for selected category.' });
+      }
+      if (complaint.subCategoryId !== subCategoryId) {
+        changeDetails.push(`Sub-category: ${complaint.subCategory?.name || 'N/A'} → ${subCat.name}`);
       }
       updateData.subCategoryId = subCategoryId;
     }
@@ -956,59 +1037,117 @@ export const updateComplaintDetails = asyncHandler(async function updateComplain
       select: complaintListSelect,
     });
 
-    // Handle reassignment if provided
-    const primaryAssigneeId = isAccountsCategory ? accountsAssigneeId : nocAssigneeId;
-    if (primaryAssigneeId) {
-      const assigneeIds = [primaryAssigneeId];
-      if (!isAccountsCategory && opsAssigneeId) assigneeIds.push(opsAssigneeId);
+    // Handle reassignment if provided (only NOC/NOC_HEAD/admin can reassign)
+    if (isNocOrAdmin) {
+      const primaryAssigneeId = isAccountsCategory ? accountsAssigneeId : nocAssigneeId;
+      if (primaryAssigneeId) {
+        const assigneeIds = [primaryAssigneeId];
+        if (!isAccountsCategory && opsAssigneeId) assigneeIds.push(opsAssigneeId);
 
-      // Validate assignees
-      const assignees = await tx.user.findMany({
-        where: { id: { in: assigneeIds }, isActive: true },
-        select: { id: true, role: true }
-      });
-      if (assignees.length !== assigneeIds.length) {
-        throw new Error('One or more assignees not found or inactive.');
-      }
-
-      // Deactivate old assignments
-      await tx.complaintAssignment.updateMany({
-        where: { complaintId: id, isActive: true },
-        data: { isActive: false },
-      });
-
-      // Create new assignments
-      for (const userId of assigneeIds) {
-        await tx.complaintAssignment.upsert({
-          where: { complaintId_userId: { complaintId: id, userId } },
-          update: { isActive: true, assignedById: req.user.id, assignedAt: new Date() },
-          create: { complaintId: id, userId, assignedById: req.user.id },
+        // Validate assignees
+        const assignees = await tx.user.findMany({
+          where: { id: { in: assigneeIds }, isActive: true },
+          select: { id: true, role: true }
         });
+        if (assignees.length !== assigneeIds.length) {
+          throw new Error('One or more assignees not found or inactive.');
+        }
+
+        // Deactivate old assignments
+        await tx.complaintAssignment.updateMany({
+          where: { complaintId: id, isActive: true },
+          data: { isActive: false },
+        });
+
+        // Create new assignments
+        for (const userId of assigneeIds) {
+          await tx.complaintAssignment.upsert({
+            where: { complaintId_userId: { complaintId: id, userId } },
+            update: { isActive: true, assignedById: req.user.id, assignedAt: new Date() },
+            create: { complaintId: id, userId, assignedById: req.user.id },
+          });
+        }
+        changeDetails.push(`Reassigned`);
       }
     }
 
     return result;
   });
 
-  // Notify
-  const oldAssigneeIds = complaint.assignments.map(a => a.userId);
-  [...new Set([...oldAssigneeIds, nocAssigneeId, opsAssigneeId, accountsAssigneeId].filter(Boolean))].forEach(uid => emitSidebarRefresh(uid));
-  emitSidebarRefreshByRole('SUPER_ADMIN');
-  emitSidebarRefreshByRole('OPS_TEAM');
-  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+  // Build a meaningful log reason
+  const logReason = changeDetails.length > 0
+    ? `Updated by ${req.user.name} (${req.user.role}): ${changeDetails.join(', ')}`
+    : `Complaint details updated by ${req.user.name} (${req.user.role})`;
 
-  // Log the update
+  // Log the update with detailed changes
   await prisma.statusChangeLog.create({
     data: {
       entityType: 'COMPLAINT',
       entityId: id,
       field: 'details_updated',
       oldValue: null,
-      newValue: 'Updated',
+      newValue: changeDetails.join('; ') || 'Updated',
       changedById: req.user.id,
-      reason: 'Complaint details updated',
+      reason: logReason,
     }
   });
+
+  // Notify: when OPS updates, notify NOC assignees + NOC_HEAD
+  const oldAssigneeIds = complaint.assignments.map(a => a.userId);
+  if (isOps && changeDetails.length > 0) {
+    // Find NOC assignees on this complaint
+    const nocAssigneeIds = complaint.assignments
+      .filter(a => a.user?.role === 'NOC')
+      .map(a => a.userId);
+
+    // Notify NOC assignees
+    nocAssigneeIds.forEach(uid => emitSidebarRefresh(uid));
+
+    // Notify complaint creator
+    if (complaint.createdById) emitSidebarRefresh(complaint.createdById);
+
+    // Notify all NOC_HEAD users
+    emitSidebarRefreshByRole('NOC_HEAD');
+
+    // Send notification to NOC users + NOC_HEAD
+    const notifyUserIds = [...new Set([...nocAssigneeIds, complaint.createdById].filter(Boolean).filter(uid => uid !== req.user.id))];
+    if (notifyUserIds.length > 0) {
+      notifyComplaintStatusChanged(notifyUserIds, {
+        complaintId: id,
+        complaintNumber: complaint.id,
+        customerName: '',
+        oldStatus: 'OPEN',
+        newStatus: 'OPEN',
+        changedByName: `${req.user.name} (OPS) — ${changeDetails.join(', ')}`,
+      });
+    }
+
+    // Also notify NOC_HEAD users via role
+    const nocHeadUsers = await prisma.user.findMany({
+      where: { role: 'NOC_HEAD', isActive: true },
+      select: { id: true }
+    });
+    nocHeadUsers.forEach(u => {
+      if (u.id !== req.user.id && !notifyUserIds.includes(u.id)) {
+        emitSidebarRefresh(u.id);
+        notifyComplaintStatusChanged([u.id], {
+          complaintId: id,
+          complaintNumber: complaint.id,
+          customerName: '',
+          oldStatus: 'OPEN',
+          newStatus: 'OPEN',
+          changedByName: `${req.user.name} (OPS) — ${changeDetails.join(', ')}`,
+        });
+      }
+    });
+  } else {
+    // NOC/admin update — notify all assignees
+    [...new Set([...oldAssigneeIds, nocAssigneeId, opsAssigneeId, accountsAssigneeId].filter(Boolean))].forEach(uid => emitSidebarRefresh(uid));
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+    emitSidebarRefreshByRole('OPS_TEAM');
+    emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+    emitSidebarRefreshByRole('NOC_HEAD');
+  }
 
   res.json({ message: 'Complaint updated.', data: updated });
 });
@@ -1099,7 +1238,7 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
 export const getAssignableUsers = asyncHandler(async function getAssignableUsers(req, res) {
   const [nocUsers, opsUsers, accountsUsers] = await Promise.all([
     prisma.user.findMany({
-      where: { role: 'NOC', isActive: true },
+      where: { role: { in: ['NOC', 'NOC_HEAD'] }, isActive: true },
       select: { id: true, name: true, email: true, role: true },
       orderBy: { name: 'asc' },
     }),
