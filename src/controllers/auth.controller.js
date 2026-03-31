@@ -46,6 +46,40 @@ export const login = asyncHandler(async function login(req, res) {
   });
 });
 
+export const resetPassword = asyncHandler(async function resetPassword(req, res) {
+  const { email, oldPassword, newPassword } = req.body;
+
+  if (!email || !oldPassword || !newPassword) {
+    return res.status(400).json({ message: 'Email, old password, and new password are required.' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ message: 'New password must be at least 6 characters.' });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email: email.toLowerCase() }
+  });
+
+  if (!user) {
+    return res.status(401).json({ message: 'Invalid email or password.' });
+  }
+
+  const isMatch = await bcrypt.compare(oldPassword, user.password);
+  if (!isMatch) {
+    return res.status(401).json({ message: 'Old password is incorrect.' });
+  }
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { password: hashedPassword }
+  });
+
+  res.json({ message: 'Password reset successfully. Please login with your new password.' });
+});
+
 export const me = asyncHandler(async function me(req, res) {
   res.json({ user: req.user });
 });
