@@ -1558,6 +1558,23 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
       createdCount = result.count;
     }
 
+    // If no records were created, delete the empty campaign and return error
+    if (createdCount === 0) {
+      await prisma.campaignAssignment.deleteMany({ where: { campaignId: campaign.id } });
+      await prisma.campaign.delete({ where: { id: campaign.id } });
+      return res.status(400).json({
+        message: `No new records added. All ${data.length} record(s) were duplicates or invalid.`,
+        duplicateCount,
+        skippedNoPhone,
+        skippedInvalidPhone,
+        skippedNoName,
+        skippedNoCompany,
+        skippedNoTitle,
+        totalReceived: data.length,
+        invalidRecords,
+      });
+    }
+
     // Store rejected count on campaign
     const totalRejected = invalidRecords.length;
     if (totalRejected > 0) {
