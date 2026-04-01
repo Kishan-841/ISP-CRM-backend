@@ -6544,6 +6544,8 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
             state: true,
             industry: true,
             isSelfGenerated: true,
+            channelPartnerVendorId: true,
+            channelPartnerVendor: { select: { id: true, companyName: true, commissionPercentage: true } },
             campaign: { select: { id: true, code: true, name: true } },
             createdBy: { select: { id: true, name: true, email: true } }
           }
@@ -6784,6 +6786,8 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         // Vendor / Channel Partner info
         vendor: lead.vendor,
         vendorCommissionPercentage: lead.vendorCommissionPercentage,
+        channelPartnerVendor: lead.campaignData?.channelPartnerVendor || null,
+        isChannelPartnerLead: !!lead.campaignData?.channelPartnerVendorId,
         createdAt: lead.createdAt,
         updatedAt: lead.updatedAt
       };
