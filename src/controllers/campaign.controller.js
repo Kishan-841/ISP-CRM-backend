@@ -1346,6 +1346,13 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
       description = 'Self-created campaign by SAM';
     }
 
+    // If TL provides channelPartnerVendorId, treat as CP campaign
+    const isCPCampaign = userRole === 'BDM_CP' || (channelPartnerVendorId && (userRole === 'BDM_TEAM_LEADER' || userRole === 'BDM'));
+    if (isCPCampaign && userRole !== 'BDM_CP') {
+      prefix = '[CP]';
+      description = `Channel Partner data uploaded by ${userRole === 'BDM_TEAM_LEADER' ? 'Team Leader' : 'BDM'}`;
+    }
+
     // Create campaign with retry logic for unique constraint errors
     let campaign;
     let retries = 3;
@@ -1359,11 +1366,11 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
             code,
             name: `${prefix} ${name}`,
             description,
-            type: userRole === 'BDM_CP' ? 'CHANNEL_PARTNER' : 'SELF',
+            type: isCPCampaign ? 'CHANNEL_PARTNER' : 'SELF',
             status: 'ACTIVE',
             dataSource: dataSource || 'Self Upload',
             createdById: userId,
-            ...(userRole === 'BDM_CP' && channelPartnerVendorId ? { channelPartnerVendorId } : {})
+            ...(isCPCampaign && channelPartnerVendorId ? { channelPartnerVendorId } : {})
           }
         });
 
@@ -1538,7 +1545,7 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
         // If BDM assigns to ISR, set BDM binding for lead conversion
         ...((userRole === 'BDM' || userRole === 'BDM_TEAM_LEADER') && assignToId && assignToId !== userId ? { assignedByBdmId: userId } : {}),
         // Channel Partner fields for BDM_CP
-        ...(userRole === 'BDM_CP' && channelPartnerVendorId ? { channelPartnerVendorId, source: 'Channel Partner' } : {})
+        ...(isCPCampaign && channelPartnerVendorId ? { channelPartnerVendorId, source: 'Channel Partner' } : {})
       });
     }
 
