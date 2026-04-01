@@ -777,23 +777,6 @@ export const getVendorApprovalQueue = asyncHandler(async function getVendorAppro
   }));
 });
 
-export default {
-  getVendors,
-  getVendorById,
-  createVendor,
-  updateVendor,
-  deleteVendor,
-  getVendorStats,
-  getPendingVendors,
-  approveVendor,
-  rejectVendor,
-  createVendorFromFeasibility,
-  uploadVendorDocs,
-  verifyVendorDocs,
-  getVendorApprovalQueue,
-  getChannelPartners
-};
-
 // Get approved Channel Partner vendors
 export const getChannelPartners = asyncHandler(async function getChannelPartners(req, res) {
   const vendors = await prisma.vendor.findMany({
@@ -815,3 +798,20 @@ export const getChannelPartners = asyncHandler(async function getChannelPartners
 
   res.json(vendors);
 });
+
+export default {
+  getVendors,
+  getVendorById,
+  createVendor,
+  updateVendor,
+  deleteVendor,
+  getVendorStats,
+  getPendingVendors,
+  approveVendor,
+  rejectVendor,
+  createVendorFromFeasibility,
+  uploadVendorDocs,
+  verifyVendorDocs,
+  getVendorApprovalQueue,
+  getChannelPartners
+};
