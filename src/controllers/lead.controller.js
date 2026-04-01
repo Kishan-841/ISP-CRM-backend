@@ -6498,6 +6498,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         advanceAmount: true,
         paymentTerms: true,
         tentativePrice: true,
+        vendorCommissionPercentage: true,
         pushedToInstallationAt: true,
         installationNotes: true,
         deliveryStatus: true,
@@ -6557,6 +6558,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         speedTestUploadedBy: { select: { id: true, name: true, email: true } },
         customerAcceptanceBy: { select: { id: true, name: true, email: true } },
         demoPlanAssignedBy: { select: { id: true, name: true, email: true } },
+        vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } },
         products: {
           select: {
             product: { select: { id: true, title: true } }
@@ -6781,6 +6783,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         activeDeliveryRequest: lead.deliveryRequests?.[0] || null,
         // Vendor / Channel Partner info
         vendor: lead.vendor,
+        vendorCommissionPercentage: lead.vendorCommissionPercentage,
         createdAt: lead.createdAt,
         updatedAt: lead.updatedAt
       };
