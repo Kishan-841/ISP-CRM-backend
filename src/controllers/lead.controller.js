@@ -271,6 +271,11 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
       effectiveAssignedToId = campaignData.assignedByBdmId;
     }
 
+    // BDM_CP auto-assignment: if the caller is BDM_CP, auto-assign to themselves
+    if (req.user.role === 'BDM_CP') {
+      effectiveAssignedToId = userId;
+    }
+
     // Generate sequential lead number
     const leadNumber = await generateLeadNumber();
 
