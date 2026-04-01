@@ -186,7 +186,7 @@ router.put('/mom/:momId', updateMOM);
 router.delete('/mom/:momId', deleteMOM);
 
 // Push to document verification (with file uploads via Cloudinary) - Legacy
-router.post('/:id/push-to-verification', requireRole('BDM', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), uploadToCloudinary.array('documents', 10), pushToDocsVerification);
+router.post('/:id/push-to-verification', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), uploadToCloudinary.array('documents', 10), pushToDocsVerification);
 
 // ========== TYPED DOCUMENT ROUTES ==========
 
@@ -200,15 +200,15 @@ router.delete('/:id/documents/:documentType', removeDocument);
 router.get('/:id/documents', getLeadDocuments);
 
 // Mark login complete (customer accepted quotation)
-router.post('/:id/mark-login-complete', requireRole('BDM', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), markLoginComplete);
+router.post('/:id/mark-login-complete', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), markLoginComplete);
 
 // Push to verification with typed documents validation
-router.post('/:id/push-to-verification-typed', requireRole('BDM', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), pushToDocsVerificationTyped);
+router.post('/:id/push-to-verification-typed', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), pushToDocsVerificationTyped);
 
 // ========== CUSTOMER UPLOAD LINK ROUTES ==========
 
 // Generate upload link for customer (BDM/Admin only)
-router.post('/:id/upload-link', requireRole('BDM', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), generateUploadLink);
+router.post('/:id/upload-link', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), generateUploadLink);
 
 // Get all upload links for a lead
 router.get('/:id/upload-links', getUploadLinks);
