@@ -87,8 +87,9 @@ export const createUser = asyncHandler(async function createUser(req, res) {
   // For Team Leader, auto-assign themselves; otherwise validate provided teamLeaderId
   const effectiveTeamLeaderId = isTL ? req.user.id : teamLeaderId || null;
   if (effectiveTeamLeaderId && !isTL) {
+    const validLeaderRoles = ['BDM_TEAM_LEADER', 'NOC_HEAD', 'SAM_HEAD'];
     const tl = await prisma.user.findUnique({ where: { id: effectiveTeamLeaderId }, select: { role: true, isActive: true } });
-    if (!tl || tl.role !== 'BDM_TEAM_LEADER' || !tl.isActive) {
+    if (!tl || !validLeaderRoles.includes(tl.role) || !tl.isActive) {
       return res.status(400).json({ message: 'Invalid team leader.' });
     }
   }
