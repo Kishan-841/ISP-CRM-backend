@@ -115,7 +115,9 @@ import {
   // Customer Enquiry functions
   getCustomerEnquiryQueue,
   getSAMHeadEnquiryQueue,
-  assignEnquiryToISR
+  assignEnquiryToISR,
+  // CP Leads
+  getCPLeads
 } from '../controllers/lead.controller.js';
 import {
   generateUploadLink,
@@ -139,6 +141,9 @@ router.get('/team-leaders', getTeamLeaders);
 router.get('/check/:campaignDataId', checkLeadExists);
 
 // ========== BDM ROUTES ==========
+
+// CP Leads tracking (Admin + TL)
+router.get('/cp-leads', getCPLeads);
 
 // Get BDM dashboard stats
 router.get('/bdm/dashboard-stats', getBDMDashboardStats);

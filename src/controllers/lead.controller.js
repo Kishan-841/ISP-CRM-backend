@@ -10415,3 +10415,147 @@ export const assignEnquiryToISR = asyncHandler(async function assignEnquiryToISR
 });
 
 // ========== END CUSTOMER ENQUIRY FUNCTIONS ==========
+
+// ========== CHANNEL PARTNER LEADS ==========
+
+/**
+ * Get all Channel Partner leads with stage, costs, and commission info
+ * GET /leads/cp-leads
+ */
+export const getCPLeads = asyncHandler(async function getCPLeads(req, res) {
+    const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isAdmin = isAdminOrTestUser(req.user);
+
+    if (!isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only Admin or Team Leader can access CP leads.' });
+    }
+
+    const { page, limit, skip } = parsePagination(req.query, 50);
+    const { cpVendorId, search } = req.query;
+
+    // Find all leads that have a channelPartnerVendorId on their campaign data
+    const where = {
+      campaignData: { channelPartnerVendorId: { not: null } }
+    };
+
+    if (cpVendorId) {
+      where.campaignData.channelPartnerVendorId = cpVendorId;
+    }
+
+    if (search) {
+      where.OR = [
+        { campaignData: { company: { contains: search, mode: 'insensitive' } } },
+        { campaignData: { name: { contains: search, mode: 'insensitive' } } },
+        { campaignData: { phone: { contains: search } } },
+        { customerUsername: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [leads, total] = await Promise.all([
+      prisma.lead.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          arcAmount: true,
+          otcAmount: true,
+          vendorCommissionPercentage: true,
+          deliveryStatus: true,
+          opsApprovalStatus: true,
+          feasibilityNotes: true,
+          pushedToInstallationAt: true,
+          actualPlanIsActive: true,
+          createdAt: true,
+          updatedAt: true,
+          campaignData: {
+            select: {
+              company: true,
+              name: true,
+              phone: true,
+              channelPartnerVendor: { select: { id: true, companyName: true, commissionPercentage: true } }
+            }
+          },
+          assignedTo: { select: { id: true, name: true } },
+          vendor: { select: { id: true, companyName: true, category: true } },
+        }
+      }),
+      prisma.lead.count({ where })
+    ]);
+
+    // Format and calculate
+    const formattedLeads = leads.map(lead => {
+      const cpVendor = lead.campaignData?.channelPartnerVendor;
+      const cpPercent = cpVendor?.commissionPercentage || lead.vendorCommissionPercentage || 0;
+      const arcAmount = lead.arcAmount || 0;
+      const cpCommission = (cpPercent / 100) * arcAmount;
+
+      // Parse feasibility for OPEX/CAPEX
+      let capex = 0, opex = 0, vendorType = '';
+      try {
+        if (lead.feasibilityNotes) {
+          const feas = JSON.parse(lead.feasibilityNotes);
+          vendorType = feas.vendorType || '';
+          capex = parseFloat(feas.vendorDetails?.capex) || 0;
+          opex = parseFloat(feas.vendorDetails?.opex) || 0;
+        }
+      } catch (e) {}
+
+      // Determine current stage
+      let stage = 'New';
+      if (lead.actualPlanIsActive) stage = 'Active Plan';
+      else if (lead.deliveryStatus === 'COMPLETED') stage = 'Delivery Completed';
+      else if (lead.pushedToInstallationAt) stage = 'Installation';
+      else if (lead.opsApprovalStatus === 'APPROVED') stage = 'OPS Approved';
+      else if (lead.opsApprovalStatus === 'PENDING') stage = 'OPS Pending';
+      else if (lead.status === 'FEASIBLE') stage = 'Feasible';
+      else if (lead.status === 'QUALIFIED') stage = 'Qualified';
+      else if (lead.status === 'MEETING_SCHEDULED') stage = 'Meeting';
+      else if (lead.status === 'FOLLOW_UP') stage = 'Follow Up';
+      else if (lead.status === 'DROPPED') stage = 'Dropped';
+      else stage = lead.status;
+
+      return {
+        id: lead.id,
+        company: lead.campaignData?.company,
+        name: lead.campaignData?.name,
+        phone: lead.campaignData?.phone,
+        cpVendor: cpVendor?.companyName || 'Unknown CP',
+        cpVendorId: cpVendor?.id,
+        cpPercent,
+        arcAmount,
+        otcAmount: lead.otcAmount || 0,
+        cpCommission,
+        capex,
+        opex,
+        netMargin: arcAmount - opex - cpCommission,
+        vendorType,
+        stage,
+        assignedTo: lead.assignedTo?.name || '-',
+        feasibilityVendor: lead.vendor?.companyName || '-',
+        createdAt: lead.createdAt,
+      };
+    });
+
+    // Stats
+    const allCPLeads = await prisma.lead.findMany({
+      where: { campaignData: { channelPartnerVendorId: { not: null } } },
+      select: { arcAmount: true, vendorCommissionPercentage: true, campaignData: { select: { channelPartnerVendor: { select: { commissionPercentage: true } } } } }
+    });
+
+    let totalARC = 0, totalCommission = 0;
+    allCPLeads.forEach(l => {
+      const arc = l.arcAmount || 0;
+      const pct = l.campaignData?.channelPartnerVendor?.commissionPercentage || l.vendorCommissionPercentage || 0;
+      totalARC += arc;
+      totalCommission += (pct / 100) * arc;
+    });
+
+    res.json({
+      leads: formattedLeads,
+      stats: { total: allCPLeads.length, totalARC, totalCommission },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+    });
+});
