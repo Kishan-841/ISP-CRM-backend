@@ -5042,13 +5042,13 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
     const userId = req.user.id;
     const { notes, testMode, arcAmount, otcAmount, advanceAmount, paymentTerms } = req.body;
 
-    // Check if user is BDM, Team Leader, or Admin/TestUser
-    if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
-      return res.status(403).json({ message: 'Only BDM, Team Leader, or Admin can push to verification.' });
+    // Check if user is BDM, BDM_CP, Team Leader, or Admin/TestUser
+    if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_CP') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
+      return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader, or Admin can push to verification.' });
     }
 
-    // Only allow testMode for BDM/Admin/TestUser
-    const allowTestMode = isAdminOrTestUser(req.user) || req.user.role === 'BDM' || req.user.role === 'BDM_TEAM_LEADER';
+    // Only allow testMode for BDM/BDM_CP/Admin/TestUser
+    const allowTestMode = isAdminOrTestUser(req.user) || req.user.role === 'BDM' || req.user.role === 'BDM_CP' || req.user.role === 'BDM_TEAM_LEADER';
     const isTestMode = allowTestMode && testMode === true;
 
     // Find the lead
