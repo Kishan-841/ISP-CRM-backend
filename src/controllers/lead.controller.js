@@ -1242,11 +1242,12 @@ export const transferAllLeads = asyncHandler(async function transferAllLeads(req
 // Get BDM scheduled meetings
 export const getBDMScheduledMeetings = asyncHandler(async function getBDMScheduledMeetings(req, res) {
     const isBDM = hasRole(req.user, 'BDM');
+    const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
-    const isAdmin = hasRole(req.user, 'SUPER_ADMIN');
+    const isAdmin = isAdminOrTestUser(req.user);
 
-    if (!isBDM && !isTL && !isAdmin) {
-      return res.status(403).json({ message: 'Only BDM, Team Leader or Admin can access this endpoint.' });
+    if (!isBDM && !isBDMCP && !isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader or Admin can access this endpoint.' });
     }
 
     // Admin/TL can view a specific BDM's meetings via ?userId= query param
@@ -1772,11 +1773,12 @@ export const deleteMOM = asyncHandler(async function deleteMOM(req, res) {
 export const getBDMFollowUps = asyncHandler(async function getBDMFollowUps(req, res) {
     const userId = req.user.id;
     const isBDM = hasRole(req.user, 'BDM');
+    const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
 
-    if (!isBDM && !isTL && !isAdmin) {
-      return res.status(403).json({ message: 'Only BDM, Team Leader or Admin can access this endpoint.' });
+    if (!isBDM && !isBDMCP && !isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader or Admin can access this endpoint.' });
     }
 
     const leads = await prisma.lead.findMany({
@@ -1859,11 +1861,12 @@ export const getBDMFollowUps = asyncHandler(async function getBDMFollowUps(req, 
 export const getBDMDeliveryCompleted = asyncHandler(async function getBDMDeliveryCompleted(req, res) {
     const userId = req.user.id;
     const isBDM = hasRole(req.user, 'BDM');
+    const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
 
-    if (!isBDM && !isTL && !isAdmin) {
-      return res.status(403).json({ message: 'Only BDM, Team Leader or Admin can access this endpoint.' });
+    if (!isBDM && !isBDMCP && !isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader or Admin can access this endpoint.' });
     }
 
     const leads = await prisma.lead.findMany({
