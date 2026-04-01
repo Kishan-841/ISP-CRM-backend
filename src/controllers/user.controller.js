@@ -690,6 +690,52 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     }
   }
 
+  if (userRole === 'BDM_CP' || isMaster) {
+    // BDM_CP counts: similar to BDM but only CP-sourced data
+    const [cpCallingQueue, cpQueue, cpFollowUps, cpMeetings, cpLeadPipeline, cpDeliveryCompleted] = await Promise.all([
+      prisma.campaignData.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'NEW',
+          channelPartnerVendorId: { not: null },
+          campaign: { status: 'ACTIVE' }
+        }
+      }),
+      prisma.lead.count({
+        where: { ...(!isMaster && { assignedToId: userId }), status: 'NEW' }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          status: 'FOLLOW_UP',
+          callLaterAt: { not: null, lte: endOfToday }
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          meetingDate: { not: null, lte: endOfToday },
+          status: 'MEETING_SCHEDULED'
+        }
+      }),
+      prisma.lead.count({
+        where: { ...(!isMaster && { assignedToId: userId }), opsApprovalStatus: { not: null } }
+      }),
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && { assignedToId: userId }),
+          deliveryStatus: 'COMPLETED',
+          deliveryCompletedViewedAt: null
+        }
+      })
+    ]);
+    if (isMaster) {
+      Object.assign(counts, { cpCallingQueue, cpQueue, cpFollowUps, cpMeetings, cpLeadPipeline, cpDeliveryCompleted });
+    } else {
+      Object.assign(counts, { callingQueue: cpCallingQueue, queue: cpQueue, followUps: cpFollowUps, meetings: cpMeetings, leadPipeline: cpLeadPipeline, deliveryCompleted: cpDeliveryCompleted });
+    }
+  }
+
   if (userRole === 'BDM_TEAM_LEADER' || isMaster) {
     // Team leader counts: only their own assigned leads
     const [btlQueue, btlMeetings, btlFollowUps] = await Promise.all([

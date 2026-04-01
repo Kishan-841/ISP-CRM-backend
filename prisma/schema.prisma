@@ -124,14 +124,17 @@ model Campaign {
   status       CampaignStatus       @default(ACTIVE)
   type         CampaignType         @default(ALL)
   rejectedRecords Int               @default(0)
-  createdById  String?
+  createdById             String?
+  channelPartnerVendorId  String?
   createdBy    User?                @relation("CampaignCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  channelPartnerVendor Vendor?      @relation("CampaignChannelPartner", fields: [channelPartnerVendorId], references: [id])
   assignments  CampaignAssignment[]
   campaignData CampaignData[]
 
   @@index([type])
   @@index([createdById])
   @@index([type, createdById])
+  @@index([channelPartnerVendorId])
 }
 
 model CampaignAssignment {
@@ -176,9 +179,11 @@ model CampaignData {
   createdBy       User?      @relation("CampaignDataCreatedBy", fields: [createdById], references: [id])
   assignedByBdmId String?
   assignedByBdm   User?      @relation("CampaignDataAssignedByBdm", fields: [assignedByBdmId], references: [id])
-  lastEditedById  String?
-  lastEditedBy    User?      @relation("CampaignDataLastEditedBy", fields: [lastEditedById], references: [id])
-  lastEditedAt    DateTime?
+  lastEditedById          String?
+  lastEditedBy            User?      @relation("CampaignDataLastEditedBy", fields: [lastEditedById], references: [id])
+  lastEditedAt            DateTime?
+  channelPartnerVendorId  String?
+  channelPartnerVendor    Vendor?    @relation("CampaignDataChannelPartner", fields: [channelPartnerVendorId], references: [id])
   lead            Lead?
 
   @@index([campaignId, status])
@@ -186,6 +191,7 @@ model CampaignData {
   @@index([assignedToId, status])
   @@index([campaignId, status, callLaterAt])
   @@index([assignedByBdmId])
+  @@index([channelPartnerVendorId])
 }
 
 model CallLog {
@@ -560,6 +566,7 @@ model Vendor {
   docsStatus            VendorDocsStatus     @default(PENDING)
   estimatedCapex        Float?
   estimatedOpex         Float?
+  commissionPercentage  Float?
   createdForLeadId      String?
   // Base fields
   createdById           String
@@ -573,6 +580,8 @@ model Vendor {
   accountsApprovedBy    User?                @relation("VendorAccountsApproved", fields: [accountsApprovedById], references: [id])
   createdForLead        Lead?                @relation("VendorCreatedForLead", fields: [createdForLeadId], references: [id])
   leads                 Lead[]               @relation("LeadVendor")
+  campaignsAsCP         Campaign[]           @relation("CampaignChannelPartner")
+  campaignDataAsCP      CampaignData[]       @relation("CampaignDataChannelPartner")
 
   @@index([companyName])
   @@index([createdById])
@@ -1326,6 +1335,7 @@ enum Role {
   NOC_HEAD
   SUPPORT_TEAM
   SALES_DIRECTOR
+  BDM_CP
   TEST_USER
 }
 
@@ -1374,6 +1384,7 @@ enum CampaignType {
   CAMPAIGN
   SELF
   SOCIAL_MEDIA
+  CHANNEL_PARTNER
 }
 
 enum ProductStatus {

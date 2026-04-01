@@ -284,6 +284,18 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
       status: 'NEW',
     };
 
+    // If campaign data has a channel partner vendor, auto-set vendor on lead
+    if (campaignData.channelPartnerVendorId) {
+      leadData.vendorId = campaignData.channelPartnerVendorId;
+      const cpVendor = await prisma.vendor.findUnique({
+        where: { id: campaignData.channelPartnerVendorId },
+        select: { commissionPercentage: true }
+      });
+      if (cpVendor?.commissionPercentage != null) {
+        leadData.vendorCommissionPercentage = cpVendor.commissionPercentage;
+      }
+    }
+
     // Only add products if productIds provided and not empty
     if (productIds && productIds.length > 0) {
       leadData.products = {
@@ -460,7 +472,7 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
     const isUserAdmin = isAdminOrTestUser(req.user);
     const isAssignedBDM = existing.assignedToId === userId;
     const isCreator = existing.createdById === userId;
-    const isBDMOrTL = hasAnyRole(req.user, ['BDM', 'BDM_TEAM_LEADER']);
+    const isBDMOrTL = hasAnyRole(req.user, ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER']);
 
     if (!isUserAdmin && !(isBDMOrTL && (isAssignedBDM || isCreator))) {
       return res.status(403).json({ message: 'You can only update leads assigned to or created by you.' });
@@ -480,8 +492,8 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
       }
     }
 
-    // BDM cannot change status from leads table - must use call disposition
-    if (userRole === 'BDM' && status !== undefined) {
+    // BDM/BDM_CP cannot change status from leads table - must use call disposition
+    if ((userRole === 'BDM' || userRole === 'BDM_CP') && status !== undefined) {
       return res.status(403).json({
         message: 'BDM cannot change lead status directly. Use call disposition instead.'
       });
@@ -671,12 +683,13 @@ export const checkLeadExists = asyncHandler(async function checkLeadExists(req, 
 export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
     const userId = req.user.id;
     const isBDM = hasRole(req.user, 'BDM');
+    const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
     const { campaignId } = req.query;
 
-    if (!isBDM && !isTL && !isAdmin) {
-      return res.status(403).json({ message: 'Only BDM, Team Leader, or Admin can access this endpoint.' });
+    if (!isBDM && !isBDMCP && !isTL && !isAdmin) {
+      return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader, or Admin can access this endpoint.' });
     }
 
     const { page, limit, skip } = parsePagination(req.query, 50);
@@ -691,6 +704,12 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
         select: { id: true }
       })).map(u => u.id);
       whereClause = { assignedToId: { in: [userId, ...teamMemberIds] } };
+    } else if (isBDMCP) {
+      whereClause = {
+        assignedToId: userId,
+        vendorId: { not: null },
+        vendor: { category: 'CHANNEL_PARTNER' }
+      };
     } else if (isBDM) {
       whereClause = { assignedToId: userId };
     }
@@ -894,7 +913,8 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
               select: { campaignData: { select: { company: true } } }
             }
           }
-        }
+        },
+        vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } }
       }
     });
 
@@ -943,7 +963,9 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
       createdBy: lead.createdBy,
       // Customer enquiry info (if lead was created from an enquiry)
       isCustomerReferral: !!lead.enquiryCreatedFrom,
-      referredByCompany: lead.enquiryCreatedFrom?.referredByLead?.campaignData?.company || null
+      referredByCompany: lead.enquiryCreatedFrom?.referredByLead?.campaignData?.company || null,
+      // Vendor / Channel Partner info
+      vendor: lead.vendor
     }));
 
     res.json(paginatedResponse({ data: formattedLeads, total: queueTotal, page, limit, dataKey: 'leads', extra: { stats, campaigns } }));
@@ -2024,7 +2046,8 @@ export const getFeasibilityQueue = asyncHandler(async function getFeasibilityQue
           },
           enquiryCreatedFrom: {
             select: { id: true }
-          }
+          },
+          vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } }
         }
       }),
       prisma.lead.count({ where: whereClause })
@@ -2122,7 +2145,9 @@ export const getFeasibilityQueue = asyncHandler(async function getFeasibilityQue
       // Products
       products: lead.products.map(lp => lp.product),
       // Customer referral info
-      isCustomerReferral: !!lead.enquiryCreatedFrom
+      isCustomerReferral: !!lead.enquiryCreatedFrom,
+      // Vendor / Channel Partner info
+      vendor: lead.vendor
     }));
 
     res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
@@ -2480,7 +2505,8 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
           },
           enquiryCreatedFrom: {
             select: { id: true }
-          }
+          },
+          vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } }
         }
       }),
       prisma.lead.count({ where: opsWhere }),
@@ -2546,7 +2572,9 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
       // Customer referral info
-      isCustomerReferral: !!lead.enquiryCreatedFrom
+      isCustomerReferral: !!lead.enquiryCreatedFrom,
+      // Vendor / Channel Partner info
+      vendor: lead.vendor
     }));
 
     res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
@@ -3229,7 +3257,8 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       },
       enquiryCreatedFrom: {
         select: { id: true }
-      }
+      },
+      vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } }
     };
 
     const [pendingLeads, docsTotal] = await Promise.all([
@@ -3323,7 +3352,9 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
       // Customer referral info
-      isCustomerReferral: !!lead.enquiryCreatedFrom
+      isCustomerReferral: !!lead.enquiryCreatedFrom,
+      // Vendor / Channel Partner info
+      vendor: lead.vendor
     }));
 
     // Format accounts rejected leads
@@ -3375,7 +3406,9 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
       // Customer referral info
-      isCustomerReferral: !!lead.enquiryCreatedFrom
+      isCustomerReferral: !!lead.enquiryCreatedFrom,
+      // Vendor / Channel Partner info
+      vendor: lead.vendor
     }));
 
     res.json(paginatedResponse({ data: formattedLeads, total: docsTotal, page, limit, dataKey: 'leads', extra: { accountsRejectedLeads: formattedAccountsRejected, stats } }));
@@ -3909,10 +3942,11 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     const userRole = req.user.role;
     const isAdmin = isAdminOrTestUser(req.user);
     const isBDM = hasRole(req.user, 'BDM');
+    const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
 
-    if (!isBDM && !isAdmin && !isTL) {
-      return res.status(403).json({ message: 'Only BDM, Team Leader or Admin can access this endpoint.' });
+    if (!isBDM && !isBDMCP && !isAdmin && !isTL) {
+      return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader or Admin can access this endpoint.' });
     }
 
     // Admin/TL can view a specific BDM's dashboard by passing userId query param
@@ -3924,7 +3958,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         where: { id: targetUserId },
         select: { role: true }
       });
-      if (!targetUser || targetUser.role !== 'BDM') {
+      if (!targetUser || (targetUser.role !== 'BDM' && targetUser.role !== 'BDM_CP')) {
         return res.status(400).json({ message: 'Target user is not a BDM.' });
       }
     }
@@ -6549,7 +6583,8 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
               }
             }
           }
-        }
+        },
+        vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } }
       },
       orderBy: { pushedToInstallationAt: 'desc' }
     });
@@ -6736,6 +6771,8 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         createdBy: lead.createdBy,
         products: lead.products.map(lp => lp.product),
         activeDeliveryRequest: lead.deliveryRequests?.[0] || null,
+        // Vendor / Channel Partner info
+        vendor: lead.vendor,
         createdAt: lead.createdAt,
         updatedAt: lead.updatedAt
       };
@@ -7757,7 +7794,8 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
             },
             take: 1,
             orderBy: { pushedToNocAt: 'desc' }
-          }
+          },
+          vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } }
         },
         orderBy: { updatedAt: 'desc' }
       }),
@@ -7840,6 +7878,8 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
         pushedToNocAt: lead.deliveryRequests?.[0]?.pushedToNocAt,
         // NOC push to delivery
         nocPushedToDeliveryAt: lead.nocPushedToDeliveryAt,
+        // Vendor / Channel Partner info
+        vendor: lead.vendor,
         // Timestamps
         createdAt: lead.createdAt,
         updatedAt: lead.updatedAt

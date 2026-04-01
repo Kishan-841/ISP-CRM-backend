@@ -16,7 +16,8 @@ import {
   createVendorFromFeasibility,
   uploadVendorDocs,
   verifyVendorDocs,
-  getVendorApprovalQueue
+  getVendorApprovalQueue,
+  getChannelPartners
 } from '../controllers/vendor.controller.js';
 
 const router = express.Router();
@@ -55,6 +56,9 @@ const vendorUpload = multer({
 
 // All routes require authentication
 router.use(auth);
+
+// Get approved channel partners (accessible by all authenticated users)
+router.get('/channel-partners', getChannelPartners);
 
 // Get all vendors (accessible by all authenticated users)
 router.get('/', getVendors);

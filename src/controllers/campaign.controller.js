@@ -1294,7 +1294,7 @@ export const editCampaignData = asyncHandler(async function editCampaignData(req
 export const createSelfCampaign = asyncHandler(async function createSelfCampaign(req, res) {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const { name, dataSource, data, assignToId } = req.body;
+    const { name, dataSource, data, assignToId, channelPartnerVendorId } = req.body;
 
     if (!name) {
       return res.status(400).json({ message: 'Campaign name is required.' });
@@ -1335,6 +1335,12 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
       description = assignToId && assignToId !== userId
         ? 'Self-created campaign by Team Leader (assigned to ISR)'
         : 'Self-created campaign by Team Leader';
+    } else if (userRole === 'BDM_CP') {
+      if (!channelPartnerVendorId) {
+        return res.status(400).json({ message: 'Channel Partner vendor is required for BDM(CP) campaigns.' });
+      }
+      prefix = '[CP]';
+      description = 'Channel Partner data uploaded by BDM(CP)';
     } else if (userRole === 'SAM') {
       prefix = '[SAM Self]';
       description = 'Self-created campaign by SAM';
@@ -1353,10 +1359,11 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
             code,
             name: `${prefix} ${name}`,
             description,
-            type: 'SELF',
+            type: userRole === 'BDM_CP' ? 'CHANNEL_PARTNER' : 'SELF',
             status: 'ACTIVE',
             dataSource: dataSource || 'Self Upload',
-            createdById: userId
+            createdById: userId,
+            ...(userRole === 'BDM_CP' && channelPartnerVendorId ? { channelPartnerVendorId } : {})
           }
         });
 
@@ -1529,7 +1536,9 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
         createdById: userId,            // Track who created the data (always the BDM/ISR who uploaded)
         isSelfGenerated: true,          // Mark as self-generated
         // If BDM assigns to ISR, set BDM binding for lead conversion
-        ...((userRole === 'BDM' || userRole === 'BDM_TEAM_LEADER') && assignToId && assignToId !== userId ? { assignedByBdmId: userId } : {})
+        ...((userRole === 'BDM' || userRole === 'BDM_TEAM_LEADER') && assignToId && assignToId !== userId ? { assignedByBdmId: userId } : {}),
+        // Channel Partner fields for BDM_CP
+        ...(userRole === 'BDM_CP' && channelPartnerVendorId ? { channelPartnerVendorId, source: 'Channel Partner' } : {})
       });
     }
 
@@ -3499,8 +3508,8 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
     const userRole = req.user.role;
     const isAdmin = isAdminOrTestUser(req.user);
 
-    // Only admins, BDM, ISR, BDM_TEAM_LEADER can access
-    if (!isAdmin && userRole !== 'BDM' && userRole !== 'ISR' && userRole !== 'BDM_TEAM_LEADER') {
+    // Only admins, BDM, BDM_CP, ISR, BDM_TEAM_LEADER can access
+    if (!isAdmin && userRole !== 'BDM' && userRole !== 'BDM_CP' && userRole !== 'ISR' && userRole !== 'BDM_TEAM_LEADER') {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
@@ -3509,7 +3518,7 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
     const tabType = req.query.tabType || 'all';
 
     // Validate tabType
-    const validTabs = ['campaign', 'self', 'assigned_self', 'social_media', 'all'];
+    const validTabs = ['campaign', 'self', 'assigned_self', 'social_media', 'channel_partner', 'all'];
     if (!validTabs.includes(tabType)) {
       return res.status(400).json({ message: 'Invalid tabType.' });
     }
@@ -3530,7 +3539,7 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
     }
 
     // Type mapping
-    const typeMap = { campaign: 'CAMPAIGN', self: 'SELF', assigned_self: 'SELF', social_media: 'SOCIAL_MEDIA' };
+    const typeMap = { campaign: 'CAMPAIGN', self: 'SELF', assigned_self: 'SELF', social_media: 'SOCIAL_MEDIA', channel_partner: 'CHANNEL_PARTNER' };
 
     // Build where clause using AND array for safe composition
     const conditions = [];

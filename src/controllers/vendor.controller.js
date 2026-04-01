@@ -100,7 +100,8 @@ export const createVendor = asyncHandler(async function createVendor(req, res) {
     ifscCode,
     accountName,
     bankName,
-    branchName
+    branchName,
+    commissionPercentage
   } = req.body;
 
   // Determine vendor type
@@ -161,6 +162,7 @@ export const createVendor = asyncHandler(async function createVendor(req, res) {
       city: city?.trim() || null,
       state: state?.trim() || null,
       category,
+      ...(category === 'CHANNEL_PARTNER' && commissionPercentage != null ? { commissionPercentage: parseFloat(commissionPercentage) } : {}),
       accountNumber: accountNumber?.trim() || null,
       ifscCode: ifscCode?.trim() || null,
       accountName: accountName?.trim() || null,
@@ -788,5 +790,28 @@ export default {
   createVendorFromFeasibility,
   uploadVendorDocs,
   verifyVendorDocs,
-  getVendorApprovalQueue
+  getVendorApprovalQueue,
+  getChannelPartners
 };
+
+// Get approved Channel Partner vendors
+export const getChannelPartners = asyncHandler(async function getChannelPartners(req, res) {
+  const vendors = await prisma.vendor.findMany({
+    where: {
+      category: 'CHANNEL_PARTNER',
+      approvalStatus: 'APPROVED'
+    },
+    select: {
+      id: true,
+      companyName: true,
+      contactPerson: true,
+      email: true,
+      phone: true,
+      commissionPercentage: true,
+      approvalStatus: true
+    },
+    orderBy: { companyName: 'asc' }
+  });
+
+  res.json(vendors);
+});

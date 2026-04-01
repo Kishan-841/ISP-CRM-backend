@@ -47,12 +47,12 @@ const router = express.Router();
 router.use(auth);
 
 // Admin + BDM + BDM_TEAM_LEADER campaign routes
-router.get('/', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM', 'BDM_TEAM_LEADER'), getCampaigns);
-router.post('/', requireRole('SUPER_ADMIN', 'BDM', 'BDM_TEAM_LEADER'), createCampaign);
+router.get('/', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), getCampaigns);
+router.post('/', requireRole('SUPER_ADMIN', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), createCampaign);
 router.put('/:id', requireRole('SUPER_ADMIN'), updateCampaign);
 router.delete('/:id', requireRole('SUPER_ADMIN'), deleteCampaign);
-router.post('/:id/assign', requireRole('SUPER_ADMIN', 'BDM', 'BDM_TEAM_LEADER'), assignUsersToCampaign);
-router.post('/:id/data', requireRole('SUPER_ADMIN', 'BDM', 'BDM_TEAM_LEADER'), addCampaignData);
+router.post('/:id/assign', requireRole('SUPER_ADMIN', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), assignUsersToCampaign);
+router.post('/:id/data', requireRole('SUPER_ADMIN', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), addCampaignData);
 
 // All data route (must be before /:id routes)
 router.get('/all-data', getAllCampaignData);
