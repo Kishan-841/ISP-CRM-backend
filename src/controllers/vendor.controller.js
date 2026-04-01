@@ -356,27 +356,34 @@ export const approveVendor = asyncHandler(async function approveVendor(req, res)
     return res.status(404).json({ message: 'Vendor not found' });
   }
 
-  // Stage 1: SUPER_ADMIN approves PENDING_ADMIN → PENDING_ACCOUNTS
+  // Stage 1: SUPER_ADMIN approves PENDING_ADMIN
   if ((userRole === 'SUPER_ADMIN' || userRole === 'MASTER') && vendor.approvalStatus === 'PENDING_ADMIN') {
+    // Channel Partners: admin approval is final (skip accounts stage)
+    const isCP = vendor.category === 'CHANNEL_PARTNER';
+    const newStatus = isCP ? 'APPROVED' : 'PENDING_ACCOUNTS';
+
     const updated = await prisma.vendor.update({
       where: { id },
       data: {
-        approvalStatus: 'PENDING_ACCOUNTS',
+        approvalStatus: newStatus,
         adminApprovedById: req.user.id,
-        adminApprovedAt: new Date()
+        adminApprovedAt: new Date(),
+        ...(isCP && { accountsApprovedById: req.user.id, accountsApprovedAt: new Date(), docsStatus: 'VERIFIED' })
       },
       include: {
         createdBy: { select: { id: true, name: true, email: true } }
       }
     });
 
-    // Notify vendor creator that admin approved, pending accounts verification
+    // Notify vendor creator
     if (vendor.createdBy?.id) {
       await createNotification(
         vendor.createdBy.id,
         'VENDOR_APPROVED',
-        'Vendor Admin Approved',
-        `"${vendor.companyName}" has been approved by admin. You can now select it for feasibility. Documents will be verified by accounts later.`,
+        isCP ? 'Channel Partner Approved' : 'Vendor Admin Approved',
+        isCP
+          ? `Channel Partner "${vendor.companyName}" has been approved and is now active.`
+          : `"${vendor.companyName}" has been approved by admin. Documents will be verified by accounts.`,
         { vendorId: vendor.id, companyName: vendor.companyName }
       );
       emitSidebarRefresh(vendor.createdBy.id);
@@ -386,7 +393,7 @@ export const approveVendor = asyncHandler(async function approveVendor(req, res)
 
     return res.json({
       success: true,
-      message: 'Vendor approved by admin. Pending accounts verification.',
+      message: isCP ? 'Channel Partner approved and activated.' : 'Vendor approved by admin. Pending accounts verification.',
       vendor: updated
     });
   }
