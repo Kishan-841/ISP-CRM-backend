@@ -1068,7 +1068,7 @@ export const startCall = asyncHandler(async function startCall(req, res) {
 // End call and update status
 export const endCall = asyncHandler(async function endCall(req, res) {
     const { callLogId } = req.params;
-    const { status, notes, callLaterAt } = req.body;
+    const { status, notes, callLaterAt, otherReason } = req.body;
     const userId = req.user.id;
 
     if (!status) {
@@ -1078,6 +1078,11 @@ export const endCall = asyncHandler(async function endCall(req, res) {
     // Validate callLaterAt for CALL_LATER status
     if (status === 'CALL_LATER' && !callLaterAt) {
       return res.status(400).json({ message: 'Callback date/time is required for Call Later status.' });
+    }
+
+    // Validate otherReason for OTHERS status
+    if (status === 'OTHERS' && !otherReason?.trim()) {
+      return res.status(400).json({ message: 'Reason is required for Others status.' });
     }
 
     const callLog = await prisma.callLog.findUnique({
@@ -1103,7 +1108,8 @@ export const endCall = asyncHandler(async function endCall(req, res) {
         endTime,
         duration,
         status,
-        notes: notes || null
+        notes: notes || null,
+        otherReason: status === 'OTHERS' ? otherReason?.trim() || null : null
       }
     });
 
@@ -1113,7 +1119,8 @@ export const endCall = asyncHandler(async function endCall(req, res) {
       data: {
         status,
         notes: notes || callLog.campaignData.notes,
-        callLaterAt: status === 'CALL_LATER' && callLaterAt ? new Date(callLaterAt) : null
+        callLaterAt: status === 'CALL_LATER' && callLaterAt ? new Date(callLaterAt) : null,
+        otherReason: status === 'OTHERS' ? otherReason?.trim() || null : null
       }
     });
 
@@ -2878,7 +2885,8 @@ export const getCallDispositionData = asyncHandler(async function getCallDisposi
       'CALL_LATER': { name: 'Callback', color: '#fb923c' },
       'RINGING_NOT_PICKED': { name: 'Ringing Not Picked', color: '#f97316' },
       'DND': { name: 'DND', color: '#f472b6' },
-      'DISCONNECTED': { name: 'Disconnected', color: '#6b7280' }
+      'DISCONNECTED': { name: 'Disconnected', color: '#6b7280' },
+      'OTHERS': { name: 'Others', color: '#8b5cf6' }
     };
 
     // Calculate total calls
@@ -3131,6 +3139,7 @@ export const getAllCallHistory = asyncHandler(async function getAllCallHistory(r
         isrId: log.user?.id,
         dateTime: log.createdAt,
         notes: log.notes || '',
+        otherReason: log.otherReason || '',
         startTime: log.startTime,
         endTime: log.endTime
       };

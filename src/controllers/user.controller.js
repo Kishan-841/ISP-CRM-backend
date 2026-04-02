@@ -364,7 +364,8 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
     notInterested: todayCallLogsDetailed.filter(log => log.status === 'NOT_INTERESTED').length,
     notReachable: todayCallLogsDetailed.filter(log => log.status === 'NOT_REACHABLE').length,
     callLater: todayCallLogsDetailed.filter(log => log.status === 'CALL_LATER').length,
-    wrongNumber: todayCallLogsDetailed.filter(log => log.status === 'WRONG_NUMBER').length
+    wrongNumber: todayCallLogsDetailed.filter(log => log.status === 'WRONG_NUMBER').length,
+    others: todayCallLogsDetailed.filter(log => log.status === 'OTHERS').length
   };
 
   // Status distribution

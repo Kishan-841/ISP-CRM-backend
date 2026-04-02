@@ -161,6 +161,7 @@ model CampaignData {
   updatedAt       DateTime   @updatedAt
   assignedToId    String?
   callLaterAt     DateTime?
+  otherReason     String?
   city            String?
   company         String
   firstName       String?
@@ -203,6 +204,7 @@ model CallLog {
   duration       Int?
   status         DataStatus
   notes          String?
+  otherReason    String?
   createdAt      DateTime     @default(now())
   campaignData   CampaignData @relation(fields: [campaignDataId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1368,6 +1370,7 @@ enum DataStatus {
   RINGING_NOT_PICKED
   DND
   DISCONNECTED
+  OTHERS
 }
 
 enum CampaignStatus {
