@@ -1549,8 +1549,8 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
         assignedToId: dataAssigneeId,  // Assign to selected user (ISR if BDM chose, otherwise self)
         createdById: userId,            // Track who created the data (always the BDM/ISR who uploaded)
         isSelfGenerated: true,          // Mark as self-generated
-        // If BDM assigns to ISR, set BDM binding for lead conversion
-        ...((userRole === 'BDM' || userRole === 'BDM_TEAM_LEADER') && assignToId && assignToId !== userId ? { assignedByBdmId: userId } : {}),
+        // If BDM/TL creates self data, set BDM binding (for auto-assignment in calling queue & lead conversion)
+        ...((userRole === 'BDM' || userRole === 'BDM_TEAM_LEADER') ? { assignedByBdmId: userId } : {}),
         // Channel Partner fields for BDM_CP
         ...(isCPCampaign && channelPartnerVendorId ? { channelPartnerVendorId, source: 'Channel Partner' } : {})
       });
