@@ -3590,8 +3590,8 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
       // Assigned Self: assigned to me but NOT created by me
       conditions.push({ NOT: { createdById: userId } });
       conditions.push({ assignments: { some: { userId } } });
-    } else if (!isAdmin && tabType !== 'all') {
-      // campaign, social_media tabs need role-based filtering (all tab shows everything to everyone)
+    } else if (!isAdmin) {
+      // Role-based filtering for campaign, social_media, and all tabs
       if (userRole === 'ISR') {
         conditions.push({
           OR: [

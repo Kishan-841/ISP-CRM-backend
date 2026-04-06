@@ -27,8 +27,8 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
     if (isAdmin || isTL || isFeasibilityTeam) {
       whereClause = {};
     } else if (isBDM) {
-      // BDM users only see leads assigned to them
-      whereClause = { assignedToId: userId };
+      // BDM users only see leads assigned to them or created by them
+      whereClause = { OR: [{ assignedToId: userId }, { createdById: userId }] };
     } else {
       whereClause = { createdById: userId };
     }
@@ -92,7 +92,7 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       products: { include: { product: { select: { id: true, title: true } } } }
     };
 
-    const baseStatsWhere = isAdmin || isTL || isFeasibilityTeam ? {} : isBDM ? { assignedToId: userId } : { createdById: userId };
+    const baseStatsWhere = isAdmin || isTL || isFeasibilityTeam ? {} : isBDM ? { OR: [{ assignedToId: userId }, { createdById: userId }] } : { createdById: userId };
     const isISR = hasRole(req.user, 'ISR');
     const [leads, total, statusCounts, liveCount, meetingsDoneCount] = await Promise.all([
       prisma.lead.findMany({
