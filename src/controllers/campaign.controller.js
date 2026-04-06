@@ -1591,6 +1591,12 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
       });
     }
 
+    // Emit sidebar refresh so calling queue count updates immediately
+    emitSidebarRefresh(dataAssigneeId);
+    if (dataAssigneeId !== userId) {
+      emitSidebarRefresh(userId);
+    }
+
     res.status(201).json({
       campaign,
       count: createdCount,

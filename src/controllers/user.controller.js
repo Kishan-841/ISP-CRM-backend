@@ -793,22 +793,32 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     if (isMaster) {
       Object.assign(counts, { feasibilityPending, vendorDocsPending, feasibilityComplaintsAssigned });
     } else {
-      Object.assign(counts, { pending: feasibilityPending, vendorDocsPending, complaintsAssigned: feasibilityComplaintsAssigned });
+      Object.assign(counts, { feasibilityPending, vendorDocsPending, complaintsAssigned: feasibilityComplaintsAssigned });
     }
   }
 
   if (userRole === 'OPS_TEAM' || isMaster) {
-    // OPS Team counts: pending quotation approvals
-    const opsPending = await prisma.lead.count({
-      where: {
-        opsApprovalStatus: 'PENDING',
-        status: 'FEASIBLE'
-      }
-    });
+    // OPS Team counts: pending quotation approvals + installation assignment pending
+    const [opsPending, opsInstallationPending] = await Promise.all([
+      prisma.lead.count({
+        where: {
+          opsApprovalStatus: 'PENDING',
+          status: 'FEASIBLE'
+        }
+      }),
+      prisma.lead.count({
+        where: {
+          status: 'FEASIBLE',
+          accountsStatus: 'ACCOUNTS_APPROVED',
+          accountsVerifiedAt: { not: null },
+          pushedToInstallationAt: null
+        }
+      })
+    ]);
     if (isMaster) {
-      Object.assign(counts, { opsPending });
+      Object.assign(counts, { opsPending, opsInstallationPending });
     } else {
-      Object.assign(counts, { pending: opsPending });
+      Object.assign(counts, { opsPending, installationPending: opsInstallationPending });
     }
   }
 
@@ -829,7 +839,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     if (isMaster) {
       Object.assign(counts, { docsPending, docsOrderReviewPending });
     } else {
-      Object.assign(counts, { pending: docsPending, docsOrderReviewPending });
+      Object.assign(counts, { docsPending, docsOrderReviewPending });
     }
   }
 
@@ -870,7 +880,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     if (isMaster) {
       Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned });
     } else {
-      Object.assign(counts, { pending: accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned });
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned });
     }
   }
 
@@ -1072,7 +1082,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     if (isMaster) {
       Object.assign(counts, { sa2Pending });
     } else {
-      Object.assign(counts, { pending: sa2Pending });
+      Object.assign(counts, { sa2Pending });
     }
   }
 
@@ -1094,7 +1104,8 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       saNocOrdersPending,
       accountsOrdersPending,
       saSamActivationPending,
-      saSa2Pending
+      saSa2Pending,
+      cnPendingApproval
     ] = await Promise.all([
       prisma.campaignData.count({ where: { status: 'NEW' } }),
       prisma.lead.count({ where: { status: 'NEW' } }),
@@ -1137,12 +1148,13 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       }),
       prisma.lead.count({
         where: { superAdmin2ApprovalStatus: 'PENDING', opsApprovalStatus: 'APPROVED', status: 'FEASIBLE' }
-      })
+      }),
+      prisma.creditNote.count({ where: { status: 'PENDING_APPROVAL' } })
     ]);
     if (isMaster) {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSamActivationPending, saSa2Pending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSamActivationPending, saSa2Pending, cnPendingApproval });
     } else {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, samActivationPending: saSamActivationPending, sa2Pending: saSa2Pending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, samActivationPending: saSamActivationPending, sa2Pending: saSa2Pending, cnPendingApproval });
     }
   }
 
