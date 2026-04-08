@@ -16,6 +16,7 @@ export const getUsers = asyncHandler(async function getUsers(req, res) {
       id: true,
       email: true,
       name: true,
+      mobile: true,
       role: true,
       isActive: true,
       createdAt: true,
@@ -38,6 +39,7 @@ export const getUserById = asyncHandler(async function getUserById(req, res) {
       id: true,
       email: true,
       name: true,
+      mobile: true,
       role: true,
       isActive: true,
       createdAt: true,
@@ -63,7 +65,7 @@ export const getUserById = asyncHandler(async function getUserById(req, res) {
 });
 
 export const createUser = asyncHandler(async function createUser(req, res) {
-  const { email, password, name, role, teamLeaderId } = req.body;
+  const { email, password, name, mobile, role, teamLeaderId } = req.body;
   const isTL = req.user.role === 'BDM_TEAM_LEADER';
 
   if (!email || !password || !name) {
@@ -101,6 +103,7 @@ export const createUser = asyncHandler(async function createUser(req, res) {
       email: email.toLowerCase(),
       password: hashedPassword,
       name,
+      mobile: mobile?.trim() || null,
       role: isTL ? 'BDM' : (role || 'ISR'),
       ...(effectiveTeamLeaderId && { teamLeaderId: effectiveTeamLeaderId })
     },
@@ -108,6 +111,7 @@ export const createUser = asyncHandler(async function createUser(req, res) {
       id: true,
       email: true,
       name: true,
+      mobile: true,
       role: true,
       isActive: true,
       createdAt: true
@@ -119,7 +123,7 @@ export const createUser = asyncHandler(async function createUser(req, res) {
 
 export const updateUser = asyncHandler(async function updateUser(req, res) {
   const { id } = req.params;
-  const { email, password, name, role, isActive, teamLeaderId } = req.body;
+  const { email, password, name, mobile, role, isActive, teamLeaderId } = req.body;
   const isTL = req.user.role === 'BDM_TEAM_LEADER';
 
   const existingUser = await prisma.user.findUnique({
@@ -164,6 +168,7 @@ export const updateUser = asyncHandler(async function updateUser(req, res) {
   const updateData = {};
   if (email) updateData.email = email.toLowerCase();
   if (name) updateData.name = name;
+  if (mobile !== undefined) updateData.mobile = mobile?.trim() || null;
   if (role && !isTL) updateData.role = role;
   if (typeof isActive === 'boolean') updateData.isActive = isActive;
   if (password) updateData.password = await bcrypt.hash(password, 10);
@@ -176,6 +181,7 @@ export const updateUser = asyncHandler(async function updateUser(req, res) {
       id: true,
       email: true,
       name: true,
+      mobile: true,
       role: true,
       isActive: true,
       createdAt: true,
