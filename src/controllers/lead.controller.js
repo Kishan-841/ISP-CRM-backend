@@ -8515,6 +8515,8 @@ export const getDemoPlanQueue = asyncHandler(async function getDemoPlanQueue(req
       demoPlanAssignedAt: lead.demoPlanAssignedAt,
       demoPlanAssignedBy: lead.demoPlanAssignedBy,
       demoPlanNotes: lead.demoPlanNotes,
+      demoPlanStartDate: lead.demoPlanStartDate,
+      demoPlanEndDate: lead.demoPlanEndDate,
       // Other info
       deliveryStatus: lead.deliveryStatus,
       installationCompletedAt: lead.installationCompletedAt,
@@ -8589,12 +8591,22 @@ export const assignDemoPlan = asyncHandler(async function assignDemoPlan(req, re
       bandwidth,        // in kbps (download speed)
       uploadBandwidth,  // in kbps (upload speed, optional)
       isActive,
-      notes
+      notes,
+      expiryDate,       // ISO date string (YYYY-MM-DD or full ISO) — demo plan auto-stops after this
     } = req.body;
 
     // Validate required fields
     if (!planName || !bandwidth) {
       return res.status(400).json({ message: 'Plan name and bandwidth are required.' });
+    }
+
+    // Validate expiry date if provided
+    let parsedExpiry = null;
+    if (expiryDate) {
+      parsedExpiry = new Date(expiryDate);
+      if (Number.isNaN(parsedExpiry.getTime())) {
+        return res.status(400).json({ message: 'Invalid expiry date.' });
+      }
     }
 
     const lead = await prisma.lead.findUnique({
@@ -8620,6 +8632,7 @@ export const assignDemoPlan = asyncHandler(async function assignDemoPlan(req, re
     }
 
     // Update lead with demo plan (simplified - no billing info)
+    const now = new Date();
     const updated = await prisma.lead.update({
       where: { id },
       data: {
@@ -8627,7 +8640,9 @@ export const assignDemoPlan = asyncHandler(async function assignDemoPlan(req, re
         demoPlanBandwidth: parseInt(bandwidth),
         demoPlanUploadBandwidth: uploadBandwidth ? parseInt(uploadBandwidth) : null,
         demoPlanIsActive: isActive ?? true,
-        demoPlanAssignedAt: new Date(),
+        demoPlanAssignedAt: now,
+        demoPlanStartDate: now,
+        demoPlanEndDate: parsedExpiry,
         demoPlanAssignedById: userId,
         demoPlanNotes: notes || null,
         // Move to next stage (Speed Test)

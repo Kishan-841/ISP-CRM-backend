@@ -37,6 +37,7 @@ import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
 import { startInvoiceGenerationJob } from './jobs/invoiceGeneration.js';
 import { startContractRenewalReminder } from './jobs/contractRenewalReminder.js';
+import { startDemoPlanExpiryJob } from './jobs/demoPlanExpiry.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -150,4 +151,5 @@ httpServer.listen(PORT, () => {
   startFollowUpReminderJob();
   startInvoiceGenerationJob();
   startContractRenewalReminder();
+  startDemoPlanExpiryJob();
 });
