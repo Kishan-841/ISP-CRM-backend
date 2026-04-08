@@ -35,6 +35,7 @@ import {
   getWeeklyTrends,
   getMyCampaignPerformance,
   getAllCampaignData,
+  getAllMyCampaignData,
   getISRPipelineFunnel,
   getISRPipelineComparison,
   exportCampaignData,
@@ -56,6 +57,9 @@ router.post('/:id/data', requireRole('SUPER_ADMIN', 'BDM', 'BDM_CP', 'BDM_TEAM_L
 
 // All data route (must be before /:id routes)
 router.get('/all-data', getAllCampaignData);
+
+// Data across all campaigns the current user has access to (for "All Campaigns" filter)
+router.get('/my-data/all', getAllMyCampaignData);
 
 // ISR routes
 router.get('/my-campaigns', getMyAssignedCampaigns);

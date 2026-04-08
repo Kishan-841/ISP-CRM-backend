@@ -881,7 +881,7 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
 export const getCampaignData = asyncHandler(async function getCampaignData(req, res) {
     const { id } = req.params;
     const { page, limit, skip } = parsePagination(req.query, 10);
-    const { status, type } = req.query;
+    const { status, type, search } = req.query;
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
 
@@ -917,6 +917,21 @@ export const getCampaignData = asyncHandler(async function getCampaignData(req, 
       statusFilter = { status: { not: 'NEW' } };
     }
 
+    // Optional free-text search across common contact fields
+    const searchTerm = (search || '').trim();
+    const searchFilter = searchTerm
+      ? {
+          OR: [
+            { company: { contains: searchTerm, mode: 'insensitive' } },
+            { name: { contains: searchTerm, mode: 'insensitive' } },
+            { firstName: { contains: searchTerm, mode: 'insensitive' } },
+            { lastName: { contains: searchTerm, mode: 'insensitive' } },
+            { phone: { contains: searchTerm } },
+            { email: { contains: searchTerm, mode: 'insensitive' } },
+          ],
+        }
+      : {};
+
     // Campaign creators see all data; assigned ISRs see only their data
     const campaignInfo = isAdmin ? null : await prisma.campaign.findUnique({
       where: { id },
@@ -927,6 +942,7 @@ export const getCampaignData = asyncHandler(async function getCampaignData(req, 
     const where = {
       campaignId: id,
       ...statusFilter,
+      ...searchFilter,
       // ISRs only see data assigned to them, but creators see all
       ...(!isAdmin && !isCreator && { assignedToId: userId })
     };
@@ -1009,6 +1025,148 @@ export const getCampaignData = asyncHandler(async function getCampaignData(req, 
           leadsGenerated: convertedCount
         }
       }
+    }));
+});
+
+// Get campaign data across ALL campaigns the user has access to.
+// Used by the "All Campaigns" option in the calling queue + BDM queue UIs.
+export const getAllMyCampaignData = asyncHandler(async function getAllMyCampaignData(req, res) {
+    const { page, limit, skip } = parsePagination(req.query, 10);
+    const { status, type, search } = req.query;
+    const userId = req.user.id;
+    const isAdmin = isAdminOrTestUser(req.user);
+
+    // Find every campaign the user is assigned to OR created (self campaigns).
+    let accessibleCampaignIds = null;
+    if (!isAdmin) {
+      const [assignments, createdCampaigns] = await Promise.all([
+        prisma.campaignAssignment.findMany({
+          where: { userId },
+          select: { campaignId: true },
+        }),
+        prisma.campaign.findMany({
+          where: { createdById: userId },
+          select: { id: true },
+        }),
+      ]);
+      const ids = new Set([
+        ...assignments.map((a) => a.campaignId),
+        ...createdCampaigns.map((c) => c.id),
+      ]);
+      accessibleCampaignIds = Array.from(ids);
+
+      if (accessibleCampaignIds.length === 0) {
+        return res.json({
+          data: [],
+          pagination: { page, limit, total: 0, totalPages: 0 },
+          stats: { totalAssigned: 0, called: 0, pending: 0, leadsGenerated: 0 },
+        });
+      }
+    }
+
+    // Status filter
+    let statusFilter = {};
+    if (status) {
+      statusFilter = { status };
+    } else if (type === 'working') {
+      statusFilter = { status: { not: 'NEW' } };
+    }
+
+    // Search filter
+    const searchTerm = (search || '').trim();
+    const searchFilter = searchTerm
+      ? {
+          OR: [
+            { company: { contains: searchTerm, mode: 'insensitive' } },
+            { name: { contains: searchTerm, mode: 'insensitive' } },
+            { firstName: { contains: searchTerm, mode: 'insensitive' } },
+            { lastName: { contains: searchTerm, mode: 'insensitive' } },
+            { phone: { contains: searchTerm } },
+            { email: { contains: searchTerm, mode: 'insensitive' } },
+          ],
+        }
+      : {};
+
+    // Scope: admin sees everything; non-admins must be either the campaign
+    // creator OR be the person the row is assigned to.
+    // Build a single where clause that expresses:
+    //   campaignId IN accessibleCampaignIds
+    //   AND (campaign.createdById = me OR assignedToId = me)
+    const scopeFilter = isAdmin
+      ? {}
+      : {
+          AND: [
+            { campaignId: { in: accessibleCampaignIds } },
+            {
+              OR: [
+                { assignedToId: userId },
+                { campaign: { createdById: userId } },
+              ],
+            },
+          ],
+        };
+
+    const where = {
+      ...scopeFilter,
+      ...statusFilter,
+      ...searchFilter,
+    };
+
+    // Stats filter = same scope, no status/search restriction
+    const statsWhere = { ...scopeFilter };
+
+    const [data, total, statusStats, convertedCount] = await Promise.all([
+      prisma.campaignData.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          callLogs: { orderBy: { createdAt: 'desc' }, take: 1 },
+          lead: { select: { id: true, status: true, createdAt: true } },
+          assignedByBdm: { select: { id: true, name: true } },
+          lastEditedBy: { select: { id: true, name: true, role: true } },
+          campaign: { select: { id: true, name: true, code: true } },
+        },
+      }),
+      prisma.campaignData.count({ where }),
+      prisma.campaignData.groupBy({
+        by: ['status'],
+        where: statsWhere,
+        _count: { id: true },
+      }),
+      prisma.campaignData.count({ where: { ...statsWhere, lead: { isNot: null } } }),
+    ]);
+
+    const maskedData = data.map((item) => {
+      const showRealPhone = isAdmin || item.status !== 'NEW';
+      return {
+        ...item,
+        phone: showRealPhone ? item.phone : `XXXXXX${item.phone.slice(-4)}`,
+        lastCall: item.callLogs[0] || null,
+        isConverted: !!item.lead,
+        leadInfo: item.lead || null,
+      };
+    });
+
+    const statusMap = new Map(statusStats.map((s) => [s.status, s._count.id]));
+    const totalAssigned = statusStats.reduce((sum, s) => sum + s._count.id, 0);
+    const pendingCount = statusMap.get('NEW') || 0;
+
+    res.json(paginatedResponse({
+      data: maskedData,
+      total,
+      page,
+      limit,
+      dataKey: 'data',
+      extra: {
+        stats: {
+          totalAssigned,
+          called: totalAssigned - pendingCount,
+          pending: pendingCount,
+          leadsGenerated: convertedCount,
+        },
+      },
     }));
 });
 
