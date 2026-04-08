@@ -63,6 +63,11 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
     // Must match getCurrentStage logic: check from end of pipeline backward
     if (pipelineStage) {
       const stageFilters = {
+        feasibilityCheck: {
+          feasibilityAssignedToId: { not: null },
+          feasibilityReviewedAt: null,
+          status: { notIn: ['FEASIBLE', 'NOT_FEASIBLE', 'DROPPED'] },
+        },
         feasible: { status: 'FEASIBLE', opsApprovalStatus: null },
         quoteSent: { opsApprovalStatus: 'PENDING' },
         docsUpload: { opsApprovalStatus: 'APPROVED', NOT: { sharedVia: { contains: 'docs_verification' } }, docsVerifiedAt: null },
@@ -185,6 +190,7 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       installationNotes: lead.installationNotes,
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
+      feasibilityAssignedToId: lead.feasibilityAssignedToId,
       accountsStatus: lead.accountsStatus,
       customerUsername: lead.customerUsername,
       installationCompletedAt: lead.installationCompletedAt,
