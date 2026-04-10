@@ -27,7 +27,7 @@ router.get('/isr-list', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD',
 router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 'SAM_EXECUTIVE', 'NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'OPS_TEAM', 'SUPER_ADMIN'), getUsersByRole);
 
 // Routes below require SUPER_ADMIN or BDM_TEAM_LEADER role
-router.use(requireRole('SUPER_ADMIN', 'BDM_TEAM_LEADER'));
+router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'));
 
 router.get('/', getUsers);
 router.get('/:id', getUserById);
