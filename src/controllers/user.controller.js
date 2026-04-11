@@ -804,8 +804,8 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
   }
 
   if (userRole === 'OPS_TEAM' || isMaster) {
-    // OPS Team counts: pending quotation approvals + installation assignment pending
-    const [opsPending, opsInstallationPending] = await Promise.all([
+    // OPS Team counts: pending quotation approvals + installation assignment pending + complaints
+    const [opsPending, opsInstallationPending, opsComplaintsAssigned, customerRequestsPending] = await Promise.all([
       prisma.lead.count({
         where: {
           opsApprovalStatus: 'PENDING',
@@ -819,12 +819,26 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
           accountsVerifiedAt: { not: null },
           pushedToInstallationAt: null
         }
+      }),
+      prisma.complaint.count({
+        where: {
+          ...(!isMaster && { assignments: { some: { userId, isActive: true } } }),
+          status: 'OPEN'
+        }
+      }),
+      prisma.customerComplaintRequest.count({
+        where: { status: 'PENDING' }
       })
     ]);
     if (isMaster) {
-      Object.assign(counts, { opsPending, opsInstallationPending });
+      Object.assign(counts, { opsPending, opsInstallationPending, opsComplaintsAssigned, customerRequestsPending });
     } else {
-      Object.assign(counts, { opsPending, installationPending: opsInstallationPending });
+      Object.assign(counts, {
+        opsPending,
+        installationPending: opsInstallationPending,
+        complaintsAssigned: opsComplaintsAssigned,
+        customerRequestsPending
+      });
     }
   }
 
@@ -850,8 +864,8 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
   }
 
   if (userRole === 'ACCOUNTS_TEAM' || isMaster) {
-    // Accounts Team counts: pending verifications, demo plan pending, create plan pending, vendor approval, vendor docs to verify, order requests, complaints assigned
-    const [accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned] = await Promise.all([
+    // Accounts Team counts: pending verifications, demo plan pending, create plan pending, vendor approval, vendor docs to verify, order requests, complaints assigned, customer complaint requests
+    const [accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned, customerRequestsPending] = await Promise.all([
       prisma.lead.count({
         where: {
           docsVerifiedAt: { not: null },
@@ -881,12 +895,15 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
           ...(!isMaster && { assignments: { some: { userId, isActive: true } } }),
           status: 'OPEN'
         }
+      }),
+      prisma.customerComplaintRequest.count({
+        where: { status: 'PENDING' }
       })
     ]);
     if (isMaster) {
-      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned });
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned, customerRequestsPending });
     } else {
-      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned });
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned, customerRequestsPending });
     }
   }
 
@@ -920,7 +937,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     Object.assign(counts, { deliveryRequestPending });
   }
 
-  if (userRole === 'NOC' || isMaster) {
+  if (userRole === 'NOC' || userRole === 'NOC_HEAD' || isMaster) {
     // NOC Team counts: leads pushed to NOC and customer accounts created
     // First get all lead IDs that have been pushed to NOC
     const nocDeliveryRequests = await prisma.deliveryRequest.findMany({
@@ -930,25 +947,16 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     const nocLeadIds = nocDeliveryRequests.map(dr => dr.leadId);
 
     if (nocLeadIds.length === 0) {
-      Object.assign(counts, { nocPending: 0, nocUserCreated: 0 });
+      counts.nocPending = 0;
     } else {
-      const [nocPending, nocUserCreated] = await Promise.all([
-        // Pending: pushed to NOC but no customer user created
-        prisma.lead.count({
-          where: {
-            id: { in: nocLeadIds },
-            customerUserId: null
-          }
-        }),
-        // User Created: all leads where customer user has been created (cumulative)
-        prisma.lead.count({
-          where: {
-            id: { in: nocLeadIds },
-            customerUserId: { not: null }
-          }
-        })
-      ]);
-      Object.assign(counts, { nocPending, nocUserCreated });
+      // Pending: pushed to NOC but no customer user created
+      const nocPending = await prisma.lead.count({
+        where: {
+          id: { in: nocLeadIds },
+          customerUserId: null
+        }
+      });
+      counts.nocPending = nocPending;
     }
 
     // Add service order NOC queue count
