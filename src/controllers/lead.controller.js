@@ -23,14 +23,15 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
     const { search, campaignId, status, pipelineStage } = req.query;
 
     // Build where clause based on role
-    let whereClause = {};
+    // Cold leads live in their own Lead Pipeline tab and are excluded here.
+    let whereClause = { isColdLead: false };
     if (isAdmin || isTL || isFeasibilityTeam) {
-      whereClause = {};
+      // unchanged, just the cold filter above
     } else if (isBDM) {
       // BDM users only see leads assigned to them or created by them
-      whereClause = { OR: [{ assignedToId: userId }, { createdById: userId }] };
+      whereClause.OR = [{ assignedToId: userId }, { createdById: userId }];
     } else {
-      whereClause = { createdById: userId };
+      whereClause.createdById = userId;
     }
 
     // Server-side search across lead number and campaign data fields
@@ -97,7 +98,14 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       products: { include: { product: { select: { id: true, title: true } } } }
     };
 
-    const baseStatsWhere = isAdmin || isTL || isFeasibilityTeam ? {} : isBDM ? { OR: [{ assignedToId: userId }, { createdById: userId }] } : { createdById: userId };
+    const baseStatsWhere = {
+      isColdLead: false,
+      ...(isAdmin || isTL || isFeasibilityTeam
+        ? {}
+        : isBDM
+          ? { OR: [{ assignedToId: userId }, { createdById: userId }] }
+          : { createdById: userId })
+    };
     const isISR = hasRole(req.user, 'ISR');
     const [leads, total, statusCounts, liveCount, meetingsDoneCount] = await Promise.all([
       prisma.lead.findMany({
@@ -379,6 +387,181 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
     res.status(201).json({
       lead,
       message: 'Successfully converted to lead.'
+    });
+});
+
+// Create a lead directly from the BDM queue — used when a BDM already has
+// their own lead (walk-in, referral, existing relationship) and wants to
+// skip the ISR calling step entirely. Mirrors what the ISR "Interested"
+// disposition does: it creates a CampaignData row + a Lead in one transaction.
+export const createDirectLead = asyncHandler(async function createDirectLead(req, res) {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    // Only BDM-family roles can add direct leads to their own queue
+    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'].includes(userRole)) {
+      return res.status(403).json({ message: 'Only BDM users can add direct leads.' });
+    }
+
+    const {
+      // Contact fields (required)
+      name,
+      company,
+      phone,
+      // Contact fields (optional)
+      email,
+      title,
+      industry,
+      city,
+      // Lead-specific fields
+      productIds,
+      bandwidthRequirement,
+      notes,
+    } = req.body;
+
+    if (!name || !name.trim()) return res.status(400).json({ message: 'Full name is required.' });
+    if (!company || !company.trim()) return res.status(400).json({ message: 'Company is required.' });
+    if (!phone || !phone.trim()) return res.status(400).json({ message: 'Phone number is required.' });
+    if (!email || !email.trim()) return res.status(400).json({ message: 'Email is required.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return res.status(400).json({ message: 'Please enter a valid email address.' });
+    }
+
+    const phoneDigits = String(phone).replace(/\D/g, '');
+    if (phoneDigits.length !== 10) {
+      return res.status(400).json({ message: 'Phone number must be exactly 10 digits.' });
+    }
+
+    // Global dedup against existing campaign data
+    const existingPhone = await prisma.campaignData.findFirst({
+      where: { phone: phoneDigits },
+      select: { id: true }
+    });
+    if (existingPhone) {
+      return res.status(400).json({ message: 'A contact with this phone number already exists.' });
+    }
+
+    // Find or create a reusable [BDM Self Lead] campaign for this BDM so we
+    // don't bloat the campaign list with one campaign per manually-added lead.
+    const campaignName = `[BDM Self Lead] ${req.user.name || req.user.email}`;
+    let selfLeadCampaign = await prisma.campaign.findFirst({
+      where: { createdById: userId, name: campaignName, type: 'SELF' },
+      select: { id: true }
+    });
+
+    if (!selfLeadCampaign) {
+      // Generate a unique code with retry on collision
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const latest = await prisma.campaign.findFirst({
+            where: { code: { startsWith: 'CMP' } },
+            orderBy: { code: 'desc' },
+            select: { code: true }
+          });
+          let maxNumber = 0;
+          if (latest?.code) {
+            const match = latest.code.match(/CMP(\d+)/);
+            if (match) maxNumber = parseInt(match[1], 10);
+          }
+          const code = `CMP${String(maxNumber + 1).padStart(3, '0')}`;
+          selfLeadCampaign = await prisma.campaign.create({
+            data: {
+              code,
+              name: campaignName,
+              description: 'Direct leads added by BDM (no ISR call)',
+              type: 'SELF',
+              status: 'ACTIVE',
+              dataSource: 'BDM Direct Add',
+              createdById: userId,
+            },
+            select: { id: true }
+          });
+          // Self-assign so the creator sees the campaign in queues that filter by assignment
+          await prisma.campaignAssignment.create({
+            data: { userId, campaignId: selfLeadCampaign.id }
+          });
+          break;
+        } catch (err) {
+          if (err.code === 'P2002' && retries > 1) {
+            retries--;
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+
+    // Validate products if provided
+    if (productIds && productIds.length > 0) {
+      const foundProducts = await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true }
+      });
+      if (foundProducts.length !== productIds.length) {
+        return res.status(400).json({ message: 'One or more selected products are invalid.' });
+      }
+    }
+
+    const leadNumber = await generateLeadNumber();
+
+    // Create CampaignData + Lead atomically
+    const result = await prisma.$transaction(async (tx) => {
+      const campaignData = await tx.campaignData.create({
+        data: {
+          campaignId: selfLeadCampaign.id,
+          name: name.trim(),
+          company: company.trim(),
+          phone: phoneDigits,
+          // `title` is a required column on CampaignData — fall back to a placeholder
+          // when the BDM doesn't supply one (we already ask for it in the form).
+          title: title?.trim() || '-',
+          email: email?.trim() || null,
+          industry: industry?.trim() || null,
+          city: city?.trim() || null,
+          status: 'INTERESTED',
+          assignedToId: userId,
+          assignedByBdmId: userId,
+          isSelfGenerated: true,
+          createdById: userId,
+        }
+      });
+
+      const lead = await tx.lead.create({
+        data: {
+          campaignDataId: campaignData.id,
+          leadNumber,
+          requirements: notes?.trim() || null,
+          bandwidthRequirement: bandwidthRequirement?.trim() || null,
+          createdById: userId,
+          assignedToId: userId,
+          status: 'NEW',
+          type: 'QUALIFIED',
+          ...(productIds && productIds.length > 0 && {
+            products: { create: productIds.map((productId) => ({ productId })) }
+          })
+        },
+        include: {
+          campaignData: {
+            include: {
+              campaign: { select: { id: true, code: true, name: true } }
+            }
+          },
+          assignedTo: { select: { id: true, name: true, email: true } },
+          createdBy: { select: { id: true, name: true, email: true } },
+          products: { include: { product: { select: { id: true, title: true } } } }
+        }
+      });
+
+      return lead;
+    });
+
+    emitSidebarRefresh(userId);
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+
+    res.status(201).json({
+      lead: result,
+      message: 'Lead created successfully.'
     });
 });
 
@@ -706,23 +889,22 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
     const { page, limit, skip } = parsePagination(req.query, 50);
 
     // Admins/MASTER see all, TLs see their own + team's leads, BDMs see only their assigned leads
-    let whereClause = {};
+    // Cold leads live in their dedicated Lead Pipeline tab and are hidden here.
+    let whereClause = { isColdLead: false };
     if (isAdmin) {
-      // Admin/MASTER: see all leads — whereClause stays empty
+      // Admin/MASTER: see all leads — only the cold filter above applies
     } else if (isTL) {
       const teamMemberIds = (await prisma.user.findMany({
         where: { teamLeaderId: userId, isActive: true },
         select: { id: true }
       })).map(u => u.id);
-      whereClause = { assignedToId: { in: [userId, ...teamMemberIds] } };
+      whereClause.assignedToId = { in: [userId, ...teamMemberIds] };
     } else if (isBDMCP) {
-      whereClause = {
-        assignedToId: userId,
-        vendorId: { not: null },
-        vendor: { category: 'CHANNEL_PARTNER' }
-      };
+      whereClause.assignedToId = userId;
+      whereClause.vendorId = { not: null };
+      whereClause.vendor = { category: 'CHANNEL_PARTNER' };
     } else if (isBDM) {
-      whereClause = { assignedToId: userId };
+      whereClause.assignedToId = userId;
     }
     const statsWhere = campaignId
       ? { ...whereClause, campaignData: { campaignId } }
@@ -1424,14 +1606,18 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
       // Expected Delivery Date
       expectedDeliveryDate,
       // Products
-      productIds
+      productIds,
+      // Cold Lead flag — when true and disposition is QUALIFIED, the lead is
+      // parked in the Lead Pipeline tab with whatever partial data exists;
+      // no required field validation runs and no feasibility assignment.
+      isColdLead
     } = req.body;
     const bdmUserId = req.user.id;
     const bdmUserName = req.user.name;
 
-    const validDispositions = ['MEETING_SCHEDULED', 'QUALIFIED', 'DROPPED', 'FOLLOW_UP', 'MEETING_LATER'];
+    const validDispositions = ['MEETING_SCHEDULED', 'QUALIFIED', 'DROPPED', 'FOLLOW_UP', 'MEETING_LATER', 'NOT_REACHABLE', 'RINGING_NOT_PICKED'];
     if (!disposition || !validDispositions.includes(disposition)) {
-      return res.status(400).json({ message: 'Valid disposition required (MEETING_SCHEDULED, QUALIFIED, DROPPED, FOLLOW_UP, MEETING_LATER).' });
+      return res.status(400).json({ message: 'Valid disposition required.' });
     }
 
     const lead = await prisma.lead.findUnique({
@@ -1512,6 +1698,18 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
       updateData.callLaterAt = new Date(callLaterAt);
     }
 
+    // Handle NOT_REACHABLE / RINGING_NOT_PICKED — treat as an auto follow-up:
+    // land the lead in the BDM Follow-Ups tab with a 2-hour retry window and
+    // an auto-prefixed note so the BDM remembers why it's there.
+    if (disposition === 'NOT_REACHABLE' || disposition === 'RINGING_NOT_PICKED') {
+      updateData.status = 'FOLLOW_UP';
+      updateData.callLaterAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+      const autoNote = disposition === 'NOT_REACHABLE' ? 'Not reachable' : 'Ringing, not picked up';
+      updateData.requirements = lead.requirements
+        ? `${lead.requirements}\n\n[${new Date().toLocaleString()}] ${autoNote}${notes ? ` — ${notes}` : ''}`
+        : `${autoNote}${notes ? ` — ${notes}` : ''}`;
+    }
+
     // Handle DROPPED
     if (disposition === 'DROPPED') {
       updateData.dropReason = dropReason || 'Not specified';
@@ -1519,48 +1717,63 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
 
     // Handle QUALIFIED with Feasibility Team assignment (after meeting)
     if (disposition === 'QUALIFIED') {
-      if (!feasibilityAssignedToId) {
-        return res.status(400).json({ message: 'Feasibility Team assignment is required.' });
+      if (isColdLead) {
+        // Cold lead path: park with partial data, no feasibility assignment,
+        // no required field validation. The BDM fills in whatever they have.
+        updateData.isColdLead = true;
+        // Meeting is still marked as done — the customer did have a meeting,
+        // just a lukewarm one. We keep status=QUALIFIED so the existing
+        // pipeline logic (meetingsDone stats, dashboards) continues to work.
+      } else {
+        if (!feasibilityAssignedToId) {
+          return res.status(400).json({ message: 'Feasibility Team assignment is required.' });
+        }
+        if (!latitude || !longitude) {
+          return res.status(400).json({ message: 'Location coordinates (lat/long) are required for feasibility check.' });
+        }
+        if (!fullAddress) {
+          return res.status(400).json({ message: 'Full address is required for feasibility check.' });
+        }
+        if (!interestLevel) {
+          return res.status(400).json({ message: 'Customer interest level is required.' });
+        }
+        updateData.feasibilityAssignedToId = feasibilityAssignedToId;
+        updateData.isColdLead = false;
       }
-      if (!latitude || !longitude) {
-        return res.status(400).json({ message: 'Location coordinates (lat/long) are required for feasibility check.' });
-      }
-      if (!fullAddress) {
-        return res.status(400).json({ message: 'Full address is required for feasibility check.' });
-      }
-      if (!interestLevel) {
-        return res.status(400).json({ message: 'Customer interest level is required.' });
-      }
-      updateData.feasibilityAssignedToId = feasibilityAssignedToId;
 
-      // Source/POP Location (From)
+      // Source/POP Location (From) — always optional
       if (fromAddress) {
         updateData.fromAddress = fromAddress;
       }
-      if (fromLatitude !== undefined && fromLatitude !== null) {
+      if (fromLatitude !== undefined && fromLatitude !== null && fromLatitude !== '') {
         updateData.fromLatitude = parseFloat(fromLatitude);
       }
-      if (fromLongitude !== undefined && fromLongitude !== null) {
+      if (fromLongitude !== undefined && fromLongitude !== null && fromLongitude !== '') {
         updateData.fromLongitude = parseFloat(fromLongitude);
       }
 
-      // Customer Location (To)
-      updateData.latitude = parseFloat(latitude);
-      updateData.longitude = parseFloat(longitude);
-      updateData.fullAddress = fullAddress;
-      updateData.interestLevel = interestLevel;
+      // Customer Location (To) — required only on the non-cold path, but we
+      // still persist anything the BDM did fill in on the cold path.
+      if (latitude !== undefined && latitude !== null && latitude !== '') {
+        updateData.latitude = parseFloat(latitude);
+      }
+      if (longitude !== undefined && longitude !== null && longitude !== '') {
+        updateData.longitude = parseFloat(longitude);
+      }
+      if (fullAddress) updateData.fullAddress = fullAddress;
+      if (interestLevel) updateData.interestLevel = interestLevel;
 
       // Service Requirements
       if (bandwidthRequirement) {
         updateData.bandwidthRequirement = bandwidthRequirement;
       }
-      if (numberOfIPs !== undefined && numberOfIPs !== null) {
+      if (numberOfIPs !== undefined && numberOfIPs !== null && numberOfIPs !== '') {
         updateData.numberOfIPs = parseInt(numberOfIPs);
       }
-      if (tentativePrice !== undefined && tentativePrice !== null) {
+      if (tentativePrice !== undefined && tentativePrice !== null && tentativePrice !== '') {
         updateData.tentativePrice = parseFloat(tentativePrice);
       }
-      if (otcAmount !== undefined && otcAmount !== null) {
+      if (otcAmount !== undefined && otcAmount !== null && otcAmount !== '') {
         updateData.otcAmount = parseFloat(otcAmount);
       }
 
@@ -1583,8 +1796,9 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
       }
     }
 
-    // Update requirements/notes
-    if (notes) {
+    // Update requirements/notes (skip when NOT_REACHABLE/RINGING_NOT_PICKED
+    // already wrote the combined auto-note above)
+    if (notes && disposition !== 'NOT_REACHABLE' && disposition !== 'RINGING_NOT_PICKED') {
       updateData.requirements = lead.requirements
         ? `${lead.requirements}\n\n[${new Date().toLocaleString()}] ${notes}`
         : notes;
@@ -1646,8 +1860,8 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
       });
     }
 
-    // Notify Feasibility Team member if assigned
-    if (disposition === 'QUALIFIED' && feasibilityAssignedToId) {
+    // Notify Feasibility Team member if assigned (skipped for cold leads)
+    if (disposition === 'QUALIFIED' && !isColdLead && feasibilityAssignedToId) {
       notifyFeasibilityAssigned(feasibilityAssignedToId, {
         leadId: updated.id,
         company: updated.campaignData.company,
@@ -1666,7 +1880,9 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
     if (disposition === 'MEETING_SCHEDULED') {
       message = `Meeting scheduled for ${new Date(meetingDate).toLocaleString()} at ${meetingPlace}`;
     } else if (disposition === 'QUALIFIED') {
-      message = 'Lead qualified and assigned to Feasibility Team';
+      message = isColdLead
+        ? 'Cold lead saved to Lead Pipeline — complete the details when the customer provides them.'
+        : 'Lead qualified and assigned to Feasibility Team';
     } else {
       message = `Lead marked as ${disposition.replace('_', ' ').toLowerCase()}`;
     }
@@ -4424,15 +4640,15 @@ export const getBDMSidebarCounts = asyncHandler(async function getBDMSidebarCoun
       assignedFilter = { assignedToId: userId };
     }
 
-    // Count pending leads in queue (NEW status - matching BDM Queue logic)
+    // Cold leads live in their own Lead Pipeline tab and are excluded here
     const queueCount = await prisma.lead.count({
       where: {
         ...assignedFilter,
-        status: 'NEW'
+        status: 'NEW',
+        isColdLead: false
       }
     });
 
-    // Count TODAY's and OVERDUE meetings only (not upcoming)
     const meetingsCount = await prisma.lead.count({
       where: {
         ...assignedFilter,
@@ -4440,11 +4656,11 @@ export const getBDMSidebarCounts = asyncHandler(async function getBDMSidebarCoun
           not: null,
           lte: endOfToday
         },
-        status: 'MEETING_SCHEDULED'
+        status: 'MEETING_SCHEDULED',
+        isColdLead: false
       }
     });
 
-    // Count TODAY's and OVERDUE follow-ups only (not upcoming)
     const followUpsCount = await prisma.lead.count({
       where: {
         ...assignedFilter,
@@ -4452,7 +4668,8 @@ export const getBDMSidebarCounts = asyncHandler(async function getBDMSidebarCoun
         callLaterAt: {
           not: null,
           lte: endOfToday
-        }
+        },
+        isColdLead: false
       }
     });
 
@@ -10578,5 +10795,512 @@ export const getCPLeads = asyncHandler(async function getCPLeads(req, res) {
       leads: formattedLeads,
       stats: { total: allCPLeads.length, totalARC, totalCommission },
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+    });
+});
+
+// ==========================================================================
+// COLD LEAD PIPELINE
+// Leads the BDM parked with partial details after a lukewarm meeting. Lives
+// in a dedicated "Lead Pipeline" sidebar tab. When the customer eventually
+// provides full details, the BDM completes the lead and it auto-pushes to
+// the Feasibility Team, disappearing from this list.
+// ==========================================================================
+
+export const getBDMColdLeads = asyncHandler(async function getBDMColdLeads(req, res) {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const isAdmin = isAdminOrTestUser(req.user);
+    const isTL = userRole === 'BDM_TEAM_LEADER';
+    const isBDM = userRole === 'BDM';
+    const isBDMCP = userRole === 'BDM_CP';
+
+    if (!isAdmin && !isTL && !isBDM && !isBDMCP) {
+      return res.status(403).json({ message: 'Only BDM, Team Leader, or Admin can view cold leads.' });
+    }
+
+    const { page, limit, skip } = parsePagination(req.query, 25);
+    const { search } = req.query;
+
+    // Scoping: BDMs see their own; TLs see their own + team members'; admins see all.
+    let scopeWhere = { isColdLead: true };
+    if (isAdmin) {
+      // all cold leads
+    } else if (isTL) {
+      const teamMemberIds = (await prisma.user.findMany({
+        where: { teamLeaderId: userId, isActive: true },
+        select: { id: true }
+      })).map((u) => u.id);
+      scopeWhere.assignedToId = { in: [userId, ...teamMemberIds] };
+    } else {
+      scopeWhere.assignedToId = userId;
+    }
+
+    if (search && search.trim()) {
+      scopeWhere.OR = buildSearchFilter(search.trim(), [
+        'leadNumber',
+        'campaignData.company',
+        'campaignData.name',
+        'campaignData.email',
+        { field: 'campaignData.phone' },
+      ]);
+    }
+
+    const [leads, total] = await Promise.all([
+      prisma.lead.findMany({
+        where: scopeWhere,
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          campaignData: {
+            include: {
+              campaign: { select: { id: true, code: true, name: true } }
+            }
+          },
+          assignedTo: { select: { id: true, name: true, email: true } },
+          createdBy: { select: { id: true, name: true, email: true } },
+          products: { include: { product: { select: { id: true, title: true } } } }
+        }
+      }),
+      prisma.lead.count({ where: scopeWhere })
+    ]);
+
+    const formatted = leads.map((lead) => ({
+      id: lead.id,
+      leadNumber: lead.leadNumber,
+      status: lead.status,
+      isColdLead: lead.isColdLead,
+      createdAt: lead.createdAt,
+      updatedAt: lead.updatedAt,
+      meetingDate: lead.meetingDate,
+      meetingPlace: lead.meetingPlace,
+      meetingOutcome: lead.meetingOutcome,
+      // Contact
+      company: lead.campaignData.company,
+      name: lead.campaignData.name || `${lead.campaignData.firstName || ''} ${lead.campaignData.lastName || ''}`.trim(),
+      phone: lead.campaignData.phone,
+      email: lead.campaignData.email,
+      city: lead.campaignData.city,
+      // Whatever partial data was captured
+      fullAddress: lead.fullAddress,
+      latitude: lead.latitude,
+      longitude: lead.longitude,
+      fromAddress: lead.fromAddress,
+      fromLatitude: lead.fromLatitude,
+      fromLongitude: lead.fromLongitude,
+      bandwidthRequirement: lead.bandwidthRequirement,
+      numberOfIPs: lead.numberOfIPs,
+      interestLevel: lead.interestLevel,
+      tentativePrice: lead.tentativePrice,
+      otcAmount: lead.otcAmount,
+      billingAddress: lead.billingAddress,
+      billingPincode: lead.billingPincode,
+      expectedDeliveryDate: lead.expectedDeliveryDate,
+      requirements: lead.requirements,
+      products: lead.products.map((lp) => lp.product),
+      assignedTo: lead.assignedTo,
+      createdBy: lead.createdBy,
+      campaign: lead.campaignData.campaign,
+    }));
+
+    res.json(paginatedResponse({
+      data: formatted,
+      total,
+      page,
+      limit,
+      dataKey: 'leads',
+    }));
+});
+
+// Complete a cold lead — fills in the missing required fields, clears the
+// isColdLead flag, and assigns it to the Feasibility Team (same behavior as
+// a fresh Ready-for-Feasibility disposition).
+export const completeColdLead = asyncHandler(async function completeColdLead(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const userName = req.user.name;
+    const userRole = req.user.role;
+    const isAdmin = isAdminOrTestUser(req.user);
+    const isTL = userRole === 'BDM_TEAM_LEADER';
+    const isBDM = userRole === 'BDM';
+    const isBDMCP = userRole === 'BDM_CP';
+
+    if (!isAdmin && !isTL && !isBDM && !isBDMCP) {
+      return res.status(403).json({ message: 'Only BDM, Team Leader, or Admin can complete cold leads.' });
+    }
+
+    const {
+      feasibilityAssignedToId,
+      latitude,
+      longitude,
+      fullAddress,
+      fromAddress,
+      fromLatitude,
+      fromLongitude,
+      bandwidthRequirement,
+      numberOfIPs,
+      interestLevel,
+      tentativePrice,
+      otcAmount,
+      billingAddress,
+      billingPincode,
+      expectedDeliveryDate,
+      productIds,
+      notes,
+    } = req.body;
+
+    const lead = await prisma.lead.findUnique({
+      where: { id },
+      include: { campaignData: { include: { campaign: { select: { id: true, name: true } } } } }
+    });
+
+    if (!lead) return res.status(404).json({ message: 'Lead not found.' });
+    if (!lead.isColdLead) return res.status(400).json({ message: 'This lead is not in cold state.' });
+
+    // Scope check — non-admin can only complete their own (or team, for TL)
+    if (!isAdmin) {
+      if (isTL) {
+        const teamMemberIds = (await prisma.user.findMany({
+          where: { teamLeaderId: userId, isActive: true },
+          select: { id: true }
+        })).map((u) => u.id);
+        if (lead.assignedToId !== userId && !teamMemberIds.includes(lead.assignedToId)) {
+          return res.status(403).json({ message: 'You can only complete cold leads in your team.' });
+        }
+      } else if (lead.assignedToId !== userId) {
+        return res.status(403).json({ message: 'You can only complete cold leads assigned to you.' });
+      }
+    }
+
+    // Same required-field contract as the Ready-for-Feasibility path
+    if (!feasibilityAssignedToId) {
+      return res.status(400).json({ message: 'Feasibility Team assignment is required.' });
+    }
+    if (!latitude || !longitude) {
+      return res.status(400).json({ message: 'Location coordinates (lat/long) are required.' });
+    }
+    if (!fullAddress) {
+      return res.status(400).json({ message: 'Full address is required.' });
+    }
+    if (!interestLevel) {
+      return res.status(400).json({ message: 'Customer interest level is required.' });
+    }
+
+    const updateData = {
+      isColdLead: false,
+      feasibilityAssignedToId,
+      latitude: parseFloat(latitude),
+      longitude: parseFloat(longitude),
+      fullAddress,
+      interestLevel,
+      status: 'QUALIFIED',
+      updatedAt: new Date(),
+    };
+
+    if (fromAddress) updateData.fromAddress = fromAddress;
+    if (fromLatitude !== undefined && fromLatitude !== null && fromLatitude !== '') {
+      updateData.fromLatitude = parseFloat(fromLatitude);
+    }
+    if (fromLongitude !== undefined && fromLongitude !== null && fromLongitude !== '') {
+      updateData.fromLongitude = parseFloat(fromLongitude);
+    }
+    if (bandwidthRequirement) updateData.bandwidthRequirement = bandwidthRequirement;
+    if (numberOfIPs !== undefined && numberOfIPs !== null && numberOfIPs !== '') {
+      updateData.numberOfIPs = parseInt(numberOfIPs);
+    }
+    if (tentativePrice !== undefined && tentativePrice !== null && tentativePrice !== '') {
+      updateData.tentativePrice = parseFloat(tentativePrice);
+    }
+    if (otcAmount !== undefined && otcAmount !== null && otcAmount !== '') {
+      updateData.otcAmount = parseFloat(otcAmount);
+    }
+    if (billingAddress) updateData.billingAddress = billingAddress;
+    if (billingPincode) updateData.billingPincode = billingPincode;
+    if (expectedDeliveryDate) updateData.expectedDeliveryDate = new Date(expectedDeliveryDate);
+    if (notes) {
+      updateData.requirements = lead.requirements
+        ? `${lead.requirements}\n\n[${new Date().toLocaleString()}] ${notes}`
+        : notes;
+    }
+
+    let updated = await prisma.lead.update({
+      where: { id },
+      data: updateData,
+      include: {
+        campaignData: { include: { campaign: { select: { id: true, code: true, name: true } } } },
+        products: { include: { product: { select: { id: true, title: true } } } },
+        feasibilityAssignedTo: { select: { id: true, name: true, email: true } }
+      }
+    });
+
+    if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+      await prisma.leadProduct.deleteMany({ where: { leadId: id } });
+      await prisma.leadProduct.createMany({
+        data: productIds.map((productId) => ({ leadId: id, productId }))
+      });
+      updated = await prisma.lead.findUnique({
+        where: { id },
+        include: {
+          campaignData: { include: { campaign: { select: { id: true, code: true, name: true } } } },
+          products: { include: { product: { select: { id: true, title: true } } } },
+          feasibilityAssignedTo: { select: { id: true, name: true, email: true } }
+        }
+      });
+    }
+
+    // Notify feasibility — same contract as bdmDisposition
+    notifyFeasibilityAssigned(feasibilityAssignedToId, {
+      leadId: updated.id,
+      company: updated.campaignData.company,
+      bdmName: userName,
+      campaignName: updated.campaignData.campaign?.name
+    });
+    emitSidebarRefresh(feasibilityAssignedToId);
+    emitSidebarRefresh(userId);
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+
+    res.json({
+      lead: updated,
+      message: 'Cold lead completed and assigned to Feasibility Team.'
+    });
+});
+
+// ==========================================================================
+// CREATE OPPORTUNITY
+// Fast path for BDMs who already have a customer fully committed (meetings
+// done, details agreed). Creates a brand-new CampaignData + Lead with all
+// the meeting-outcome fields filled in one shot, skips the call/meeting
+// flow entirely, and assigns to the Feasibility Team immediately. Lands
+// in the Opportunity Pipeline after feasibility review.
+// ==========================================================================
+export const createOpportunity = asyncHandler(async function createOpportunity(req, res) {
+    const userId = req.user.id;
+    const userName = req.user.name;
+    const userRole = req.user.role;
+
+    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'].includes(userRole)) {
+      return res.status(403).json({ message: 'Only BDM users can create opportunities.' });
+    }
+
+    const {
+      // Contact
+      name,
+      company,
+      phone,
+      email,
+      title,
+      industry,
+      city,
+      // Feasibility assignment
+      feasibilityAssignedToId,
+      // Customer location
+      latitude,
+      longitude,
+      fullAddress,
+      // Requirements
+      bandwidthRequirement,
+      numberOfIPs,
+      interestLevel,
+      productIds,
+      // Pricing
+      tentativePrice,
+      otcAmount,
+      // Billing
+      billingAddress,
+      billingPincode,
+      // Expected delivery
+      expectedDeliveryDate,
+      // Notes
+      notes,
+    } = req.body;
+
+    // Contact validations (same contract as createDirectLead)
+    if (!name || !name.trim()) return res.status(400).json({ message: 'Full name is required.' });
+    if (!company || !company.trim()) return res.status(400).json({ message: 'Company is required.' });
+    if (!phone || !phone.trim()) return res.status(400).json({ message: 'Phone number is required.' });
+    if (!email || !email.trim()) return res.status(400).json({ message: 'Email is required.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return res.status(400).json({ message: 'Please enter a valid email address.' });
+    }
+    const phoneDigits = String(phone).replace(/\D/g, '');
+    if (phoneDigits.length !== 10) {
+      return res.status(400).json({ message: 'Phone number must be exactly 10 digits.' });
+    }
+
+    // Feasibility contract (same as Ready-for-Feasibility path)
+    if (!feasibilityAssignedToId) {
+      return res.status(400).json({ message: 'Feasibility Team assignment is required.' });
+    }
+    if (!latitude || !longitude) {
+      return res.status(400).json({ message: 'Location coordinates (lat/long) are required.' });
+    }
+    if (!fullAddress || !fullAddress.trim()) {
+      return res.status(400).json({ message: 'Customer address is required.' });
+    }
+    if (!interestLevel) {
+      return res.status(400).json({ message: 'Customer interest level is required.' });
+    }
+
+    // Global phone dedup
+    const existingPhone = await prisma.campaignData.findFirst({
+      where: { phone: phoneDigits },
+      select: { id: true }
+    });
+    if (existingPhone) {
+      return res.status(400).json({ message: 'A contact with this phone number already exists.' });
+    }
+
+    // Validate products if provided
+    if (productIds && productIds.length > 0) {
+      const found = await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true }
+      });
+      if (found.length !== productIds.length) {
+        return res.status(400).json({ message: 'One or more selected products are invalid.' });
+      }
+    }
+
+    // Find or create the reusable [BDM Self Lead] campaign for this BDM
+    const campaignName = `[BDM Self Lead] ${userName || req.user.email}`;
+    let selfLeadCampaign = await prisma.campaign.findFirst({
+      where: { createdById: userId, name: campaignName, type: 'SELF' },
+      select: { id: true }
+    });
+
+    if (!selfLeadCampaign) {
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const latest = await prisma.campaign.findFirst({
+            where: { code: { startsWith: 'CMP' } },
+            orderBy: { code: 'desc' },
+            select: { code: true }
+          });
+          let maxNumber = 0;
+          if (latest?.code) {
+            const match = latest.code.match(/CMP(\d+)/);
+            if (match) maxNumber = parseInt(match[1], 10);
+          }
+          const code = `CMP${String(maxNumber + 1).padStart(3, '0')}`;
+          selfLeadCampaign = await prisma.campaign.create({
+            data: {
+              code,
+              name: campaignName,
+              description: 'Direct leads added by BDM (no ISR call)',
+              type: 'SELF',
+              status: 'ACTIVE',
+              dataSource: 'BDM Direct Add',
+              createdById: userId,
+            },
+            select: { id: true }
+          });
+          await prisma.campaignAssignment.create({
+            data: { userId, campaignId: selfLeadCampaign.id }
+          });
+          break;
+        } catch (err) {
+          if (err.code === 'P2002' && retries > 1) {
+            retries--;
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+
+    const leadNumber = await generateLeadNumber();
+
+    // CampaignData + Lead in one transaction, pre-filled with all the
+    // Qualified/Ready-for-Feasibility fields. Status = QUALIFIED so it
+    // goes straight to the Feasibility Team.
+    const result = await prisma.$transaction(async (tx) => {
+      const campaignData = await tx.campaignData.create({
+        data: {
+          campaignId: selfLeadCampaign.id,
+          name: name.trim(),
+          company: company.trim(),
+          phone: phoneDigits,
+          // `title` is required; fall back to placeholder if not supplied
+          title: title?.trim() || '-',
+          email: email.trim(),
+          industry: industry?.trim() || null,
+          city: city?.trim() || null,
+          status: 'INTERESTED',
+          assignedToId: userId,
+          assignedByBdmId: userId,
+          isSelfGenerated: true,
+          createdById: userId,
+        }
+      });
+
+      const lead = await tx.lead.create({
+        data: {
+          campaignDataId: campaignData.id,
+          leadNumber,
+          createdById: userId,
+          assignedToId: userId,
+          status: 'QUALIFIED',
+          type: 'QUALIFIED',
+          isColdLead: false,
+          // Feasibility assignment
+          feasibilityAssignedToId,
+          // Customer location
+          latitude: parseFloat(latitude),
+          longitude: parseFloat(longitude),
+          fullAddress: fullAddress.trim(),
+          interestLevel,
+          // Requirements
+          ...(bandwidthRequirement ? { bandwidthRequirement } : {}),
+          ...(numberOfIPs !== undefined && numberOfIPs !== null && numberOfIPs !== ''
+            ? { numberOfIPs: parseInt(numberOfIPs) }
+            : {}),
+          // Pricing
+          ...(tentativePrice !== undefined && tentativePrice !== null && tentativePrice !== ''
+            ? { tentativePrice: parseFloat(tentativePrice) }
+            : {}),
+          ...(otcAmount !== undefined && otcAmount !== null && otcAmount !== ''
+            ? { otcAmount: parseFloat(otcAmount) }
+            : {}),
+          // Billing
+          ...(billingAddress ? { billingAddress } : {}),
+          ...(billingPincode ? { billingPincode } : {}),
+          // Expected delivery
+          ...(expectedDeliveryDate ? { expectedDeliveryDate: new Date(expectedDeliveryDate) } : {}),
+          // Notes
+          ...(notes ? { requirements: notes } : {}),
+          // Products
+          ...(productIds && productIds.length > 0 && {
+            products: { create: productIds.map((productId) => ({ productId })) }
+          })
+        },
+        include: {
+          campaignData: {
+            include: { campaign: { select: { id: true, code: true, name: true } } }
+          },
+          products: { include: { product: { select: { id: true, title: true } } } },
+          feasibilityAssignedTo: { select: { id: true, name: true, email: true } },
+          assignedTo: { select: { id: true, name: true, email: true } },
+          createdBy: { select: { id: true, name: true, email: true } },
+        }
+      });
+
+      return lead;
+    });
+
+    // Notify feasibility team (same contract as the Ready-for-Feasibility path)
+    notifyFeasibilityAssigned(feasibilityAssignedToId, {
+      leadId: result.id,
+      company: result.campaignData.company,
+      bdmName: userName,
+      campaignName: result.campaignData.campaign?.name
+    });
+    emitSidebarRefresh(feasibilityAssignedToId);
+    emitSidebarRefresh(userId);
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+
+    res.status(201).json({
+      lead: result,
+      message: 'Opportunity created and assigned to Feasibility Team.'
     });
 });

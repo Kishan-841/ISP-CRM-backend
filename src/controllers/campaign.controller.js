@@ -2214,6 +2214,13 @@ export const addSingleCampaignData = asyncHandler(async function addSingleCampai
       return res.status(400).json({ message: 'Title is required.' });
     }
 
+    if (!email || !email.toString().trim()) {
+      return res.status(400).json({ message: 'Email is required.' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.toString().trim())) {
+      return res.status(400).json({ message: 'Please enter a valid email address.' });
+    }
+
     // Check if campaign exists
     const campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) {

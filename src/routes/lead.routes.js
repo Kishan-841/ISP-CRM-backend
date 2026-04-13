@@ -5,6 +5,10 @@ import {
   getLeads,
   getLead,
   convertToLead,
+  createDirectLead,
+  getBDMColdLeads,
+  completeColdLead,
+  createOpportunity,
   updateLead,
   deleteLead,
   getBDMUsers,
@@ -171,6 +175,13 @@ router.patch('/bdm/:id/location', updateLeadLocation);
 
 // BDM call disposition (Qualified, Drop, Follow Up)
 router.post('/bdm/:id/disposition', bdmDisposition);
+
+// Cold Lead Pipeline
+router.get('/bdm/cold-leads', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getBDMColdLeads);
+router.post('/bdm/cold-leads/:id/complete', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), completeColdLead);
+
+// Create Opportunity (fast path — skip calling/meeting, straight to feasibility)
+router.post('/bdm/create-opportunity', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createOpportunity);
 
 // Reassign lead from Team Leader to BDM
 router.post('/bdm/bulk-reassign', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN'), bulkReassignLeadsToBDM);
@@ -492,6 +503,7 @@ router.get('/:id', getLead);
 
 // Convert campaign data to lead
 router.post('/convert', convertToLead);
+router.post('/bdm/direct-add', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createDirectLead);
 
 // Create self-generated lead (ISR creates their own lead)
 router.post('/self-generate', createSelfGeneratedLead);

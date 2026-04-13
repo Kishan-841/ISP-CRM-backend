@@ -341,6 +341,10 @@ model Lead {
   billingAddress            String?
   billingPincode            String?
   expectedDeliveryDate      DateTime?
+  // Cold Lead flag: true when BDM parked a lead with partial details after
+  // a lukewarm meeting. Cold leads live in the Lead Pipeline tab and are
+  // excluded from the Opportunity Pipeline until the BDM completes them.
+  isColdLead                Boolean              @default(false)
   circuitId                 String?              @unique
   customerIpAddresses       Json?
   nocPushedToDeliveryAt     DateTime?
@@ -466,6 +470,7 @@ model Lead {
   @@index([actualPlanIsActive, customerCreatedAt])
   @@index([customerGstNo])
   @@index([superAdmin2ApprovalStatus, status])
+  @@index([isColdLead, assignedToId])
 }
 
 model LeadProduct {
