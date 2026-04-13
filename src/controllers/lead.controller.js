@@ -199,6 +199,10 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
       feasibilityAssignedToId: lead.feasibilityAssignedToId,
+      feasibilityVendorType: lead.feasibilityVendorType,
+      tentativeCapex: lead.tentativeCapex,
+      tentativeOpex: lead.tentativeOpex,
+      feasibilityDescription: lead.feasibilityDescription,
       accountsStatus: lead.accountsStatus,
       customerUsername: lead.customerUsername,
       installationCompletedAt: lead.installationCompletedAt,
@@ -2496,7 +2500,22 @@ export const getFeasibilityReviewHistory = asyncHandler(async function getFeasib
 // Feasibility Team disposition - Feasible (Yes) or Not Feasible (No)
 export const feasibilityDisposition = asyncHandler(async function feasibilityDisposition(req, res) {
     const { id } = req.params;
-    const { decision, notes, vendorInfo, vendorId } = req.body;
+    const {
+      decision,
+      notes,
+      // Simplified feasibility fields (vendor setup moved to delivery stage)
+      vendorType,           // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
+      tentativeCapex,
+      tentativeOpex,
+      feasibilityDescription,
+      // POP Location
+      popLocation,
+      popLatitude,
+      popLongitude,
+      // Legacy fields — still accepted for backward compatibility but no longer required
+      vendorInfo,
+      vendorId,
+    } = req.body;
     const ftUserId = req.user.id;
     const ftUserName = req.user.name;
 
@@ -2504,13 +2523,13 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
       return res.status(400).json({ message: 'Valid decision required (FEASIBLE, NOT_FEASIBLE).' });
     }
 
-    // NOT_FEASIBLE requires notes
     if (decision === 'NOT_FEASIBLE' && !notes) {
       return res.status(400).json({ message: 'Notes are required when marking as not feasible.' });
     }
 
-    // FEASIBLE requires vendor type
-    if (decision === 'FEASIBLE' && (!vendorInfo || !vendorInfo.vendorType)) {
+    // FEASIBLE requires vendor type (just the type — no vendor creation at this stage)
+    const effectiveVendorType = vendorType || vendorInfo?.vendorType;
+    if (decision === 'FEASIBLE' && !effectiveVendorType) {
       return res.status(400).json({ message: 'Vendor type is required when marking as feasible.' });
     }
 
@@ -2532,63 +2551,45 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    // Verify lead is assigned to this FT member (Admin can access all)
     if (!isAdminOrTestUser(req.user) && lead.feasibilityAssignedToId !== ftUserId) {
       return res.status(403).json({ message: 'This lead is not assigned to you.' });
     }
 
-    // Prepare update data
-    // For FEASIBLE: store vendor info as JSON along with notes
-    // For NOT_FEASIBLE: store just the notes
-    // Extract commission percentage from vendorDetails (set by feasibility team for commission/channel partner types)
-    const commissionPct = vendorInfo?.vendorDetails?.percentage || vendorInfo?.commissionPercentage || null;
-    let feasibilityNotesValue = null;
-    if (decision === 'FEASIBLE' && vendorInfo) {
-      // Combine vendor info with any notes into a structured format
-      feasibilityNotesValue = JSON.stringify({
-        vendorType: vendorInfo.vendorType,
-        vendorDetails: vendorInfo.vendorDetails,
-        commissionPercentage: commissionPct,
-        additionalNotes: notes || null,
-        reviewedAt: new Date().toISOString()
-      });
-    } else {
-      feasibilityNotesValue = notes || null;
-    }
-
     const updateData = {
       feasibilityReviewedAt: new Date(),
-      feasibilityNotes: feasibilityNotesValue,
       updatedAt: new Date()
     };
 
     if (decision === 'FEASIBLE') {
-      // Mark as FEASIBLE status
       updateData.status = 'FEASIBLE';
-      // Store commission percentage if provided (for COMMISSION/CHANNEL_PARTNER vendors)
-      if (commissionPct) {
-        updateData.vendorCommissionPercentage = parseFloat(commissionPct);
+      // Store the simplified feasibility data
+      updateData.feasibilityVendorType = effectiveVendorType;
+      if (tentativeCapex !== undefined && tentativeCapex !== null && tentativeCapex !== '') {
+        updateData.tentativeCapex = parseFloat(tentativeCapex);
       }
-      // Link vendor if provided
-      if (vendorId) {
-        const vendor = await prisma.vendor.findUnique({ where: { id: vendorId }, select: { id: true, approvalStatus: true } });
-        if (!vendor) return res.status(400).json({ message: 'Selected vendor not found.' });
-        if (vendor.approvalStatus !== 'APPROVED' && vendor.approvalStatus !== 'PENDING_ACCOUNTS') return res.status(400).json({ message: 'Selected vendor is not yet approved by admin.' });
-        updateData.vendorId = vendorId;
+      if (tentativeOpex !== undefined && tentativeOpex !== null && tentativeOpex !== '') {
+        updateData.tentativeOpex = parseFloat(tentativeOpex);
       }
-      // Save POP location from vendor data to lead fields
-      if (vendorInfo && vendorInfo.vendorDetails) {
+      if (feasibilityDescription) {
+        updateData.feasibilityDescription = feasibilityDescription.trim();
+      }
+      // Store notes in feasibilityNotes for continuity
+      updateData.feasibilityNotes = notes || feasibilityDescription || null;
+      // POP Location
+      if (popLocation) updateData.fromAddress = popLocation;
+      if (popLatitude) updateData.fromLatitude = parseFloat(popLatitude);
+      if (popLongitude) updateData.fromLongitude = parseFloat(popLongitude);
+      // Legacy: if old-style vendorInfo was sent (from an older client), still save POP from it
+      if (!popLocation && vendorInfo?.vendorDetails) {
         const vd = vendorInfo.vendorDetails;
         if (vd.popLocation) updateData.fromAddress = vd.popLocation;
         if (vd.popLatitude) updateData.fromLatitude = parseFloat(vd.popLatitude);
         if (vd.popLongitude) updateData.fromLongitude = parseFloat(vd.popLongitude);
       }
     } else {
-      // NOT_FEASIBLE - Set status to NOT_FEASIBLE and clear FT assignment
-      // Lead shows as NOT_FEASIBLE for BDM to re-review
       updateData.status = 'NOT_FEASIBLE';
       updateData.feasibilityAssignedToId = null;
-      // Add FT notes to requirements
+      updateData.feasibilityNotes = notes || null;
       updateData.requirements = lead.requirements
         ? `${lead.requirements}\n\n[FT Review - ${new Date().toLocaleString()}] NOT FEASIBLE: ${notes}`
         : `[FT Review - ${new Date().toLocaleString()}] NOT FEASIBLE: ${notes}`;
@@ -2614,7 +2615,6 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
       }
     });
 
-    // Notify BDM about feasibility decision
     if (lead.assignedToId) {
       if (decision === 'FEASIBLE') {
         notifyFeasibilityApproved(lead.assignedToId, {
@@ -2633,7 +2633,6 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
       }
       emitSidebarRefresh(lead.assignedToId);
     }
-    // Refresh FT member's own sidebar + admin
     emitSidebarRefresh(req.user.id);
     emitSidebarRefreshByRole('SUPER_ADMIN');
 
@@ -2703,6 +2702,10 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
           linkedinUrl: true,
           feasibilityNotes: true,
           feasibilityReviewedAt: true,
+          feasibilityVendorType: true,
+          tentativeCapex: true,
+          tentativeOpex: true,
+          feasibilityDescription: true,
           campaignData: {
             select: {
               company: true,
@@ -3164,6 +3167,10 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
           linkedinUrl: true,
           feasibilityNotes: true,
           feasibilityReviewedAt: true,
+          feasibilityVendorType: true,
+          tentativeCapex: true,
+          tentativeOpex: true,
+          feasibilityDescription: true,
           campaignData: {
             select: {
               company: true,
@@ -6751,6 +6758,12 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         installationStartedAt: true,
         installationCompletedAt: true,
         feasibilityNotes: true,
+        feasibilityVendorType: true,
+        tentativeCapex: true,
+        tentativeOpex: true,
+        feasibilityDescription: true,
+        deliveryVendorSetupDone: true,
+        vendorId: true,
         createdAt: true,
         updatedAt: true,
         campaignData: {
@@ -6856,12 +6869,18 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         }
       }
 
+      // Vendor setup must be done before material request
+      if (!lead.deliveryVendorSetupDone) {
+        return 'vendor_setup';
+      }
+
       // Default: Pending (no request yet)
       return 'pending';
     };
 
     // Calculate stats for all stages
     const stats = {
+      vendorSetup: 0,
       pending: 0,
       materialRequested: 0,
       materialReceived: 0,
@@ -6876,10 +6895,10 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
     };
 
     // Categorize all leads
-    // material_received → pushedToNoc (auto-push), noc_completed → installing (auto-start)
     allLeadsWithRequests.forEach(lead => {
       const leadStage = getLeadStage(lead);
       switch (leadStage) {
+        case 'vendor_setup': stats.vendorSetup++; break;
         case 'pending': stats.pending++; break;
         case 'material_rejected': stats.pending++; break;
         case 'material_requested': stats.materialRequested++; break;
@@ -6899,6 +6918,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
     // Merge removed stages: material_received→pushed_to_noc, noc_completed→installing
     const filteredLeads = allLeadsWithRequests.filter(lead => {
       const leadStage = getLeadStage(lead);
+      if (stage === 'vendor_setup') return leadStage === 'vendor_setup';
       if (stage === 'pending') return leadStage === 'pending' || leadStage === 'material_rejected';
       if (stage === 'pushed_to_noc') return leadStage === 'pushed_to_noc' || leadStage === 'material_received';
       if (stage === 'installing') return leadStage === 'installing' || leadStage === 'noc_completed';
@@ -6951,6 +6971,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         fromAddress: lead.fromAddress,
         billingAddress: lead.billingAddress,
         billingPincode: lead.billingPincode,
+        expectedDeliveryDate: lead.expectedDeliveryDate,
         bandwidthRequirement: lead.bandwidthRequirement,
         numberOfIPs: lead.numberOfIPs,
         arcAmount: lead.arcAmount,
@@ -7002,6 +7023,11 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         installationStartedAt: lead.installationStartedAt,
         installationCompletedAt: lead.installationCompletedAt,
         feasibilityInfo,
+        feasibilityVendorType: lead.feasibilityVendorType,
+        tentativeCapex: lead.tentativeCapex,
+        tentativeOpex: lead.tentativeOpex,
+        feasibilityDescription: lead.feasibilityDescription,
+        deliveryVendorSetupDone: lead.deliveryVendorSetupDone,
         bdm: lead.assignedTo,
         createdBy: lead.createdBy,
         products: lead.products.map(lp => lp.product),
@@ -7048,6 +7074,7 @@ export const getDeliveryLeadDetails = asyncHandler(async function getDeliveryLea
         deliveryAssignedTo: { select: { id: true, name: true, email: true } },
         customerCreatedBy: { select: { id: true, name: true, email: true } },
         nocConfiguredBy: { select: { id: true, name: true, email: true } },
+        vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } },
         products: {
           include: {
             product: { select: { id: true, title: true, parentId: true } }
@@ -7092,11 +7119,16 @@ export const getDeliveryLeadDetails = asyncHandler(async function getDeliveryLea
       feasibilityInfo = { additionalNotes: lead.feasibilityNotes };
     }
 
-    // Combine feasibility products with delivery products (delivery takes precedence)
+    // Combine feasibility products with delivery products (delivery takes precedence).
+    // New-format deliveryProducts (with materials array) should be used directly
+    // without merging old vendorDetails keys on top.
     let combinedProducts = null;
-    if (feasibilityInfo && feasibilityInfo.vendorDetails) {
+    if (lead.deliveryProducts && (lead.deliveryProducts.materials || lead.deliveryProducts.setupAt)) {
+      // New vendor-setup format — use as-is
+      combinedProducts = lead.deliveryProducts;
+    } else if (feasibilityInfo && feasibilityInfo.vendorDetails) {
+      // Legacy: merge old vendorDetails with old deliveryProducts
       combinedProducts = { ...feasibilityInfo.vendorDetails };
-      // Override with delivery products if they exist
       if (lead.deliveryProducts) {
         combinedProducts = { ...combinedProducts, ...lead.deliveryProducts };
       }
@@ -7158,6 +7190,13 @@ export const getDeliveryLeadDetails = asyncHandler(async function getDeliveryLea
         feasibilityInfo,
         feasibilityAssignedTo: lead.feasibilityAssignedTo,
         feasibilityReviewedAt: lead.feasibilityReviewedAt,
+        feasibilityVendorType: lead.feasibilityVendorType,
+        tentativeCapex: lead.tentativeCapex,
+        tentativeOpex: lead.tentativeOpex,
+        feasibilityDescription: lead.feasibilityDescription,
+        deliveryVendorSetupDone: lead.deliveryVendorSetupDone,
+        vendorId: lead.vendorId,
+        vendor: lead.vendor,
         // Combined products (for editing)
         combinedProducts,
         // OPS approval info
@@ -10704,6 +10743,9 @@ export const getCPLeads = asyncHandler(async function getCPLeads(req, res) {
           deliveryStatus: true,
           opsApprovalStatus: true,
           feasibilityNotes: true,
+          feasibilityVendorType: true,
+          tentativeCapex: true,
+          tentativeOpex: true,
           pushedToInstallationAt: true,
           actualPlanIsActive: true,
           createdAt: true,
@@ -10730,16 +10772,22 @@ export const getCPLeads = asyncHandler(async function getCPLeads(req, res) {
       const arcAmount = lead.arcAmount || 0;
       const cpCommission = (cpPercent / 100) * arcAmount;
 
-      // Parse feasibility for OPEX/CAPEX
+      // Parse feasibility for OPEX/CAPEX — new direct columns first, then legacy JSON
       let capex = 0, opex = 0, vendorType = '';
-      try {
-        if (lead.feasibilityNotes) {
-          const feas = JSON.parse(lead.feasibilityNotes);
-          vendorType = feas.vendorType || '';
-          capex = parseFloat(feas.vendorDetails?.capex) || 0;
-          opex = parseFloat(feas.vendorDetails?.opex) || 0;
-        }
-      } catch (e) {}
+      if (lead.feasibilityVendorType || lead.tentativeCapex != null || lead.tentativeOpex != null) {
+        vendorType = lead.feasibilityVendorType || '';
+        capex = parseFloat(lead.tentativeCapex) || 0;
+        opex = parseFloat(lead.tentativeOpex) || 0;
+      } else {
+        try {
+          if (lead.feasibilityNotes) {
+            const feas = JSON.parse(lead.feasibilityNotes);
+            vendorType = feas.vendorType || '';
+            capex = parseFloat(feas.vendorDetails?.capex) || 0;
+            opex = parseFloat(feas.vendorDetails?.opex) || 0;
+          }
+        } catch (e) {}
+      }
 
       // Determine current stage
       let stage = 'New';
@@ -11302,5 +11350,109 @@ export const createOpportunity = asyncHandler(async function createOpportunity(r
     res.status(201).json({
       lead: result,
       message: 'Opportunity created and assigned to Feasibility Team.'
+    });
+});
+
+// ==========================================================================
+// DELIVERY VENDOR SETUP
+// Mandatory step before material request. The delivery team selects or
+// creates a vendor based on the vendor type chosen during feasibility, and
+// enters the actual cost details (fiber req, per-mtr cost, etc.) that
+// produce the real CAPEX/OPEX replacing the feasibility estimates.
+// ==========================================================================
+export const setupDeliveryVendor = asyncHandler(async function setupDeliveryVendor(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const isAdmin = isAdminOrTestUser(req.user);
+    const isDeliveryTeam = hasRole(req.user, 'DELIVERY_TEAM');
+
+    if (!isDeliveryTeam && !isAdmin) {
+      return res.status(403).json({ message: 'Only Delivery Team can set up vendors.' });
+    }
+
+    const {
+      vendorId,
+      // Fiber vendor fields
+      fiberRequired,
+      perMtrCost,
+      // Actual CAPEX/OPEX (calculated by frontend from real vendor data)
+      actualCapex,
+      actualOpex,
+      vendorNotes,
+      // All vendor-type-specific data (commission %, telco details, etc.)
+      vendorTypeData,
+    } = req.body;
+
+    const lead = await prisma.lead.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        feasibilityVendorType: true,
+        deliveryStatus: true,
+        pushedToInstallationAt: true,
+        vendorId: true,
+      }
+    });
+
+    if (!lead) return res.status(404).json({ message: 'Lead not found.' });
+    if (!lead.pushedToInstallationAt) {
+      return res.status(400).json({ message: 'Lead has not been pushed to installation yet.' });
+    }
+
+    const updateData = { updatedAt: new Date() };
+
+    // Link vendor if provided
+    if (vendorId) {
+      const vendor = await prisma.vendor.findUnique({
+        where: { id: vendorId },
+        select: { id: true, approvalStatus: true, commissionPercentage: true }
+      });
+      if (!vendor) return res.status(400).json({ message: 'Selected vendor not found.' });
+      updateData.vendorId = vendorId;
+      if (vendor.commissionPercentage != null) {
+        updateData.vendorCommissionPercentage = vendor.commissionPercentage;
+      }
+    }
+
+    // Store all vendor-type-specific cost data in deliveryProducts JSON
+    const { materials } = req.body;
+    const deliveryVendorData = {
+      ...(vendorTypeData || {}),
+      ...(fiberRequired ? { fiberRequired: parseFloat(fiberRequired) } : {}),
+      ...(perMtrCost ? { perMtrCost: parseFloat(perMtrCost) } : {}),
+      ...(fiberRequired && perMtrCost ? { fiberAmount: Math.round(parseFloat(fiberRequired) * parseFloat(perMtrCost) * 100) / 100 } : {}),
+      ...(materials && materials.length > 0 ? { materials } : {}),
+      vendorNotes: vendorNotes || null,
+      setupAt: new Date().toISOString(),
+      setupById: userId,
+    };
+    updateData.deliveryProducts = deliveryVendorData;
+
+    // Store actual CAPEX/OPEX (overrides tentative from feasibility)
+    if (actualCapex !== undefined && actualCapex !== null && actualCapex !== '') {
+      updateData.tentativeCapex = parseFloat(actualCapex);
+    }
+    if (actualOpex !== undefined && actualOpex !== null && actualOpex !== '') {
+      updateData.tentativeOpex = parseFloat(actualOpex);
+    }
+
+    // Mark vendor setup as done
+    updateData.deliveryVendorSetupDone = true;
+
+    const updated = await prisma.lead.update({
+      where: { id },
+      data: updateData,
+      include: {
+        vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } },
+        campaignData: { select: { company: true, name: true, phone: true } }
+      }
+    });
+
+    emitSidebarRefresh(userId);
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+
+    res.json({
+      lead: updated,
+      message: 'Vendor setup saved successfully.'
     });
 });

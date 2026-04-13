@@ -345,6 +345,12 @@ model Lead {
   // a lukewarm meeting. Cold leads live in the Lead Pipeline tab and are
   // excluded from the Opportunity Pipeline until the BDM completes them.
   isColdLead                Boolean              @default(false)
+  // Simplified feasibility review fields (vendor setup moved to delivery)
+  feasibilityVendorType     String?              // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
+  tentativeCapex            Float?               // Feasibility team's CAPEX estimate (overwritten by delivery with actual)
+  tentativeOpex             Float?               // Feasibility team's OPEX estimate (overwritten by delivery with actual)
+  feasibilityDescription    String?              // Free-text notes from FT review
+  deliveryVendorSetupDone   Boolean              @default(false) // Must be true before material request
   circuitId                 String?              @unique
   customerIpAddresses       Json?
   nocPushedToDeliveryAt     DateTime?

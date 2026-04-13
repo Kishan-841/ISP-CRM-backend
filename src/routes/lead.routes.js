@@ -9,6 +9,7 @@ import {
   getBDMColdLeads,
   completeColdLead,
   createOpportunity,
+  setupDeliveryVendor,
   updateLead,
   deleteLead,
   getBDMUsers,
@@ -182,6 +183,9 @@ router.post('/bdm/cold-leads/:id/complete', requireRole('BDM', 'BDM_CP', 'BDM_TE
 
 // Create Opportunity (fast path — skip calling/meeting, straight to feasibility)
 router.post('/bdm/create-opportunity', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createOpportunity);
+
+// Delivery vendor setup (mandatory before material request)
+router.post('/delivery/:id/vendor-setup', requireRole('DELIVERY_TEAM', 'SUPER_ADMIN'), setupDeliveryVendor);
 
 // Reassign lead from Team Leader to BDM
 router.post('/bdm/bulk-reassign', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN'), bulkReassignLeadsToBDM);
