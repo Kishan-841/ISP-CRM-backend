@@ -32,6 +32,7 @@ import customerRoutes from './routes/customer.routes.js';
 import serviceOrderRoutes from './routes/serviceOrder.routes.js';
 import customerImportRoutes from './routes/customerImport.routes.js';
 import popLocationRoutes from './routes/popLocation.routes.js';
+import proxyRoutes from './routes/proxy.routes.js';
 import { auth } from './middleware/auth.js';
 import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
@@ -73,7 +74,12 @@ const generalLimiter = rateLimit({
 });
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  // Allow cross-origin iframes to embed our responses (needed for the file
+  // proxy that serves PDFs inline to the frontend's iframe).
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use('/api', generalLimiter);
@@ -107,6 +113,7 @@ app.use('/api/customer', customerRoutes);
 app.use('/api/service-orders', serviceOrderRoutes);
 app.use('/api/customer-import', customerImportRoutes);
 app.use('/api/pop-locations', popLocationRoutes);
+app.use('/api/proxy', proxyRoutes);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);
