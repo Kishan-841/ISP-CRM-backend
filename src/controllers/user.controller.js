@@ -760,7 +760,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       where: { teamLeaderId: userId, isActive: true },
       select: { id: true }
     })).map((u) => u.id);
-    const [btlQueue, btlMeetings, btlFollowUps, btlColdLeadsPending] = await Promise.all([
+    const [btlQueue, btlMeetings, btlFollowUps, btlColdLeadsPending, btlFeasibilityPending] = await Promise.all([
       prisma.lead.count({
         where: { ...(!isMaster && { assignedToId: userId }), status: 'NEW', isColdLead: false }
       }),
@@ -787,12 +787,22 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
           }),
           isColdLead: true
         }
+      }),
+      // Feasibility queue oversight: leads from the TL's team still awaiting FT review
+      prisma.lead.count({
+        where: {
+          ...(!isMaster && {
+            assignedToId: { in: [userId, ...teamMemberIds] }
+          }),
+          status: 'QUALIFIED',
+          isColdLead: false
+        }
       })
     ]);
     if (isMaster) {
-      Object.assign(counts, { btlQueue, btlMeetings, btlFollowUps, btlColdLeadsPending });
+      Object.assign(counts, { btlQueue, btlMeetings, btlFollowUps, btlColdLeadsPending, btlFeasibilityPending });
     } else {
-      Object.assign(counts, { queue: btlQueue, meetings: btlMeetings, followUps: btlFollowUps, coldLeadsPending: btlColdLeadsPending });
+      Object.assign(counts, { queue: btlQueue, meetings: btlMeetings, followUps: btlFollowUps, coldLeadsPending: btlColdLeadsPending, feasibilityPending: btlFeasibilityPending });
     }
   }
 

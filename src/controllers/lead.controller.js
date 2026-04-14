@@ -2804,6 +2804,10 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
       // Feasibility data
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
+      feasibilityVendorType: lead.feasibilityVendorType,
+      tentativeCapex: lead.tentativeCapex,
+      tentativeOpex: lead.tentativeOpex,
+      feasibilityDescription: lead.feasibilityDescription,
       // Customer referral info
       isCustomerReferral: !!lead.enquiryCreatedFrom,
       // Vendor / Channel Partner info
@@ -2923,7 +2927,11 @@ export const getOpsTeamReviewHistory = asyncHandler(async function getOpsTeamRev
       products: lead.products.map(lp => lp.product),
       // Feasibility data
       feasibilityNotes: lead.feasibilityNotes,
-      feasibilityReviewedAt: lead.feasibilityReviewedAt
+      feasibilityReviewedAt: lead.feasibilityReviewedAt,
+      feasibilityVendorType: lead.feasibilityVendorType,
+      tentativeCapex: lead.tentativeCapex,
+      tentativeOpex: lead.tentativeOpex,
+      feasibilityDescription: lead.feasibilityDescription
     }));
 
     res.json({ leads: formattedLeads, counts });
@@ -3588,6 +3596,10 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       // Feasibility data
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
+      feasibilityVendorType: lead.feasibilityVendorType,
+      tentativeCapex: lead.tentativeCapex,
+      tentativeOpex: lead.tentativeOpex,
+      feasibilityDescription: lead.feasibilityDescription,
       // Customer referral info
       isCustomerReferral: !!lead.enquiryCreatedFrom,
       // Vendor / Channel Partner info
@@ -3642,6 +3654,10 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       // Feasibility data
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
+      feasibilityVendorType: lead.feasibilityVendorType,
+      tentativeCapex: lead.tentativeCapex,
+      tentativeOpex: lead.tentativeOpex,
+      feasibilityDescription: lead.feasibilityDescription,
       // Customer referral info
       isCustomerReferral: !!lead.enquiryCreatedFrom,
       // Vendor / Channel Partner info
