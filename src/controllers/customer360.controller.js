@@ -933,3 +933,102 @@ export const getSamActivity = asyncHandler(async function getSamActivity(req, re
 
   res.json({ assignment, meetings, visits, communications });
 });
+
+// GET /api/customer-360/:id/feasibility
+// Feasibility + Vendor summary: tentative vs actual CAPEX/OPEX, vendor type,
+// linked delivery vendor, materials from delivery vendor setup, status.
+export const getFeasibility = asyncHandler(async function getFeasibility(req, res) {
+  const { id } = req.params;
+
+  const lead = await prisma.lead.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      leadNumber: true,
+      status: true,
+      // Feasibility stage
+      feasibilityVendorType: true,
+      tentativeCapex: true,
+      tentativeOpex: true,
+      feasibilityDescription: true,
+      feasibilityNotes: true,
+      feasibilityReviewedAt: true,
+      feasibilityAssignedTo: { select: { id: true, name: true, email: true } },
+      // Delivery stage
+      actualCapex: true,
+      actualOpex: true,
+      deliveryVendorSetupDone: true,
+      deliveryProducts: true,
+      vendorId: true,
+      vendor: { select: { id: true, companyName: true, category: true, commissionPercentage: true } },
+      // POP / from address
+      fromAddress: true,
+      fromLatitude: true,
+      fromLongitude: true,
+    },
+  });
+
+  if (!lead) {
+    return res.status(404).json({ message: 'Lead not found.' });
+  }
+
+  // Legacy support: if new columns are empty but old feasibilityNotes JSON has data,
+  // parse it and extract tentative vendor info.
+  let legacy = null;
+  if (!lead.feasibilityVendorType && lead.feasibilityNotes) {
+    try {
+      const parsed = typeof lead.feasibilityNotes === 'string' ? JSON.parse(lead.feasibilityNotes) : lead.feasibilityNotes;
+      if (parsed?.vendorType) {
+        legacy = {
+          vendorType: parsed.vendorType,
+          capex: parsed.vendorDetails?.capex || null,
+          opex: parsed.vendorDetails?.opex || null,
+        };
+      }
+    } catch {}
+  }
+
+  // Pull materials from delivery vendor setup
+  const dp = lead.deliveryProducts && typeof lead.deliveryProducts === 'object' ? lead.deliveryProducts : {};
+  const materials = Array.isArray(dp.materials) ? dp.materials : [];
+  const vendorTypeData = dp.vendorType || null;
+  const fiberDetails = dp.fiberRequired || dp.perMtrCost ? {
+    fiberRequired: dp.fiberRequired || null,
+    perMtrCost: dp.perMtrCost || null,
+    fiberAmount: dp.fiberAmount || null,
+  } : null;
+
+  // Determine status
+  let status = 'PENDING';
+  if (lead.feasibilityReviewedAt && lead.feasibilityVendorType) {
+    status = lead.deliveryVendorSetupDone ? 'COMPLETED' : 'FEASIBILITY_DONE';
+  } else if (lead.feasibilityReviewedAt) {
+    status = 'FEASIBILITY_DONE';
+  }
+
+  res.json({
+    status,
+    // Feasibility estimates
+    feasibility: {
+      vendorType: lead.feasibilityVendorType || legacy?.vendorType || null,
+      tentativeCapex: lead.tentativeCapex != null ? lead.tentativeCapex : (legacy?.capex ?? null),
+      tentativeOpex: lead.tentativeOpex != null ? lead.tentativeOpex : (legacy?.opex ?? null),
+      description: lead.feasibilityDescription || null,
+      reviewedAt: lead.feasibilityReviewedAt,
+      reviewedBy: lead.feasibilityAssignedTo,
+      popLocation: lead.fromAddress,
+      popLatitude: lead.fromLatitude,
+      popLongitude: lead.fromLongitude,
+    },
+    // Delivery actuals
+    delivery: {
+      setupDone: lead.deliveryVendorSetupDone,
+      actualCapex: lead.actualCapex,
+      actualOpex: lead.actualOpex,
+      vendor: lead.vendor,
+      vendorType: vendorTypeData,
+      materials,
+      fiberDetails,
+    },
+  });
+});

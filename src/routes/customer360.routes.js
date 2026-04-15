@@ -7,13 +7,14 @@ import {
   getBilling,
   getDocuments,
   getComplaints,
-  getSamActivity
+  getSamActivity,
+  getFeasibility
 } from '../controllers/customer360.controller.js';
 
 const router = Router();
 
 router.use(auth);
-router.use(requireRole('SUPER_ADMIN'));
+router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR'));
 
 router.get('/search', searchCustomers);
 router.get('/:id/summary', getSummary);
@@ -22,5 +23,6 @@ router.get('/:id/billing', getBilling);
 router.get('/:id/documents', getDocuments);
 router.get('/:id/complaints', getComplaints);
 router.get('/:id/sam', getSamActivity);
+router.get('/:id/feasibility', getFeasibility);
 
 export default router;

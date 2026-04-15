@@ -347,8 +347,10 @@ model Lead {
   isColdLead                Boolean              @default(false)
   // Simplified feasibility review fields (vendor setup moved to delivery)
   feasibilityVendorType     String?              // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
-  tentativeCapex            Float?               // Feasibility team's CAPEX estimate (overwritten by delivery with actual)
-  tentativeOpex             Float?               // Feasibility team's OPEX estimate (overwritten by delivery with actual)
+  tentativeCapex            Float?               // Feasibility team's CAPEX estimate
+  tentativeOpex             Float?               // Feasibility team's OPEX estimate
+  actualCapex               Float?               // Delivery team's final CAPEX from materials
+  actualOpex                Float?               // Delivery team's final OPEX from vendor setup
   feasibilityDescription    String?              // Free-text notes from FT review
   deliveryVendorSetupDone   Boolean              @default(false) // Must be true before material request
   circuitId                 String?              @unique

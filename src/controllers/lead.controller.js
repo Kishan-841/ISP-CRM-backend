@@ -11444,12 +11444,13 @@ export const setupDeliveryVendor = asyncHandler(async function setupDeliveryVend
     };
     updateData.deliveryProducts = deliveryVendorData;
 
-    // Store actual CAPEX/OPEX (overrides tentative from feasibility)
+    // Save actual CAPEX/OPEX from delivery vendor setup.
+    // Kept separate from tentativeCapex/Opex so Customer 360 can compare.
     if (actualCapex !== undefined && actualCapex !== null && actualCapex !== '') {
-      updateData.tentativeCapex = parseFloat(actualCapex);
+      updateData.actualCapex = parseFloat(actualCapex);
     }
     if (actualOpex !== undefined && actualOpex !== null && actualOpex !== '') {
-      updateData.tentativeOpex = parseFloat(actualOpex);
+      updateData.actualOpex = parseFloat(actualOpex);
     }
 
     // Mark vendor setup as done
