@@ -21,6 +21,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     restart: unless-stopped
     ports:
       - "5001:5001"
