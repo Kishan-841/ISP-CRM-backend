@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --no-audit --no-fund --prefer-offline
 
 COPY . .
 
