@@ -718,13 +718,23 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
     if (quotationAttachments !== undefined) updateData.quotationAttachments = quotationAttachments;
     // OPS approval fields
     if (opsApprovalStatus !== undefined) {
-      updateData.opsApprovalStatus = opsApprovalStatus;
-      // When resubmitting to OPS, clear SA2 approval fields
-      if (opsApprovalStatus === 'PENDING') {
-        updateData.superAdmin2ApprovalStatus = null;
+      // Smart routing: if OPS already approved and SA2 rejected, skip OPS and go straight to SA2
+      if (opsApprovalStatus === 'PENDING' && existing.opsApprovalStatus === 'APPROVED' && existing.superAdmin2ApprovalStatus === 'REJECTED') {
+        // OPS already signed off — send directly to SA2 for re-review
+        updateData.superAdmin2ApprovalStatus = 'PENDING';
         updateData.superAdmin2ApprovedAt = null;
         updateData.superAdmin2ApprovedById = null;
         updateData.superAdmin2RejectedReason = null;
+        // Keep opsApprovalStatus as APPROVED (don't reset it)
+      } else {
+        updateData.opsApprovalStatus = opsApprovalStatus;
+        // Fresh submission to OPS — clear SA2 fields
+        if (opsApprovalStatus === 'PENDING') {
+          updateData.superAdmin2ApprovalStatus = null;
+          updateData.superAdmin2ApprovedAt = null;
+          updateData.superAdmin2ApprovedById = null;
+          updateData.superAdmin2RejectedReason = null;
+        }
       }
     }
 
@@ -3278,6 +3288,113 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
 });
 
 /**
+ * Get Super Admin 2 history (approved/rejected)
+ * GET /leads/super-admin2/history
+ */
+export const getSuperAdmin2History = asyncHandler(async function getSuperAdmin2History(req, res) {
+    const isSA2 = hasRole(req.user, 'SUPER_ADMIN_2');
+    const isAdmin = isAdminOrTestUser(req.user);
+
+    if (!isSA2 && !isAdmin) {
+      return res.status(403).json({ message: 'Only Super Admin 2 can access this endpoint.' });
+    }
+
+    const { tab = 'approved' } = req.query;
+    const { page, limit, skip } = parsePagination(req.query, 50);
+
+    const whereClause = {
+      superAdmin2ApprovalStatus: tab === 'rejected' ? 'REJECTED' : 'APPROVED'
+    };
+
+    const [leads, total] = await Promise.all([
+      prisma.lead.findMany({
+        where: whereClause,
+        orderBy: { superAdmin2ApprovedAt: 'desc' },
+        take: limit,
+        skip,
+        select: {
+          id: true,
+          requirements: true,
+          status: true,
+          type: true,
+          location: true,
+          fullAddress: true,
+          bandwidthRequirement: true,
+          numberOfIPs: true,
+          createdAt: true,
+          updatedAt: true,
+          opsApprovalStatus: true,
+          opsApprovedAt: true,
+          superAdmin2ApprovalStatus: true,
+          superAdmin2ApprovedAt: true,
+          superAdmin2RejectedReason: true,
+          arcAmount: true,
+          otcAmount: true,
+          advanceAmount: true,
+          paymentTerms: true,
+          quotationAttachments: true,
+          campaignData: {
+            select: {
+              company: true,
+              name: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              industry: true,
+              city: true,
+              state: true,
+              campaign: { select: { id: true, code: true, name: true } }
+            }
+          },
+          createdBy: { select: { id: true, name: true, email: true } },
+          assignedTo: { select: { id: true, name: true, email: true } },
+          opsApprovedBy: { select: { id: true, name: true, email: true } },
+          superAdmin2ApprovedBy: { select: { id: true, name: true, email: true } },
+          products: { select: { product: { select: { id: true, title: true } } } }
+        }
+      }),
+      prisma.lead.count({ where: whereClause })
+    ]);
+
+    const formattedLeads = leads.map(lead => ({
+      id: lead.id,
+      requirements: lead.requirements,
+      status: lead.status,
+      type: lead.type,
+      bandwidthRequirement: lead.bandwidthRequirement,
+      numberOfIPs: lead.numberOfIPs,
+      createdAt: lead.createdAt,
+      updatedAt: lead.updatedAt,
+      opsApprovalStatus: lead.opsApprovalStatus,
+      opsApprovedAt: lead.opsApprovedAt,
+      superAdmin2ApprovalStatus: lead.superAdmin2ApprovalStatus,
+      superAdmin2ApprovedAt: lead.superAdmin2ApprovedAt,
+      superAdmin2RejectedReason: lead.superAdmin2RejectedReason,
+      arcAmount: lead.arcAmount,
+      otcAmount: lead.otcAmount,
+      advanceAmount: lead.advanceAmount,
+      paymentTerms: lead.paymentTerms,
+      quotationAttachments: lead.quotationAttachments,
+      company: lead.campaignData.company,
+      name: lead.campaignData.name || `${lead.campaignData.firstName || ''} ${lead.campaignData.lastName || ''}`.trim(),
+      email: lead.campaignData.email,
+      phone: lead.campaignData.phone,
+      industry: lead.campaignData.industry,
+      city: lead.campaignData.city,
+      state: lead.campaignData.state,
+      campaign: lead.campaignData.campaign,
+      createdBy: lead.createdBy,
+      assignedTo: lead.assignedTo,
+      opsApprovedBy: lead.opsApprovedBy,
+      superAdmin2ApprovedBy: lead.superAdmin2ApprovedBy,
+      products: lead.products.map(lp => lp.product)
+    }));
+
+    res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads' }));
+});
+
+/**
  * Super Admin 2 disposition (Approve / Reject)
  * POST /leads/super-admin2/:id/disposition
  */
@@ -3326,8 +3443,8 @@ export const superAdmin2Disposition = asyncHandler(async function superAdmin2Dis
 
     if (decision === 'REJECTED') {
       updateData.superAdmin2RejectedReason = reason;
-      // Reset OPS approval so the lead re-enters the OPS queue for revision
-      updateData.opsApprovalStatus = 'PENDING';
+      // Keep opsApprovalStatus as APPROVED — OPS already signed off.
+      // Lead goes back to BDM to revise pricing, then skips OPS on resubmit.
     } else {
       updateData.superAdmin2RejectedReason = null;
     }
@@ -3349,8 +3466,7 @@ export const superAdmin2Disposition = asyncHandler(async function superAdmin2Dis
     // Sidebar refresh
     emitSidebarRefreshByRole('SUPER_ADMIN');
     if (decision === 'REJECTED') {
-      // Lead goes back to OPS queue for revision
-      emitSidebarRefreshByRole('OPS_TEAM');
+      // Lead goes back to BDM — no OPS refresh needed since OPS approval stands
     }
     if (updatedLead.assignedTo) {
       emitSidebarRefresh(updatedLead.assignedTo.id);
@@ -3372,7 +3488,7 @@ export const superAdmin2Disposition = asyncHandler(async function superAdmin2Dis
           updatedLead.assignedTo.id,
           'QUOTATION_SA2_REJECTED',
           'Quotation Rejected by Admin',
-          `Quotation for ${companyName} has been rejected. Reason: ${reason}`,
+          `Quotation for ${companyName} has been rejected. Please revise pricing and resubmit. Reason: ${reason}`,
           { leadId: id }
         );
       }
@@ -3388,7 +3504,7 @@ export const superAdmin2Disposition = asyncHandler(async function superAdmin2Dis
       },
       message: decision === 'APPROVED'
         ? 'Quotation approved. BDM can now share with the customer.'
-        : 'Quotation rejected. BDM will be notified.'
+        : 'Quotation rejected. BDM will revise and resubmit directly to you.'
     });
 });
 

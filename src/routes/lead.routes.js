@@ -59,6 +59,7 @@ import {
   getOpsInstallationQueue,
   // Super Admin 2 functions
   getSuperAdmin2Queue,
+  getSuperAdmin2History,
   superAdmin2Disposition,
   getSuperAdmin2SidebarCounts,
   // Accounts Team functions
@@ -287,6 +288,9 @@ router.get('/super-admin2/sidebar-counts', getSuperAdmin2SidebarCounts);
 
 // Get Super Admin 2 queue (leads pending SA2 approval after OPS approval)
 router.get('/super-admin2/queue', getSuperAdmin2Queue);
+
+// Get Super Admin 2 history (approved/rejected leads)
+router.get('/super-admin2/history', getSuperAdmin2History);
 
 // Super Admin 2 disposition (Approve / Reject)
 router.post('/super-admin2/:id/disposition', superAdmin2Disposition);
