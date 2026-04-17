@@ -716,26 +716,18 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
     }
     if (otcAmount !== undefined) updateData.otcAmount = parseFloat(otcAmount) || 0;
     if (quotationAttachments !== undefined) updateData.quotationAttachments = quotationAttachments;
-    // OPS approval fields
-    if (opsApprovalStatus !== undefined) {
-      // Smart routing: if OPS already approved and SA2 rejected, skip OPS and go straight to SA2
-      if (opsApprovalStatus === 'PENDING' && existing.opsApprovalStatus === 'APPROVED' && existing.superAdmin2ApprovalStatus === 'REJECTED') {
-        // OPS already signed off — send directly to SA2 for re-review
-        updateData.superAdmin2ApprovalStatus = 'PENDING';
-        updateData.superAdmin2ApprovedAt = null;
-        updateData.superAdmin2ApprovedById = null;
-        updateData.superAdmin2RejectedReason = null;
-        // Keep opsApprovalStatus as APPROVED (don't reset it)
-      } else {
-        updateData.opsApprovalStatus = opsApprovalStatus;
-        // Fresh submission to OPS — clear SA2 fields
-        if (opsApprovalStatus === 'PENDING') {
-          updateData.superAdmin2ApprovalStatus = null;
-          updateData.superAdmin2ApprovedAt = null;
-          updateData.superAdmin2ApprovedById = null;
-          updateData.superAdmin2RejectedReason = null;
-        }
-      }
+    // Quotation approval — goes directly to Sales Director (SA2), OPS step removed
+    if (opsApprovalStatus !== undefined && opsApprovalStatus === 'PENDING') {
+      // Auto-approve OPS and send straight to Sales Director
+      updateData.opsApprovalStatus = 'APPROVED';
+      updateData.opsApprovedAt = new Date();
+      updateData.opsApprovedById = req.user.id;
+      updateData.superAdmin2ApprovalStatus = 'PENDING';
+      updateData.superAdmin2ApprovedAt = null;
+      updateData.superAdmin2ApprovedById = null;
+      updateData.superAdmin2RejectedReason = null;
+    } else if (opsApprovalStatus !== undefined) {
+      updateData.opsApprovalStatus = opsApprovalStatus;
     }
 
     // Update CampaignData fields (contact details)
