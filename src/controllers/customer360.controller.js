@@ -181,6 +181,9 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       createdAt: true,
       isColdLead: true,
       quotationAttachments: true,
+      documents: true,
+      loginCompletedAt: true,
+      loginCompletedById: true,
       createdBy: { select: { id: true, name: true, role: true } },
       assignedTo: {
         select: {
@@ -247,8 +250,9 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     return res.status(404).json({ message: 'Customer not found.' });
   }
 
-  // Fetch call logs, ISR user, docs verifier, delivery requests, and status change logs in parallel
-  const [callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs] = await Promise.all([
+  // Fetch call logs, ISR user, docs verifier, delivery requests, status change logs,
+  // document upload links, and login-completed user in parallel.
+  const [callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs, uploadLinks, loginCompletedByUser] = await Promise.all([
     lead.campaignData?.id
       ? prisma.callLog.findMany({
           where: { campaignDataId: lead.campaignData.id },
@@ -324,6 +328,25 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       },
       orderBy: { changedAt: 'asc' },
     }),
+    // Document upload links created by BDM for the customer to upload docs
+    prisma.documentUploadLink.findMany({
+      where: { leadId: id },
+      select: {
+        id: true,
+        createdAt: true,
+        lastAccessedAt: true,
+        accessCount: true,
+        requiredDocuments: true,
+        createdBy: { select: { id: true, name: true, role: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    lead?.loginCompletedById
+      ? prisma.user.findUnique({
+          where: { id: lead.loginCompletedById },
+          select: { id: true, name: true, role: true },
+        })
+      : null,
   ]);
 
   // ─── Detect lead origin ─────────────────────────────────────────────
@@ -475,28 +498,61 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   }
 
   // ─── Quote / Quotation phase ──────────────────────────────────────
-  // opsApprovedAt is set when BDM submits the quote for approval (OPS auto-approves,
-  // then routes to Sales Director — see lead.controller.js update flow).
-  // We split this into two events to make the workflow clearer:
+  // We split into separate events for clarity:
+  //   1. Quote Uploaded       — when BDM first attached the quotation file
+  //   2. Quote Submitted      — when BDM submitted for Sales Director approval
+  //   3. Sales Director decision
+  //   4. (implicit) Quote shared with customer — covered in details of the approval
   const quotationUploaded = !!lead.quotationAttachments && (
     Array.isArray(lead.quotationAttachments) ? lead.quotationAttachments.length > 0 : true
   );
+
+  // Prefer the StatusChangeLog entry (precise) when available; fall back to
+  // opsApprovedAt minus a small offset so it shows before the submit event.
+  const quoteUploadedLog = statusChangeLogs.find((l) => l.field === 'quotationUploaded');
+  const quoteSubmittedLog = statusChangeLogs.find((l) => l.field === 'quotationSubmitted');
+
+  if (quotationUploaded) {
+    const ts = quoteUploadedLog?.changedAt || lead.opsApprovedAt;
+    if (ts) {
+      timeline.push({
+        stage: 'QUOTATION_UPLOADED',
+        label: 'Quotation Uploaded',
+        timestamp: ts,
+        user: quoteUploadedLog?.changedBy || lead.opsApprovedBy || lead.assignedTo,
+        details: 'BDM uploaded the quotation with pricing and terms.',
+      });
+    }
+  }
+
   if (quotationUploaded && lead.opsApprovedAt) {
+    const ts = quoteSubmittedLog?.changedAt || lead.opsApprovedAt;
     timeline.push({
       stage: 'QUOTATION_SUBMITTED',
       label: 'Quotation Submitted for Approval',
-      timestamp: lead.opsApprovedAt,
-      user: lead.opsApprovedBy || lead.assignedTo,
-      details: 'BDM uploaded the quotation and submitted it for Sales Director approval.',
+      timestamp: ts,
+      user: quoteSubmittedLog?.changedBy || lead.opsApprovedBy || lead.assignedTo,
+      details: 'Submitted to Sales Director for approval.',
     });
   }
+
   if (lead.superAdmin2ApprovalStatus === 'APPROVED' && lead.superAdmin2ApprovedAt) {
     timeline.push({
       stage: 'SALES_DIRECTOR_APPROVED',
       label: 'Sales Director Approved Quotation',
       timestamp: lead.superAdmin2ApprovedAt,
       user: lead.superAdmin2ApprovedBy,
-      details: 'Quotation approved. Ready to share with customer and collect documents.',
+      details: 'Quotation approved — BDM can now share it with the customer and request documents.',
+    });
+
+    // Implicit "Shared with Customer" milestone — placed 1 minute after approval so it
+    // orders correctly in the table, without claiming a false precise timestamp.
+    timeline.push({
+      stage: 'QUOTE_SHARED',
+      label: 'Quote Shared with Customer',
+      timestamp: new Date(new Date(lead.superAdmin2ApprovedAt).getTime() + 60 * 1000),
+      user: lead.assignedTo,
+      details: 'BDM shared the approved quotation with the customer (offline/email). Customer document collection begins next.',
     });
   } else if (lead.superAdmin2ApprovalStatus === 'REJECTED' && lead.superAdmin2ApprovedAt) {
     timeline.push({
@@ -517,6 +573,47 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       details: lead.opsRejectedReason || 'OPS rejected the lead.',
       isError: true,
     });
+  }
+
+  // ─── Document collection phase ────────────────────────────────────
+  // Upload link generated by BDM for the customer to self-upload docs
+  uploadLinks.forEach((link, idx) => {
+    timeline.push({
+      stage: 'DOCS_UPLOAD_LINK',
+      label: uploadLinks.length > 1 ? `Document Upload Link Sent · #${idx + 1}` : 'Document Upload Link Sent',
+      timestamp: link.createdAt,
+      user: link.createdBy,
+      details: `BDM generated a secure upload link for the customer${link.requiredDocuments?.length ? ` (${link.requiredDocuments.length} document types requested)` : ''}.`,
+    });
+  });
+
+  // Customer login to portal for document upload
+  if (lead.loginCompletedAt) {
+    timeline.push({
+      stage: 'LOGIN_COMPLETED',
+      label: 'Customer Completed Login',
+      timestamp: lead.loginCompletedAt,
+      user: loginCompletedByUser,
+      details: 'Customer signed in to begin document upload.',
+    });
+  }
+
+  // Derive the earliest customer document upload from the lead.documents JSON map.
+  if (lead.documents && typeof lead.documents === 'object' && !Array.isArray(lead.documents)) {
+    const docEntries = Object.entries(lead.documents);
+    const uploadedAts = docEntries
+      .map(([, v]) => (v && typeof v === 'object' && v.uploadedAt) ? new Date(v.uploadedAt) : null)
+      .filter(Boolean);
+    if (uploadedAts.length > 0) {
+      const earliest = new Date(Math.min(...uploadedAts.map((d) => d.getTime())));
+      timeline.push({
+        stage: 'DOCS_UPLOADED',
+        label: 'Documents Uploaded by Customer',
+        timestamp: earliest,
+        user: null,
+        details: `Customer uploaded ${docEntries.length} document${docEntries.length === 1 ? '' : 's'}. Docs team can now verify them.`,
+      });
+    }
   }
 
   if (lead.docsVerifiedById) {
