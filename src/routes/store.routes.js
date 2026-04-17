@@ -21,6 +21,7 @@ import {
   generateSerialTemplate,
   uploadSerialsAndAddToStore,
   getStoreInventory,
+  addInventoryDirect,
   getStoreStats,
   getVendors,
   createVendor,
@@ -147,6 +148,9 @@ router.post('/purchase-orders/:id/add-to-inventory/upload', storeAccess, excelUp
 
 // Get store inventory (only items IN_STORE)
 router.get('/inventory', storeAccess, getStoreInventory);
+
+// Add material directly to inventory (without PO)
+router.post('/inventory/direct-add', storeAccess, addInventoryDirect);
 
 // Get store stats
 router.get('/stats', storeAccess, getStoreStats);

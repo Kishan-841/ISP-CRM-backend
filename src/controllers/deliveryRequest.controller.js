@@ -1124,7 +1124,7 @@ export const getAvailableInventory = asyncHandler(async function getAvailableInv
     productModel: item.product.modelNumber,
     productCategory: item.product.category,
     brandName: item.product.brandName,
-    poNumber: item.purchaseOrder.poNumber,
+    poNumber: item.purchaseOrder?.poNumber || 'DIRECT ENTRY',
     availableQuantity: item.serialNumbers.length || item.receivedQuantity || item.quantity,
     serialNumbers: item.serialNumbers,
     unit: item.product.unit

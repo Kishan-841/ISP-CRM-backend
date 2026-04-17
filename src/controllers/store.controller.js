@@ -806,16 +806,90 @@ export const getStoreInventory = asyncHandler(async function getStoreInventory(r
         receivedQuantity: item.receivedQuantity,
         unitPrice: item.unitPrice,
         serialNumbers: item.serialNumbers,
-        poNumber: item.purchaseOrder.poNumber,
-        giirnNumber: item.purchaseOrder.giirnNumber,
-        warehouse: item.purchaseOrder.warehouse,
-        vendorName: item.purchaseOrder.vendor?.companyName,
+        poNumber: item.purchaseOrder?.poNumber || 'DIRECT ENTRY',
+        giirnNumber: item.purchaseOrder?.giirnNumber || null,
+        warehouse: item.purchaseOrder?.warehouse || null,
+        vendorName: item.purchaseOrder?.vendor?.companyName || null,
+        isDirectEntry: !item.poId,
         addedAt: item.addedToStoreAt
       });
     }
 
     const inventory = Object.values(grouped);
     res.json(inventory);
+});
+
+// Direct-entry inventory: add material + serial numbers without a PO
+export const addInventoryDirect = asyncHandler(async function addInventoryDirect(req, res) {
+    const userId = req.user.id;
+    const { productId, serialNumbers, quantity, unitPrice } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({ message: 'Product is required' });
+    }
+
+    const product = await prisma.storeProduct.findUnique({ where: { id: productId } });
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    const isBulkItem = product.category === 'FIBER' || product.unit === 'mtrs';
+
+    let finalQuantity;
+    let finalSerials = [];
+
+    if (isBulkItem) {
+      if (!quantity || quantity <= 0) {
+        return res.status(400).json({ message: 'Quantity is required for fiber/bulk items' });
+      }
+      finalQuantity = parseInt(quantity, 10);
+    } else {
+      if (!Array.isArray(serialNumbers) || serialNumbers.length === 0) {
+        return res.status(400).json({ message: 'Serial numbers are required for this product' });
+      }
+      finalSerials = serialNumbers.map(s => String(s).trim()).filter(Boolean);
+      if (finalSerials.length === 0) {
+        return res.status(400).json({ message: 'Serial numbers cannot be empty' });
+      }
+      // Check for duplicates within submitted list
+      const duplicatesInList = finalSerials.filter((s, i) => finalSerials.indexOf(s) !== i);
+      if (duplicatesInList.length > 0) {
+        return res.status(400).json({ message: `Duplicate serial numbers in input: ${[...new Set(duplicatesInList)].join(', ')}` });
+      }
+      // Check for conflicts with existing IN_STORE items
+      const existing = await prisma.storePurchaseOrderItem.findMany({
+        where: {
+          productId,
+          status: 'IN_STORE',
+          serialNumbers: { hasSome: finalSerials }
+        },
+        select: { serialNumbers: true }
+      });
+      const conflicts = existing.flatMap(e => e.serialNumbers).filter(s => finalSerials.includes(s));
+      if (conflicts.length > 0) {
+        return res.status(400).json({ message: `Serial numbers already in inventory: ${[...new Set(conflicts)].join(', ')}` });
+      }
+      finalQuantity = finalSerials.length;
+    }
+
+    const item = await prisma.storePurchaseOrderItem.create({
+      data: {
+        productId,
+        quantity: finalQuantity,
+        receivedQuantity: finalQuantity,
+        serialNumbers: finalSerials,
+        unitPrice: unitPrice ? parseFloat(unitPrice) : null,
+        status: 'IN_STORE',
+        addedToStoreAt: new Date(),
+        directEntryById: userId
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `${finalQuantity} ${isBulkItem ? product.unit : 'unit(s)'} of ${product.modelNumber} added to inventory`,
+      item
+    });
 });
 
 // ========== PO APPROVAL APIs (Single-Level Admin Approval) ==========

@@ -65,6 +65,7 @@ model User {
   storeSerialAdded                   StoreSerialItem[]     @relation("StoreSerialAddedBy")
   storeStockAdded                    StoreStock[]          @relation("StoreStockAddedBy")
   storeIntakesPerformed              StoreStockIntakeLog[] @relation("StoreIntakePerformedBy")
+  storeDirectEntries                 StorePurchaseOrderItem[] @relation("StoreDirectEntryBy")
   vendorsCreated                     Vendor[]              @relation("VendorsCreated")
   vendorsAdminApproved               Vendor[]              @relation("VendorAdminApproved")
   vendorsAccountsApproved            Vendor[]              @relation("VendorAccountsApproved")
@@ -109,6 +110,9 @@ model User {
   teamLeader                         User?                 @relation("TeamMemberRelation", fields: [teamLeaderId], references: [id], onDelete: SetNull)
   teamMembers                        User[]                @relation("TeamMemberRelation")
   popLocationsCreated                PopLocation[]         @relation("PopLocationCreatedBy")
+  // NEXUS chatbot relations
+  nexusConversations                 NexusConversation[]   @relation("NexusConversationUser")
+  nexusKnowledgeCreated              NexusKnowledge[]      @relation("NexusKnowledgeCreatedBy")
 
   @@index([teamLeaderId])
 }
@@ -775,7 +779,7 @@ model StorePurchaseOrder {
 
 model StorePurchaseOrderItem {
   id                   String                @id @default(uuid())
-  poId                 String
+  poId                 String?
   quantity             Int
   unitPrice            Float?
   serialNumbers        String[]
@@ -786,9 +790,11 @@ model StorePurchaseOrderItem {
   receiptRemark        String?
   receiptStatus        String?
   receivedQuantity     Int?
+  directEntryById      String?
   deliveryRequestItems DeliveryRequestItem[] @relation("DeliveryRequestItemAssignedFrom")
-  purchaseOrder        StorePurchaseOrder    @relation(fields: [poId], references: [id], onDelete: Cascade)
+  purchaseOrder        StorePurchaseOrder?   @relation(fields: [poId], references: [id], onDelete: Cascade)
   product              StoreProduct          @relation(fields: [productId], references: [id])
+  directEntryBy        User?                 @relation("StoreDirectEntryBy", fields: [directEntryById], references: [id])
 
   @@index([poId])
   @@index([productId])
@@ -2113,4 +2119,79 @@ model PopLocation {
   createdBy   User?    @relation("PopLocationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([name])
+}
+
+// ============================================================
+// NEXUS AI Assistant (RAG chatbot)
+// ============================================================
+
+enum NexusAudience {
+  STAFF
+  CUSTOMER
+  BOTH
+}
+
+enum NexusMessageRole {
+  USER
+  ASSISTANT
+}
+
+model NexusKnowledge {
+  id          String          @id @default(uuid())
+  title       String
+  content     String          @db.Text
+  audience    NexusAudience   @default(BOTH)
+  roles       String[]        @default([])
+  tags        String[]        @default([])
+  isActive    Boolean         @default(true)
+  createdById String?
+  createdBy   User?           @relation("NexusKnowledgeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([audience, isActive])
+  @@index([isActive])
+}
+
+model NexusConversation {
+  id              String             @id @default(uuid())
+  userId          String?
+  user            User?              @relation("NexusConversationUser", fields: [userId], references: [id], onDelete: Cascade)
+  customerUserId  String?
+  audience        NexusAudience
+  startedAt       DateTime           @default(now())
+  lastMessageAt   DateTime           @default(now())
+  messages        NexusMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([customerUserId, lastMessageAt])
+}
+
+model NexusMessage {
+  id             String             @id @default(uuid())
+  conversationId String
+  conversation   NexusConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           NexusMessageRole
+  content        String             @db.Text
+  fromCache      Boolean            @default(false)
+  tokensUsed     Int?
+  knowledgeIds   String[]           @default([])
+  createdAt      DateTime           @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([role, createdAt, fromCache])
+}
+
+model NexusCache {
+  id              String          @id @default(uuid())
+  normalizedQuery String          @unique
+  audience        NexusAudience
+  answer          String          @db.Text
+  knowledgeIds    String[]        @default([])
+  hitCount        Int             @default(1)
+  lastHitAt       DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+
+  @@index([audience, lastHitAt])
+  @@index([knowledgeIds])
 }
