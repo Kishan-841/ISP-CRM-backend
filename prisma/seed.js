@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { seedNexusKnowledge } from './seeds/nexus-knowledge.js';
 
 const prisma = new PrismaClient();
 
@@ -34,6 +35,7 @@ async function main() {
   console.log('=================================\n');
 
   await seedComplaintCategories();
+  await seedNexusKnowledge(prisma);
 }
 
 async function seedComplaintCategories() {

@@ -33,6 +33,7 @@ import serviceOrderRoutes from './routes/serviceOrder.routes.js';
 import customerImportRoutes from './routes/customerImport.routes.js';
 import popLocationRoutes from './routes/popLocation.routes.js';
 import proxyRoutes from './routes/proxy.routes.js';
+import { nexusRouter, customerNexusRouter } from './routes/nexus.routes.js';
 import { auth } from './middleware/auth.js';
 import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
@@ -114,6 +115,8 @@ app.use('/api/service-orders', serviceOrderRoutes);
 app.use('/api/customer-import', customerImportRoutes);
 app.use('/api/pop-locations', popLocationRoutes);
 app.use('/api/proxy', proxyRoutes);
+app.use('/api/nexus', nexusRouter);
+app.use('/api/customer/nexus', customerNexusRouter);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);
