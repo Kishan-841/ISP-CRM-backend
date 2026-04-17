@@ -10,6 +10,7 @@ import { isAdminOrTestUser, hasRole, hasAnyRole } from '../utils/roleHelper.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { sendEmail } from '../services/email.service.js';
 import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, paginatedResponse } from '../utils/controllerHelper.js';
+import { logStatusChange } from '../services/statusChangeLog.service.js';
 
 // Get all leads
 export const getLeads = asyncHandler(async function getLeads(req, res) {
@@ -774,6 +775,51 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
       await prisma.lead.update({
         where: { id },
         data: updateData
+      });
+    }
+
+    // ─── Audit log for quote / approval workflow ───────────────────────
+    // Capture key quote actions so they show up on the Customer 360 journey
+    // via the StatusChangeLog channel (not main timeline, since no dedicated
+    // timestamp columns exist for these events).
+    const prevHadQuote = !!existing.quotationAttachments && (
+      Array.isArray(existing.quotationAttachments)
+        ? existing.quotationAttachments.length > 0
+        : true
+    );
+    const nowHasQuote = quotationAttachments !== undefined
+      ? (Array.isArray(quotationAttachments) ? quotationAttachments.length > 0 : !!quotationAttachments)
+      : prevHadQuote;
+    if (!prevHadQuote && nowHasQuote) {
+      logStatusChange({
+        entityType: 'LEAD',
+        entityId: id,
+        field: 'quotationUploaded',
+        oldValue: null,
+        newValue: 'Quotation uploaded',
+        changedById: userId,
+        reason: 'BDM uploaded the quotation for this lead.',
+      });
+    }
+    if (arcAmount !== undefined && Number(existing.arcAmount || 0) !== Number(arcAmount || 0)) {
+      logStatusChange({
+        entityType: 'LEAD',
+        entityId: id,
+        field: 'arcAmount',
+        oldValue: existing.arcAmount || null,
+        newValue: String(arcAmount),
+        changedById: userId,
+      });
+    }
+    if (opsApprovalStatus === 'PENDING' && existing.opsApprovalStatus !== 'PENDING') {
+      logStatusChange({
+        entityType: 'LEAD',
+        entityId: id,
+        field: 'quotationSubmitted',
+        oldValue: null,
+        newValue: 'Submitted for Sales Director approval',
+        changedById: userId,
+        reason: 'BDM submitted the quotation for Sales Director approval.',
       });
     }
 

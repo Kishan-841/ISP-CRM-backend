@@ -179,6 +179,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       status: true,
       deliveryStatus: true,
       createdAt: true,
+      isColdLead: true,
+      quotationAttachments: true,
       createdBy: { select: { id: true, name: true, role: true } },
       assignedTo: {
         select: {
@@ -189,10 +191,15 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       feasibilityAssignedTo: { select: { id: true, name: true, role: true } },
       feasibilityReviewedAt: true,
       feasibilityNotes: true,
+      // Quote / approval flow
       opsApprovedBy: { select: { id: true, name: true, role: true } },
       opsApprovedAt: true,
       opsApprovalStatus: true,
       opsRejectedReason: true,
+      superAdmin2ApprovalStatus: true,
+      superAdmin2ApprovedAt: true,
+      superAdmin2ApprovedBy: { select: { id: true, name: true, role: true } },
+      superAdmin2RejectedReason: true,
       docsVerifiedById: true,
       docsVerifiedAt: true,
       docsRejectedReason: true,
@@ -227,8 +234,10 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         select: {
           id: true,
           createdAt: true,
+          isSelfGenerated: true,
           createdBy: { select: { id: true, name: true, role: true } },
           assignedToId: true,
+          campaign: { select: { id: true, name: true, type: true } },
         },
       },
     },
@@ -317,71 +326,196 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     }),
   ]);
 
+  // ─── Detect lead origin ─────────────────────────────────────────────
+  // Priority order:
+  //   1. COLD_LEAD   — BDM added a cold lead (isColdLead flag)
+  //   2. BDM_SELF    — BDM used "Create Opportunity" (synthetic campaign data)
+  //   3. CAMPAIGN_ISR — standard ISR → BDM pipeline
+  //   4. DIRECT       — fallback when no campaignData exists at all
+  let leadOrigin = 'CAMPAIGN_ISR';
+  let leadOriginLabel = 'Campaign → ISR';
+  let leadOriginDescription = 'Lead came from a campaign and was called by an ISR before being passed to a BDM.';
+  const campaignType = lead.campaignData?.campaign?.type;
+  const isSelf = lead.campaignData?.isSelfGenerated === true || campaignType === 'SELF';
+
+  if (lead.isColdLead) {
+    leadOrigin = 'COLD_LEAD';
+    leadOriginLabel = 'Cold Lead';
+    leadOriginDescription = 'Cold lead added directly by a BDM without ISR involvement. Still needs qualification.';
+  } else if (isSelf) {
+    leadOrigin = 'BDM_SELF';
+    leadOriginLabel = 'Create Opportunity';
+    leadOriginDescription = 'Opportunity was created directly by a BDM — no ISR was involved. Goes straight to the Feasibility Team.';
+  } else if (!lead.campaignData) {
+    leadOrigin = 'DIRECT';
+    leadOriginLabel = 'Direct Lead';
+    leadOriginDescription = 'Lead created directly without campaign data.';
+  } else if (isrUser && isrUser.role !== 'ISR') {
+    // Campaign exists but the "assigned" user isn't actually an ISR.
+    leadOrigin = 'DIRECT';
+    leadOriginLabel = 'Direct Lead';
+    leadOriginDescription = 'Lead created with campaign data but no ISR calling phase.';
+  }
+
+  const showISRStages = leadOrigin === 'CAMPAIGN_ISR';
+
   // Build timeline events from lead fields
   const timeline = [];
 
-  if (lead.campaignData) {
-    timeline.push({
-      stage: 'DATA_UPLOADED',
-      label: 'Data Uploaded',
-      timestamp: lead.campaignData.createdAt,
-      user: lead.campaignData.createdBy,
+  // ─── Origin-specific opening events ─────────────────────────────────
+  if (leadOrigin === 'CAMPAIGN_ISR') {
+    if (lead.campaignData) {
+      timeline.push({
+        stage: 'DATA_UPLOADED',
+        label: 'Data Uploaded to Campaign',
+        timestamp: lead.campaignData.createdAt,
+        user: lead.campaignData.createdBy,
+        details: lead.campaignData.campaign?.name ? `Campaign: ${lead.campaignData.campaign.name}` : null,
+      });
+    }
+    if (isrUser) {
+      timeline.push({
+        stage: 'ISR_ASSIGNED',
+        label: 'ISR Assigned',
+        timestamp: lead.campaignData?.createdAt,
+        user: isrUser,
+      });
+    }
+    callLogs.forEach((log, index) => {
+      timeline.push({
+        stage: 'ISR_CALL',
+        label: `ISR Call #${index + 1}`,
+        timestamp: log.startTime,
+        user: log.user,
+        details: `Status: ${log.status}${log.duration ? ` · Duration: ${log.duration}s` : ''}${log.notes ? ` · ${log.notes}` : ''}`,
+        meta: { duration: log.duration, status: log.status, notes: log.notes },
+      });
     });
-  }
-
-  if (isrUser) {
     timeline.push({
-      stage: 'ISR_ASSIGNED',
-      label: 'ISR Assigned',
-      timestamp: lead.campaignData?.createdAt,
-      user: isrUser,
-    });
-  }
-
-  callLogs.forEach((log, index) => {
-    timeline.push({
-      stage: 'ISR_CALL',
-      label: `ISR Call #${index + 1} (${log.status})`,
-      timestamp: log.startTime,
-      user: log.user,
-      meta: { duration: log.duration, status: log.status, notes: log.notes },
-    });
-  });
-
-  timeline.push({
-    stage: 'LEAD_CREATED',
-    label: 'Lead Created',
-    timestamp: lead.createdAt,
-    user: lead.createdBy,
-  });
-
-  if (lead.assignedTo) {
-    timeline.push({
-      stage: 'BDM_ASSIGNED',
-      label: 'BDM Assigned',
+      stage: 'LEAD_CREATED',
+      label: 'Lead Created',
       timestamp: lead.createdAt,
-      user: lead.assignedTo,
-      meta: { teamLeader: lead.assignedTo.teamLeader },
+      user: lead.createdBy,
+      details: 'ISR converted contact into a qualified lead.',
     });
+    if (lead.assignedTo) {
+      timeline.push({
+        stage: 'BDM_ASSIGNED',
+        label: 'BDM Assigned',
+        timestamp: lead.createdAt,
+        user: lead.assignedTo,
+        details: lead.assignedTo.teamLeader ? `Team Leader: ${lead.assignedTo.teamLeader.name}` : null,
+        meta: { teamLeader: lead.assignedTo.teamLeader },
+      });
+    }
+  } else if (leadOrigin === 'BDM_SELF') {
+    // BDM used Create Opportunity — one origin event, no ISR stages.
+    timeline.push({
+      stage: 'OPPORTUNITY_CREATED',
+      label: 'Opportunity Created',
+      timestamp: lead.createdAt,
+      user: lead.createdBy || lead.assignedTo,
+      details: 'BDM added this opportunity directly via Create Opportunity (no ISR involvement).',
+    });
+    if (lead.assignedTo && (!lead.createdBy || lead.assignedTo.id !== lead.createdBy.id)) {
+      timeline.push({
+        stage: 'BDM_ASSIGNED',
+        label: 'BDM Assigned',
+        timestamp: lead.createdAt,
+        user: lead.assignedTo,
+        details: lead.assignedTo.teamLeader ? `Team Leader: ${lead.assignedTo.teamLeader.name}` : null,
+        meta: { teamLeader: lead.assignedTo.teamLeader },
+      });
+    }
+  } else if (leadOrigin === 'COLD_LEAD') {
+    timeline.push({
+      stage: 'COLD_LEAD_ADDED',
+      label: 'Cold Lead Added',
+      timestamp: lead.createdAt,
+      user: lead.createdBy || lead.assignedTo,
+      details: 'BDM added a cold lead. Needs qualification before moving forward.',
+    });
+    if (lead.assignedTo && (!lead.createdBy || lead.assignedTo.id !== lead.createdBy.id)) {
+      timeline.push({
+        stage: 'BDM_ASSIGNED',
+        label: 'BDM Assigned',
+        timestamp: lead.createdAt,
+        user: lead.assignedTo,
+        meta: { teamLeader: lead.assignedTo.teamLeader },
+      });
+    }
+  } else {
+    // DIRECT fallback
+    timeline.push({
+      stage: 'LEAD_CREATED',
+      label: 'Lead Created',
+      timestamp: lead.createdAt,
+      user: lead.createdBy || lead.assignedTo,
+      details: 'Lead added directly without ISR or campaign flow.',
+    });
+    if (lead.assignedTo) {
+      timeline.push({
+        stage: 'BDM_ASSIGNED',
+        label: 'BDM Assigned',
+        timestamp: lead.createdAt,
+        user: lead.assignedTo,
+      });
+    }
   }
 
   if (lead.feasibilityAssignedTo) {
     timeline.push({
       stage: 'FEASIBILITY_ASSIGNED',
-      label: 'Feasibility Assigned',
+      label: 'Assigned to Feasibility Team',
       timestamp: lead.feasibilityReviewedAt || lead.createdAt,
       user: lead.feasibilityAssignedTo,
+      details: lead.feasibilityNotes ? 'Feasibility team is reviewing serviceability.' : null,
       meta: { notes: lead.feasibilityNotes },
     });
   }
 
-  if (lead.opsApprovedBy) {
+  // ─── Quote / Quotation phase ──────────────────────────────────────
+  // opsApprovedAt is set when BDM submits the quote for approval (OPS auto-approves,
+  // then routes to Sales Director — see lead.controller.js update flow).
+  // We split this into two events to make the workflow clearer:
+  const quotationUploaded = !!lead.quotationAttachments && (
+    Array.isArray(lead.quotationAttachments) ? lead.quotationAttachments.length > 0 : true
+  );
+  if (quotationUploaded && lead.opsApprovedAt) {
     timeline.push({
-      stage: 'OPS_APPROVED',
-      label: lead.opsApprovalStatus === 'REJECTED' ? 'OPS Rejected' : 'OPS Approved',
+      stage: 'QUOTATION_SUBMITTED',
+      label: 'Quotation Submitted for Approval',
+      timestamp: lead.opsApprovedAt,
+      user: lead.opsApprovedBy || lead.assignedTo,
+      details: 'BDM uploaded the quotation and submitted it for Sales Director approval.',
+    });
+  }
+  if (lead.superAdmin2ApprovalStatus === 'APPROVED' && lead.superAdmin2ApprovedAt) {
+    timeline.push({
+      stage: 'SALES_DIRECTOR_APPROVED',
+      label: 'Sales Director Approved Quotation',
+      timestamp: lead.superAdmin2ApprovedAt,
+      user: lead.superAdmin2ApprovedBy,
+      details: 'Quotation approved. Ready to share with customer and collect documents.',
+    });
+  } else if (lead.superAdmin2ApprovalStatus === 'REJECTED' && lead.superAdmin2ApprovedAt) {
+    timeline.push({
+      stage: 'SALES_DIRECTOR_REJECTED',
+      label: 'Sales Director Rejected Quotation',
+      timestamp: lead.superAdmin2ApprovedAt,
+      user: lead.superAdmin2ApprovedBy,
+      details: lead.superAdmin2RejectedReason || 'Quotation was rejected.',
+      isError: true,
+    });
+  }
+  if (lead.opsApprovalStatus === 'REJECTED' && lead.opsApprovedAt) {
+    timeline.push({
+      stage: 'OPS_REJECTED',
+      label: 'OPS Rejected',
       timestamp: lead.opsApprovedAt,
       user: lead.opsApprovedBy,
-      meta: { status: lead.opsApprovalStatus, rejectedReason: lead.opsRejectedReason },
+      details: lead.opsRejectedReason || 'OPS rejected the lead.',
+      isError: true,
     });
   }
 
@@ -391,6 +525,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: lead.docsRejectedReason ? 'Docs Rejected' : 'Docs Verified',
       timestamp: lead.docsVerifiedAt,
       user: docsVerifiedByUser,
+      details: lead.docsRejectedReason || 'All required documents verified.',
+      isError: !!lead.docsRejectedReason,
       meta: { rejectedReason: lead.docsRejectedReason },
     });
   }
@@ -401,6 +537,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: lead.accountsRejectedReason ? 'Accounts Rejected' : 'Accounts Verified',
       timestamp: lead.accountsVerifiedAt,
       user: lead.accountsVerifiedBy,
+      details: lead.accountsRejectedReason || 'Financial/billing details verified.',
+      isError: !!lead.accountsRejectedReason,
       meta: { rejectedReason: lead.accountsRejectedReason },
     });
   }
@@ -411,6 +549,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: 'GST Verified',
       timestamp: lead.gstVerifiedAt,
       user: lead.gstVerifiedBy,
+      details: 'GST details confirmed.',
     });
   }
 
@@ -420,15 +559,17 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: 'Pushed to Installation',
       timestamp: lead.pushedToInstallationAt,
       user: lead.pushedToInstallationBy,
+      details: 'Sent to NOC and Delivery teams to set up the connection.',
     });
   }
 
   deliveryRequests.forEach((dr) => {
     timeline.push({
       stage: 'DELIVERY_REQUESTED',
-      label: `Delivery Requested (${dr.requestNumber})`,
+      label: `Delivery Requested · ${dr.requestNumber}`,
       timestamp: dr.requestedAt,
       user: dr.requestedBy,
+      details: `Status: ${dr.status}${dr.dispatchedAt ? ' · Dispatched' : ''}${dr.completedAt ? ' · Completed' : ''}`,
       meta: {
         requestNumber: dr.requestNumber,
         status: dr.status,
@@ -449,6 +590,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: 'NOC Configured',
       timestamp: lead.nocConfiguredAt,
       user: lead.nocConfiguredBy,
+      details: lead.customerUsername ? `Customer username assigned: ${lead.customerUsername}` : 'Network configured.',
       meta: { username: lead.customerUsername },
     });
   }
@@ -459,15 +601,17 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: 'Customer Account Created',
       timestamp: lead.customerCreatedAt,
       user: lead.customerCreatedBy,
+      details: 'Customer can now log in to the portal.',
     });
   }
 
   if (lead.demoPlanAssignedBy) {
     timeline.push({
       stage: 'DEMO_PLAN',
-      label: `Demo Plan Assigned (${lead.demoPlanName})`,
+      label: 'Demo Plan Assigned',
       timestamp: lead.demoPlanAssignedAt,
       user: lead.demoPlanAssignedBy,
+      details: lead.demoPlanName ? `Plan: ${lead.demoPlanName}` : null,
     });
   }
 
@@ -477,15 +621,19 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: 'Speed Test Uploaded',
       timestamp: lead.speedTestUploadedAt,
       user: lead.speedTestUploadedBy,
+      details: 'Bandwidth verified before customer acceptance.',
     });
   }
 
   if (lead.customerAcceptanceBy) {
     timeline.push({
       stage: 'CUSTOMER_ACCEPTANCE',
-      label: `Customer ${lead.customerAcceptanceStatus}`,
+      label: lead.customerAcceptanceStatus === 'ACCEPTED' ? 'Customer Accepted Service' : `Customer ${lead.customerAcceptanceStatus}`,
       timestamp: lead.customerAcceptanceAt,
       user: lead.customerAcceptanceBy,
+      details: lead.customerAcceptanceStatus === 'ACCEPTED'
+        ? 'Customer accepted the speed test. Actual plan can now be activated.'
+        : `Customer ${String(lead.customerAcceptanceStatus).toLowerCase()}.`,
       meta: { status: lead.customerAcceptanceStatus },
     });
   }
@@ -493,9 +641,10 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   if (lead.actualPlanCreatedBy) {
     timeline.push({
       stage: 'ACTUAL_PLAN',
-      label: `Actual Plan Created (${lead.actualPlanName})`,
+      label: 'Actual Plan Activated',
       timestamp: lead.actualPlanCreatedAt,
       user: lead.actualPlanCreatedBy,
+      details: lead.actualPlanName ? `Plan: ${lead.actualPlanName} · Invoicing begins on next billing cycle.` : null,
     });
   }
 
@@ -514,6 +663,10 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   );
 
   res.json({
+    leadOrigin,
+    leadOriginLabel,
+    leadOriginDescription,
+    showISRStages,
     timeline,
     statusChangeLogs,
     materials,
