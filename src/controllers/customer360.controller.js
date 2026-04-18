@@ -184,6 +184,22 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       documents: true,
       loginCompletedAt: true,
       loginCompletedById: true,
+      // Feasibility review outcome
+      feasibilityVendorType: true,
+      tentativeCapex: true,
+      tentativeOpex: true,
+      // Delivery vendor setup (JSON contains setupAt/setupById)
+      deliveryProducts: true,
+      deliveryVendorSetupDone: true,
+      actualCapex: true,
+      actualOpex: true,
+      // NOC assignment (before NOC configures)
+      nocAssignedAt: true,
+      nocAssignedToId: true,
+      // Installation milestones
+      installationStartedAt: true,
+      installationCompletedAt: true,
+      customerAcceptanceNotes: true,
       createdBy: { select: { id: true, name: true, role: true } },
       assignedTo: {
         select: {
@@ -252,7 +268,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
 
   // Fetch call logs, ISR user, docs verifier, delivery requests, status change logs,
   // document upload links, and login-completed user in parallel.
-  const [callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs, uploadLinks, loginCompletedByUser] = await Promise.all([
+  const [callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs, uploadLinks, loginCompletedByUser, nocAssignedByUser] = await Promise.all([
     lead.campaignData?.id
       ? prisma.callLog.findMany({
           where: { campaignDataId: lead.campaignData.id },
@@ -347,6 +363,12 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
           select: { id: true, name: true, role: true },
         })
       : null,
+    lead?.nocAssignedToId
+      ? prisma.user.findUnique({
+          where: { id: lead.nocAssignedToId },
+          select: { id: true, name: true, role: true },
+        })
+      : null,
   ]);
 
   // ─── Detect lead origin ─────────────────────────────────────────────
@@ -388,20 +410,25 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   // ─── Origin-specific opening events ─────────────────────────────────
   if (leadOrigin === 'CAMPAIGN_ISR') {
     if (lead.campaignData) {
+      const addedBy = lead.campaignData.createdBy;
+      const addedByLabel = addedBy?.role === 'BDM' || addedBy?.role === 'BDM_CP' || addedBy?.role === 'BDM_TEAM_LEADER'
+        ? `BDM added this contact to the campaign${lead.campaignData.campaign?.name ? ` "${lead.campaignData.campaign.name}"` : ''}.`
+        : `Contact added to campaign${lead.campaignData.campaign?.name ? ` "${lead.campaignData.campaign.name}"` : ''}.`;
       timeline.push({
         stage: 'DATA_UPLOADED',
-        label: 'Data Uploaded to Campaign',
+        label: 'Contact Added to Campaign',
         timestamp: lead.campaignData.createdAt,
-        user: lead.campaignData.createdBy,
-        details: lead.campaignData.campaign?.name ? `Campaign: ${lead.campaignData.campaign.name}` : null,
+        user: addedBy,
+        details: addedByLabel,
       });
     }
     if (isrUser) {
       timeline.push({
         stage: 'ISR_ASSIGNED',
-        label: 'ISR Assigned',
+        label: 'Assigned to ISR for Calling',
         timestamp: lead.campaignData?.createdAt,
         user: isrUser,
+        details: 'ISR will call this contact and decide whether to convert to a lead.',
       });
     }
     callLogs.forEach((log, index) => {
@@ -410,24 +437,24 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         label: `ISR Call #${index + 1}`,
         timestamp: log.startTime,
         user: log.user,
-        details: `Status: ${log.status}${log.duration ? ` · Duration: ${log.duration}s` : ''}${log.notes ? ` · ${log.notes}` : ''}`,
+        details: `Disposition: ${log.status}${log.duration ? ` · Duration: ${log.duration}s` : ''}${log.notes ? ` · Note: ${log.notes}` : ''}`,
         meta: { duration: log.duration, status: log.status, notes: log.notes },
       });
     });
     timeline.push({
       stage: 'LEAD_CREATED',
-      label: 'Lead Created',
+      label: 'Lead Converted by ISR',
       timestamp: lead.createdAt,
       user: lead.createdBy,
-      details: 'ISR converted contact into a qualified lead.',
+      details: 'ISR marked this contact as interested and converted it into a qualified lead.',
     });
     if (lead.assignedTo) {
       timeline.push({
         stage: 'BDM_ASSIGNED',
-        label: 'BDM Assigned',
+        label: 'Assigned Back to BDM for Qualification',
         timestamp: lead.createdAt,
         user: lead.assignedTo,
-        details: lead.assignedTo.teamLeader ? `Team Leader: ${lead.assignedTo.teamLeader.name}` : null,
+        details: `BDM will qualify the lead and push it to Feasibility.${lead.assignedTo.teamLeader ? ` Team Leader: ${lead.assignedTo.teamLeader.name}` : ''}`,
         meta: { teamLeader: lead.assignedTo.teamLeader },
       });
     }
@@ -490,9 +517,25 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     timeline.push({
       stage: 'FEASIBILITY_ASSIGNED',
       label: 'Assigned to Feasibility Team',
-      timestamp: lead.feasibilityReviewedAt || lead.createdAt,
+      timestamp: lead.createdAt,
       user: lead.feasibilityAssignedTo,
-      details: lead.feasibilityNotes ? 'Feasibility team is reviewing serviceability.' : null,
+      details: 'Feasibility team will check if service can be delivered at this location.',
+      meta: { notes: lead.feasibilityNotes },
+    });
+  }
+
+  // Feasibility review outcome — approval vs rejection
+  if (lead.feasibilityReviewedAt) {
+    const isFeasible = !!lead.feasibilityVendorType; // vendor chosen = feasible
+    timeline.push({
+      stage: isFeasible ? 'FEASIBILITY_APPROVED' : 'FEASIBILITY_REJECTED',
+      label: isFeasible ? 'Feasibility Approved' : 'Feasibility Rejected',
+      timestamp: lead.feasibilityReviewedAt,
+      user: lead.feasibilityAssignedTo,
+      details: isFeasible
+        ? `Vendor type: ${lead.feasibilityVendorType}${lead.tentativeCapex ? ` · Tentative CAPEX: ₹${lead.tentativeCapex}` : ''}${lead.tentativeOpex ? ` · Tentative OPEX: ₹${lead.tentativeOpex}` : ''}`
+        : (lead.feasibilityNotes || 'Site is not serviceable.'),
+      isError: !isFeasible,
       meta: { notes: lead.feasibilityNotes },
     });
   }
@@ -656,29 +699,116 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       label: 'Pushed to Installation',
       timestamp: lead.pushedToInstallationAt,
       user: lead.pushedToInstallationBy,
-      details: 'Sent to NOC and Delivery teams to set up the connection.',
+      details: 'Lead approved for installation — NOC and Delivery teams take over from here.',
     });
   }
 
+  // NOC assigned (before actual configuration)
+  if (lead.nocAssignedAt) {
+    timeline.push({
+      stage: 'NOC_ASSIGNED',
+      label: 'Assigned to NOC Team',
+      timestamp: lead.nocAssignedAt,
+      user: nocAssignedByUser,
+      details: 'NOC team will create the customer account and network config.',
+    });
+  }
+
+  // Delivery vendor setup (before material request) — timestamp lives inside deliveryProducts JSON
+  if (lead.deliveryVendorSetupDone && lead.deliveryProducts && typeof lead.deliveryProducts === 'object') {
+    const dp = lead.deliveryProducts;
+    const setupAt = dp.setupAt ? new Date(dp.setupAt) : null;
+    if (setupAt && !isNaN(setupAt.getTime())) {
+      const capexLine = lead.actualCapex ? ` · Actual CAPEX: ₹${lead.actualCapex}` : '';
+      const opexLine = lead.actualOpex ? ` · Actual OPEX: ₹${lead.actualOpex}` : '';
+      timeline.push({
+        stage: 'DELIVERY_VENDOR_SETUP',
+        label: 'Delivery Vendor Setup Completed',
+        timestamp: setupAt,
+        user: null, // setupById buried in JSON — role/name lookup would cost an extra query
+        details: `Delivery team configured the fiber vendor${dp.vendorNotes ? `: ${dp.vendorNotes}` : ''}.${capexLine}${opexLine}`,
+      });
+    }
+  }
+
+  // ─── Delivery request lifecycle — expanded into granular events ──────
   deliveryRequests.forEach((dr) => {
     timeline.push({
-      stage: 'DELIVERY_REQUESTED',
-      label: `Delivery Requested · ${dr.requestNumber}`,
+      stage: 'DELIVERY_REQUEST_CREATED',
+      label: `Delivery Request Created · ${dr.requestNumber}`,
       timestamp: dr.requestedAt,
       user: dr.requestedBy,
-      details: `Status: ${dr.status}${dr.dispatchedAt ? ' · Dispatched' : ''}${dr.completedAt ? ' · Completed' : ''}`,
-      meta: {
-        requestNumber: dr.requestNumber,
-        status: dr.status,
-        items: dr.items,
-        approvalChain: {
-          superAdmin: dr.superAdminApprovedBy ? { user: dr.superAdminApprovedBy, at: dr.superAdminApprovedAt } : null,
-          areaHead: dr.areaHeadApprovedBy ? { user: dr.areaHeadApprovedBy, at: dr.areaHeadApprovedAt } : null,
-        },
-        dispatchedAt: dr.dispatchedAt,
-        completedAt: dr.completedAt,
-      },
+      details: `Request ${dr.requestNumber}: ${dr.items?.length || 0} line item${dr.items?.length === 1 ? '' : 's'} needed for installation.`,
+      meta: { requestNumber: dr.requestNumber, items: dr.items },
     });
+
+    if (dr.superAdminApprovedAt) {
+      timeline.push({
+        stage: 'DELIVERY_SUPER_ADMIN_APPROVED',
+        label: 'Super Admin Approved Delivery',
+        timestamp: dr.superAdminApprovedAt,
+        user: dr.superAdminApprovedBy,
+        details: `Approved delivery request ${dr.requestNumber}.`,
+      });
+    } else if (dr.superAdminRejectedAt) {
+      timeline.push({
+        stage: 'DELIVERY_SUPER_ADMIN_REJECTED',
+        label: 'Super Admin Rejected Delivery',
+        timestamp: dr.superAdminRejectedAt,
+        user: dr.superAdminRejectedBy,
+        details: dr.superAdminRejectionReason || `Rejected delivery request ${dr.requestNumber}.`,
+        isError: true,
+      });
+    }
+
+    if (dr.areaHeadApprovedAt) {
+      timeline.push({
+        stage: 'DELIVERY_AREA_HEAD_APPROVED',
+        label: 'Area Head Approved Delivery',
+        timestamp: dr.areaHeadApprovedAt,
+        user: dr.areaHeadApprovedBy,
+        details: `Regional approval cleared for ${dr.requestNumber}.`,
+      });
+    } else if (dr.areaHeadRejectedAt) {
+      timeline.push({
+        stage: 'DELIVERY_AREA_HEAD_REJECTED',
+        label: 'Area Head Rejected Delivery',
+        timestamp: dr.areaHeadRejectedAt,
+        user: dr.areaHeadRejectedBy,
+        details: dr.areaHeadRejectionReason || `Rejected delivery request ${dr.requestNumber}.`,
+        isError: true,
+      });
+    }
+
+    if (dr.assignedAt && dr.assignedToStoreManager) {
+      timeline.push({
+        stage: 'DELIVERY_ASSIGNED_TO_STORE',
+        label: 'Assigned to Store Manager',
+        timestamp: dr.assignedAt,
+        user: dr.assignedToStoreManager,
+        details: 'Store manager will pick and pack materials.',
+      });
+    }
+
+    if (dr.dispatchedAt) {
+      timeline.push({
+        stage: 'DELIVERY_DISPATCHED',
+        label: 'Materials Dispatched',
+        timestamp: dr.dispatchedAt,
+        user: dr.assignedToStoreManager,
+        details: `Materials for ${dr.requestNumber} dispatched to the installation site.`,
+      });
+    }
+
+    if (dr.completedAt) {
+      timeline.push({
+        stage: 'DELIVERY_COMPLETED',
+        label: 'Delivery Completed',
+        timestamp: dr.completedAt,
+        user: dr.assignedToStoreManager,
+        details: `Request ${dr.requestNumber} marked complete.`,
+      });
+    }
   });
 
   if (lead.nocConfiguredBy) {
@@ -699,6 +829,26 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       timestamp: lead.customerCreatedAt,
       user: lead.customerCreatedBy,
       details: 'Customer can now log in to the portal.',
+    });
+  }
+
+  if (lead.installationStartedAt) {
+    timeline.push({
+      stage: 'INSTALLATION_STARTED',
+      label: 'Installation Started',
+      timestamp: lead.installationStartedAt,
+      user: null,
+      details: 'On-site installation work began.',
+    });
+  }
+
+  if (lead.installationCompletedAt) {
+    timeline.push({
+      stage: 'INSTALLATION_COMPLETED',
+      label: 'Installation Completed',
+      timestamp: lead.installationCompletedAt,
+      user: null,
+      details: 'Connection installed and ready for speed test.',
     });
   }
 
@@ -723,14 +873,16 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   }
 
   if (lead.customerAcceptanceBy) {
+    const accepted = lead.customerAcceptanceStatus === 'ACCEPTED';
     timeline.push({
-      stage: 'CUSTOMER_ACCEPTANCE',
-      label: lead.customerAcceptanceStatus === 'ACCEPTED' ? 'Customer Accepted Service' : `Customer ${lead.customerAcceptanceStatus}`,
+      stage: accepted ? 'CUSTOMER_ACCEPTED' : 'CUSTOMER_REJECTED',
+      label: accepted ? 'Customer Accepted Service' : `Customer ${lead.customerAcceptanceStatus || 'Rejected'}`,
       timestamp: lead.customerAcceptanceAt,
       user: lead.customerAcceptanceBy,
-      details: lead.customerAcceptanceStatus === 'ACCEPTED'
-        ? 'Customer accepted the speed test. Actual plan can now be activated.'
-        : `Customer ${String(lead.customerAcceptanceStatus).toLowerCase()}.`,
+      details: accepted
+        ? 'Customer verified speed test results and accepted the service. Actual plan can now be activated.'
+        : (lead.customerAcceptanceNotes || `Customer ${String(lead.customerAcceptanceStatus || 'rejected').toLowerCase()} the service.`),
+      isError: !accepted,
       meta: { status: lead.customerAcceptanceStatus },
     });
   }
@@ -744,6 +896,27 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       details: lead.actualPlanName ? `Plan: ${lead.actualPlanName} · Invoicing begins on next billing cycle.` : null,
     });
   }
+
+  // ─── Reassignment events from the audit log ────────────────────────
+  // Promote assignedToId / feasibilityAssignedToId / nocAssignedToId changes
+  // from the audit log into main timeline rows so they're not buried.
+  const REASSIGNMENT_FIELDS = {
+    assignedToId: 'Lead Reassigned to Another BDM',
+    feasibilityAssignedToId: 'Feasibility Reassigned',
+    nocAssignedToId: 'NOC Reassigned',
+    deliveryAssignedToId: 'Delivery Reassigned',
+  };
+  statusChangeLogs.forEach((log) => {
+    const label = REASSIGNMENT_FIELDS[log.field];
+    if (!label) return;
+    timeline.push({
+      stage: 'REASSIGNMENT',
+      label,
+      timestamp: log.changedAt,
+      user: log.changedBy,
+      details: `${log.oldValue || '—'} → ${log.newValue || '—'}${log.reason ? ` · ${log.reason}` : ''}`,
+    });
+  });
 
   timeline.sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
 
