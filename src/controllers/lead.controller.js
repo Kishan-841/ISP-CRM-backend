@@ -1495,10 +1495,26 @@ export const getBDMScheduledMeetings = asyncHandler(async function getBDMSchedul
     const targetUserId = (isAdmin || isTL) && req.query.userId ? req.query.userId : req.user.id;
     const showAll = isAdmin && !req.query.userId;
 
+    // When target is a BDM_TEAM_LEADER, include the TL + every BDM under them
+    let assignedIn = [targetUserId];
+    if ((isAdmin || isTL) && req.query.userId) {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: { role: true }
+      });
+      if (targetUser?.role === 'BDM_TEAM_LEADER') {
+        const teamMembers = await prisma.user.findMany({
+          where: { teamLeaderId: targetUserId, isActive: true },
+          select: { id: true }
+        });
+        assignedIn = [targetUserId, ...teamMembers.map(u => u.id)];
+      }
+    }
+
     // Get all scheduled meetings for this BDM (or all if admin without filter)
     const meetings = await prisma.lead.findMany({
       where: {
-        ...(!showAll && { assignedToId: targetUserId }),
+        ...(!showAll && { assignedToId: { in: assignedIn } }),
         status: 'MEETING_SCHEDULED'
       },
       orderBy: [
@@ -4359,18 +4375,31 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     // Admin/TL can view a specific BDM's dashboard by passing userId query param
     const targetUserId = (isAdmin || isTL) && req.query.userId ? req.query.userId : req.user.id;
 
-    // Verify target user is BDM if admin/TL is viewing
+    // When viewing a BDM_TEAM_LEADER's dashboard, we aggregate the TL's own
+    // leads plus every active BDM assigned under them.
+    let userIds = [targetUserId];
+
+    // Verify target user is BDM/BDM_CP/BDM_TEAM_LEADER if admin/TL is viewing
     if ((isAdmin || isTL) && req.query.userId) {
       const targetUser = await prisma.user.findUnique({
         where: { id: targetUserId },
         select: { role: true }
       });
-      if (!targetUser || (targetUser.role !== 'BDM' && targetUser.role !== 'BDM_CP')) {
-        return res.status(400).json({ message: 'Target user is not a BDM.' });
+      if (!targetUser || !['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(targetUser.role)) {
+        return res.status(400).json({ message: 'Target user is not a BDM or Team Leader.' });
+      }
+      if (targetUser.role === 'BDM_TEAM_LEADER') {
+        const teamMembers = await prisma.user.findMany({
+          where: { teamLeaderId: targetUserId, isActive: true },
+          select: { id: true }
+        });
+        userIds = [targetUserId, ...teamMembers.map(u => u.id)];
       }
     }
 
     const userId = targetUserId;
+    // Lead filter that spans the TL's whole team (or just the BDM themselves)
+    const assignedIn = { in: userIds };
 
     // Handle date filter from query params
     const { period, fromDate, toDate } = req.query;
@@ -4420,7 +4449,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
     // Build where clause for leads
-    const whereClause = { assignedToId: userId };
+    const whereClause = { assignedToId: assignedIn };
     if (dateFrom) {
       whereClause.createdAt = {
         gte: dateFrom,
@@ -4516,7 +4545,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     // Follow-up schedule
     const followUpLeads = await prisma.lead.findMany({
       where: {
-        assignedToId: userId,
+        assignedToId: assignedIn,
         status: 'FOLLOW_UP',
         callLaterAt: { not: null }
       },
@@ -4617,7 +4646,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     // ========== PIPELINE STAT CARDS (filtered by event date) ==========
     // Helper: build date range filter for a specific date field
     const eventDateFilter = (field) => {
-      const filter = { assignedToId: userId, [field]: { not: null } };
+      const filter = { assignedToId: assignedIn, [field]: { not: null } };
       if (dateFrom) {
         filter[field] = { gte: dateFrom, lte: dateTo };
       }
