@@ -217,7 +217,7 @@ export const deleteUser = asyncHandler(async function deleteUser(req, res) {
 
 // Get users by role (for admin dropdowns)
 export const getUsersByRole = asyncHandler(async function getUsersByRole(req, res) {
-  const { role } = req.query;
+  const { role, includeTeam } = req.query;
 
   const whereClause = {
     isActive: true
@@ -230,14 +230,25 @@ export const getUsersByRole = asyncHandler(async function getUsersByRole(req, re
     whereClause.role = { not: 'SUPER_ADMIN' };
   }
 
+  // Conditionally include team-leader fields so existing callers
+  // (BDM/SAM assignment pickers) keep getting a lightweight payload.
+  const baseSelect = {
+    id: true,
+    name: true,
+    email: true,
+    role: true,
+  };
+  const selectClause = includeTeam === '1' || includeTeam === 'true'
+    ? {
+        ...baseSelect,
+        teamLeaderId: true,
+        teamLeader: { select: { id: true, name: true } },
+      }
+    : baseSelect;
+
   const users = await prisma.user.findMany({
     where: whereClause,
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true
-    },
+    select: selectClause,
     orderBy: { name: 'asc' }
   });
 
