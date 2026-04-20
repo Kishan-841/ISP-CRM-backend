@@ -5521,16 +5521,19 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
       : (currentSharedVia ? `${currentSharedVia},docs_verification` : 'docs_verification');
 
     // Prepare update data
-    // In test mode: skip OPS approval and go directly to Docs Team
-    // In normal mode: Send to OPS Team for approval first
+    // OPS approval is no longer part of the doc-submission flow (removed in
+    // commit dddc497 — BDM submits directly, docs team picks it up next).
+    // Auto-approve OPS so the lead lands in the Docs queue immediately
+    // instead of getting stuck in the deprecated OPS queue. The old
+    // PENDING → OPS manual-approval path caused re-uploaded leads to
+    // vanish from Docs/Accounts/BDM dashboards.
     const updateData = {
       // Update sharedVia to move lead to docs verification stage
       sharedVia: newSharedVia,
-      // Set OPS approval status - APPROVED for test mode (skip OPS), PENDING otherwise
-      opsApprovalStatus: isTestMode ? 'APPROVED' : 'PENDING',
-      // Reset OPS approval fields for resubmission (or set for test mode)
-      opsApprovedAt: isTestMode ? new Date() : null,
-      opsApprovedById: isTestMode ? userId : null,
+      // Auto-approve OPS — Docs Team queue requires opsApprovalStatus=APPROVED
+      opsApprovalStatus: 'APPROVED',
+      opsApprovedAt: new Date(),
+      opsApprovedById: userId,
       opsRejectedReason: null,
       // Reset docs verification status when pushed
       docsVerifiedAt: null,
