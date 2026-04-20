@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { auth, requireRole } from '../middleware/auth.js';
 import {
   searchCustomers,
+  exportCustomers,
   getSummary,
   getJourney,
   getBilling,
@@ -17,6 +18,7 @@ router.use(auth);
 router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR'));
 
 router.get('/search', searchCustomers);
+router.get('/export', exportCustomers);
 router.get('/:id/summary', getSummary);
 router.get('/:id/journey', getJourney);
 router.get('/:id/billing', getBilling);

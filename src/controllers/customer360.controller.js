@@ -1,4 +1,5 @@
 import prisma from '../config/db.js';
+import * as XLSX from 'xlsx';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
 
 // GET /api/customer-360/search?q=term&page=1&limit=20
@@ -71,6 +72,168 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
   }));
 
   res.json(paginatedResponse({ data: items, total, page, limit }));
+});
+
+// GET /api/customer-360/export?q=term
+// Streams an XLSX file containing every customer matching the search (no
+// pagination). Uses the same search filter shape as /search so the exported
+// rows match what the UI is currently showing.
+export const exportCustomers = asyncHandler(async function exportCustomers(req, res) {
+  const { q = '' } = req.query;
+  const searchTerm = q.trim();
+
+  const where = searchTerm.length >= 2
+    ? {
+        OR: buildSearchFilter(searchTerm, [
+          'campaignData.company',
+          'campaignData.name',
+          'campaignData.firstName',
+          'campaignData.lastName',
+          { field: 'campaignData.phone' },
+          'customerUsername',
+          'customerGstNo',
+        ]),
+      }
+    : {};
+
+  const leads = await prisma.lead.findMany({
+    where,
+    select: {
+      id: true,
+      leadNumber: true,
+      status: true,
+      deliveryStatus: true,
+      customerUsername: true,
+      customerGstNo: true,
+      circuitId: true,
+      customerIpAssigned: true,
+      billingAddress: true,
+      billingPincode: true,
+      fullAddress: true,
+      arcAmount: true,
+      otcAmount: true,
+      advanceAmount: true,
+      // Plan
+      actualPlanName: true,
+      actualPlanBandwidth: true,
+      actualPlanPrice: true,
+      actualPlanBillingCycle: true,
+      actualPlanIsActive: true,
+      actualPlanStartDate: true,
+      actualPlanEndDate: true,
+      // Demo plan
+      demoPlanName: true,
+      demoPlanIsActive: true,
+      // Timestamps
+      createdAt: true,
+      feasibilityReviewedAt: true,
+      opsApprovedAt: true,
+      superAdmin2ApprovedAt: true,
+      docsVerifiedAt: true,
+      accountsVerifiedAt: true,
+      customerCreatedAt: true,
+      installationCompletedAt: true,
+      customerAcceptanceAt: true,
+      actualPlanCreatedAt: true,
+      // Relations
+      assignedTo: { select: { name: true, role: true } },
+      feasibilityAssignedTo: { select: { name: true } },
+      campaignData: {
+        select: {
+          company: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          email: true,
+          city: true,
+          state: true,
+          industry: true,
+          title: true,
+          campaign: { select: { name: true, type: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  // Format a Date/null consistently as ISO date string for Excel readability
+  const fmt = (d) => (d ? new Date(d).toISOString().slice(0, 19).replace('T', ' ') : '');
+
+  // Flatten each lead into a single row
+  const rows = leads.map((l) => {
+    const cd = l.campaignData || {};
+    const contact = cd.name || `${cd.firstName || ''} ${cd.lastName || ''}`.trim();
+    return {
+      'Lead #': l.leadNumber || '',
+      'Company': cd.company || '',
+      'Contact Name': contact,
+      'Title': cd.title || '',
+      'Phone': cd.phone || '',
+      'Email': cd.email || '',
+      'City': cd.city || '',
+      'State': cd.state || '',
+      'Industry': cd.industry || '',
+      'Full Address': l.fullAddress || '',
+      'Billing Address': l.billingAddress || '',
+      'Billing Pincode': l.billingPincode || '',
+      'GST No': l.customerGstNo || '',
+      'Customer Username': l.customerUsername || '',
+      'Circuit ID': l.circuitId || '',
+      'IP Assigned': l.customerIpAssigned || '',
+      'Source Campaign': cd.campaign?.name || '',
+      'Source Type': cd.campaign?.type || '',
+      'Assigned BDM': l.assignedTo?.name || '',
+      'BDM Role': l.assignedTo?.role || '',
+      'Feasibility Team Member': l.feasibilityAssignedTo?.name || '',
+      'Lead Status': l.status || '',
+      'Delivery Status': l.deliveryStatus || '',
+      'Plan Name': l.actualPlanName || '',
+      'Plan Bandwidth (Mbps)': l.actualPlanBandwidth || '',
+      'Plan Price': l.actualPlanPrice || '',
+      'Billing Cycle': l.actualPlanBillingCycle || '',
+      'Plan Active': l.actualPlanIsActive ? 'Yes' : 'No',
+      'Plan Start': fmt(l.actualPlanStartDate),
+      'Plan End': fmt(l.actualPlanEndDate),
+      'Demo Plan': l.demoPlanName || '',
+      'Demo Active': l.demoPlanIsActive ? 'Yes' : 'No',
+      'ARC Amount': l.arcAmount ?? '',
+      'OTC Amount': l.otcAmount ?? '',
+      'Advance Amount': l.advanceAmount ?? '',
+      'Lead Created': fmt(l.createdAt),
+      'Feasibility Reviewed': fmt(l.feasibilityReviewedAt),
+      'OPS Approved': fmt(l.opsApprovedAt),
+      'Sales Director Approved': fmt(l.superAdmin2ApprovedAt),
+      'Docs Verified': fmt(l.docsVerifiedAt),
+      'Accounts Verified': fmt(l.accountsVerifiedAt),
+      'Customer Account Created': fmt(l.customerCreatedAt),
+      'Installation Completed': fmt(l.installationCompletedAt),
+      'Customer Acceptance': fmt(l.customerAcceptanceAt),
+      'Actual Plan Activated': fmt(l.actualPlanCreatedAt),
+    };
+  });
+
+  // Build workbook
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ Note: 'No customers matched the current filter' }]);
+
+  // Auto-size columns based on header length (reasonable default)
+  if (rows.length > 0) {
+    const headers = Object.keys(rows[0]);
+    ws['!cols'] = headers.map((h) => {
+      const maxContent = rows.reduce((m, r) => Math.max(m, String(r[h] ?? '').length), h.length);
+      return { wch: Math.min(Math.max(maxContent + 2, 10), 40) };
+    });
+  }
+  XLSX.utils.book_append_sheet(wb, ws, 'Customers');
+
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  const filename = `customer-360-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('X-Total-Count', String(rows.length));
+  res.send(buffer);
 });
 
 // GET /api/customer-360/:id/summary
@@ -268,7 +431,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
 
   // Fetch call logs, ISR user, docs verifier, delivery requests, status change logs,
   // document upload links, and login-completed user in parallel.
-  const [callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs, uploadLinks, loginCompletedByUser, nocAssignedByUser] = await Promise.all([
+  const [callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs, uploadLinks, loginCompletedByUser, nocAssignedByUser, vendorSetupByUser] = await Promise.all([
     lead.campaignData?.id
       ? prisma.callLog.findMany({
           where: { campaignDataId: lead.campaignData.id },
@@ -304,17 +467,17 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         status: true,
         requestedAt: true,
         requestedBy: { select: { id: true, name: true, role: true } },
-        superAdminApprovedBy: { select: { id: true, name: true } },
+        superAdminApprovedBy: { select: { id: true, name: true, role: true } },
         superAdminApprovedAt: true,
-        superAdminRejectedBy: { select: { id: true, name: true } },
+        superAdminRejectedBy: { select: { id: true, name: true, role: true } },
         superAdminRejectedAt: true,
         superAdminRejectionReason: true,
-        areaHeadApprovedBy: { select: { id: true, name: true } },
+        areaHeadApprovedBy: { select: { id: true, name: true, role: true } },
         areaHeadApprovedAt: true,
-        areaHeadRejectedBy: { select: { id: true, name: true } },
+        areaHeadRejectedBy: { select: { id: true, name: true, role: true } },
         areaHeadRejectedAt: true,
         areaHeadRejectionReason: true,
-        assignedToStoreManager: { select: { id: true, name: true } },
+        assignedToStoreManager: { select: { id: true, name: true, role: true } },
         assignedAt: true,
         dispatchedAt: true,
         completedAt: true,
@@ -366,6 +529,13 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     lead?.nocAssignedToId
       ? prisma.user.findUnique({
           where: { id: lead.nocAssignedToId },
+          select: { id: true, name: true, role: true },
+        })
+      : null,
+    // Vendor setup user id is buried in deliveryProducts JSON (setupById).
+    lead?.deliveryProducts && typeof lead.deliveryProducts === 'object' && lead.deliveryProducts.setupById
+      ? prisma.user.findUnique({
+          where: { id: lead.deliveryProducts.setupById },
           select: { id: true, name: true, role: true },
         })
       : null,
@@ -725,7 +895,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         stage: 'DELIVERY_VENDOR_SETUP',
         label: 'Delivery Vendor Setup Completed',
         timestamp: setupAt,
-        user: null, // setupById buried in JSON — role/name lookup would cost an extra query
+        user: vendorSetupByUser,
         details: `Delivery team configured the fiber vendor${dp.vendorNotes ? `: ${dp.vendorNotes}` : ''}.${capexLine}${opexLine}`,
       });
     }
@@ -918,7 +1088,64 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   });
 
-  timeline.sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+  // ─── Canonical lifecycle ordering ─────────────────────────────────────
+  // Each stage gets a position index matching where it belongs in a
+  // well-lived lead's lifecycle. Sort is stable: primary = canonical order
+  // (so e.g. QUOTE_SHARED always sits right after SALES_DIRECTOR_APPROVED
+  //  even when timestamps happen seconds apart during testing), secondary =
+  // timestamp (for events in the same phase — e.g. multiple ISR calls).
+  const STAGE_ORDER = {
+    DATA_UPLOADED: 10,
+    ISR_ASSIGNED: 20,
+    ISR_CALL: 30,
+    LEAD_CREATED: 40,
+    OPPORTUNITY_CREATED: 40,
+    COLD_LEAD_ADDED: 40,
+    BDM_ASSIGNED: 50,
+    FEASIBILITY_ASSIGNED: 60,
+    FEASIBILITY_APPROVED: 70,
+    FEASIBILITY_REJECTED: 70,
+    QUOTATION_UPLOADED: 80,
+    QUOTATION_SUBMITTED: 90,
+    SALES_DIRECTOR_APPROVED: 100,
+    SALES_DIRECTOR_REJECTED: 100,
+    OPS_REJECTED: 100,
+    QUOTE_SHARED: 110,
+    DOCS_UPLOAD_LINK: 120,
+    LOGIN_COMPLETED: 130,
+    DOCS_UPLOADED: 140,
+    DOCS_VERIFIED: 150,
+    ACCOUNTS_VERIFIED: 160,
+    GST_VERIFIED: 170,
+    PUSHED_TO_INSTALLATION: 180,
+    NOC_ASSIGNED: 190,
+    DELIVERY_VENDOR_SETUP: 200,
+    DELIVERY_REQUEST_CREATED: 210,
+    DELIVERY_SUPER_ADMIN_APPROVED: 220,
+    DELIVERY_SUPER_ADMIN_REJECTED: 220,
+    DELIVERY_AREA_HEAD_APPROVED: 230,
+    DELIVERY_AREA_HEAD_REJECTED: 230,
+    DELIVERY_ASSIGNED_TO_STORE: 240,
+    DELIVERY_DISPATCHED: 250,
+    DELIVERY_COMPLETED: 260,
+    NOC_CONFIGURED: 270,
+    CUSTOMER_CREATED: 280,
+    INSTALLATION_STARTED: 290,
+    INSTALLATION_COMPLETED: 300,
+    DEMO_PLAN: 310,
+    SPEED_TEST: 320,
+    CUSTOMER_ACCEPTED: 330,
+    CUSTOMER_REJECTED: 330,
+    ACTUAL_PLAN: 340,
+    REASSIGNMENT: 999, // pushed to the end — audit-style events
+  };
+  const orderOf = (e) => STAGE_ORDER[e.stage] ?? 500;
+
+  timeline.sort((a, b) => {
+    const phaseDelta = orderOf(a) - orderOf(b);
+    if (phaseDelta !== 0) return phaseDelta;
+    return new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
+  });
 
   const materials = deliveryRequests.flatMap((dr) =>
     dr.items.map((item) => ({
