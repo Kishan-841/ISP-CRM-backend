@@ -127,7 +127,16 @@ const buildOrTsQuery = (query) =>
     .filter(Boolean)
     .join(' | ');
 
+// Whitelist used as a defense-in-depth guard before we inject `audience` as
+// an enum cast into a raw query. Callers should already be passing a valid
+// value (it comes from server-side logic, not user input) but enforcing the
+// whitelist here keeps the surface closed even if a future caller slips up.
+const VALID_AUDIENCES = new Set(['STAFF', 'CUSTOMER', 'BOTH']);
+
 export const retrieveKnowledge = async ({ query, audience, userRole, limit = 3 }) => {
+  if (!VALID_AUDIENCES.has(audience)) {
+    throw new Error(`retrieveKnowledge: invalid audience "${audience}"`);
+  }
   const isUnrestricted = userRole && UNRESTRICTED_ROLES.has(userRole);
   const audienceClause = (rows) => rows; // no-op — filtering happens in SQL
 
@@ -323,6 +332,19 @@ const checkDailyGeminiLimit = async ({ userId, customerUserId }) => {
   }
 };
 
+// Serialize the Gemini cap check + Gemini call so two concurrent requests
+// can't both pass the cap check when the count is just below the limit.
+// Single-process mutex — matches our single-container deploy. If we ever
+// scale to multiple backend replicas, replace with a DB advisory lock.
+let _geminiMutex = Promise.resolve();
+const acquireGeminiSlot = async () => {
+  const current = _geminiMutex;
+  let release;
+  _geminiMutex = new Promise((r) => (release = r));
+  await current;
+  return release;
+};
+
 const isGlobalDailyCapHit = async () => {
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const nonCachedCount = await prisma.nexusMessage.count({
@@ -432,10 +454,8 @@ export const answerQuestion = async ({
   //    (Runs AFTER retrieval so cached/direct-match questions never burn the user's quota.)
   await checkDailyGeminiLimit({ userId, customerUserId });
 
-  // 7. Global quota safety
-  const globalCapHit = await isGlobalDailyCapHit();
-
-  // 8. Build prompt
+  // 7. Build prompt (done before acquiring the serialization slot so prompt-building
+  //    doesn't block other requests)
   const contextBlock = kb.length
     ? kb.map((k, i) => `[${i + 1}] ${k.title}\n${k.content}`).join('\n\n')
     : '(no matching knowledge entries)';
@@ -448,20 +468,30 @@ export const answerQuestion = async ({
     content: m.content,
   }));
 
-  // 8. Call Gemini (unless global cap reached)
+  // 8. Serialize the cap-check + Gemini call so concurrent requests can't
+  //    both pass the cap when the count is right at the threshold. Only
+  //    this short critical section waits on the mutex; all earlier work
+  //    (cache, retrieval, rate limit) runs in parallel as before.
+  const releaseGeminiSlot = await acquireGeminiSlot();
   let answer = '';
   let tokensUsed = null;
-  if (globalCapHit) {
-    answer = 'NEXUS is experiencing high load right now. Please try again in a little while or check the help docs.';
-  } else {
-    try {
-      const result = await generateAnswer({ systemPrompt: fullSystem, userMessage: question, history });
-      answer = result.text?.trim() || "I don't have information on that yet. Please contact your team lead or admin.";
-      tokensUsed = result.tokensUsed;
-    } catch (e) {
-      console.error('[nexus] Gemini error:', e);
-      answer = "I'm having trouble answering right now. Please try again in a moment.";
+  let globalCapHit = false;
+  try {
+    globalCapHit = await isGlobalDailyCapHit();
+    if (globalCapHit) {
+      answer = 'NEXUS is experiencing high load right now. Please try again in a little while or check the help docs.';
+    } else {
+      try {
+        const result = await generateAnswer({ systemPrompt: fullSystem, userMessage: question, history });
+        answer = result.text?.trim() || "I don't have information on that yet. Please contact your team lead or admin.";
+        tokensUsed = result.tokensUsed;
+      } catch (e) {
+        console.error('[nexus] Gemini error:', e);
+        answer = "I'm having trouble answering right now. Please try again in a moment.";
+      }
     }
+  } finally {
+    releaseGeminiSlot();
   }
 
   // 9. Save assistant message + cache (only if grounded on KB and no global cap)

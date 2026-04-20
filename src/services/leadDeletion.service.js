@@ -177,7 +177,31 @@ export async function previewLeadDeletion(leadId) {
  * @returns {Promise<Object>} the audit row that was written
  * @throws if the lead doesn't exist
  */
+// In-process lock map so two concurrent delete requests for the SAME lead
+// can't both enter the transaction. The second request gets a clear 409
+// instead of running a useless transaction that ultimately fails with
+// "record not found" after doing a bunch of no-op deletes. Single-container
+// deploy — if we scale to multiple backend replicas, replace with a
+// PostgreSQL advisory lock on the leadId hash.
+const _activeLeadDeletions = new Map();
+
 export async function deleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCampaignData }) {
+  if (_activeLeadDeletions.has(leadId)) {
+    const err = new Error('Another deletion is already in progress for this lead. Please wait.');
+    err.status = 409;
+    throw err;
+  }
+
+  const work = _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCampaignData });
+  _activeLeadDeletions.set(leadId, work);
+  try {
+    return await work;
+  } finally {
+    _activeLeadDeletions.delete(leadId);
+  }
+}
+
+async function _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCampaignData }) {
   // Capture identifiers + counts BEFORE we mutate anything, so the audit row
   // can carry a faithful snapshot even after the records are gone.
   const preview = await previewLeadDeletion(leadId);

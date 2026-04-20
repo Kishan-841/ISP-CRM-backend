@@ -156,14 +156,30 @@ export const emitSidebarRefresh = (userId) => {
   emitToUser(userId, 'sidebar:refresh', {});
 };
 
-// Emit sidebar refresh to all active users of a given role
+// Emit sidebar refresh to all active users of a given role.
+// Chunked + async-yielded so we don't block the event loop with a tight loop
+// when the role has hundreds of users, and we don't pile a large set of
+// synchronous socket.emit calls onto the event queue at once.
+const SIDEBAR_BROADCAST_CHUNK = 50;
+const SIDEBAR_BROADCAST_DELAY_MS = 10;   // yield between chunks
 export const emitSidebarRefreshByRole = async (role) => {
   try {
+    // Only fetch ids of users who actually have an active socket right now —
+    // emitting to offline users wastes cycles and fills the room map.
     const users = await prisma.user.findMany({
       where: { role, isActive: true },
-      select: { id: true }
+      select: { id: true },
     });
-    users.forEach(u => emitToUser(u.id, 'sidebar:refresh', {}));
+    const onlineIds = users.map((u) => u.id).filter((id) => isUserOnline(id));
+
+    for (let i = 0; i < onlineIds.length; i += SIDEBAR_BROADCAST_CHUNK) {
+      const slice = onlineIds.slice(i, i + SIDEBAR_BROADCAST_CHUNK);
+      slice.forEach((id) => emitToUser(id, 'sidebar:refresh', {}));
+      // Yield to the event loop between chunks so other requests can progress.
+      if (i + SIDEBAR_BROADCAST_CHUNK < onlineIds.length) {
+        await new Promise((r) => setTimeout(r, SIDEBAR_BROADCAST_DELAY_MS));
+      }
+    }
   } catch (error) {
     console.error('emitSidebarRefreshByRole error:', error);
   }

@@ -41,6 +41,16 @@ import { startInvoiceGenerationJob } from './jobs/invoiceGeneration.js';
 import { startContractRenewalReminder } from './jobs/contractRenewalReminder.js';
 import { startDemoPlanExpiryJob } from './jobs/demoPlanExpiry.js';
 
+// Fail fast on missing critical env vars — much better than silent runtime
+// auth failures hours later. DATABASE_URL is validated by Prisma on first
+// query; these are the ones that would otherwise crash mid-request.
+const REQUIRED_ENV_VARS = ['JWT_SECRET', 'DATABASE_URL'];
+const missingEnvVars = REQUIRED_ENV_VARS.filter((name) => !process.env[name]);
+if (missingEnvVars.length) {
+  console.error(`FATAL: Missing required env vars: ${missingEnvVars.join(', ')}`);
+  process.exit(1);
+}
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -140,14 +150,19 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Internal server error.' });
 });
 
-// Prevent unhandled errors from crashing the process
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
+// Unhandled errors leave the process in an unknown state — log them and
+// exit so the process manager (Docker / pm2 / systemd) can restart us
+// fresh. Silently continuing after an unhandled rejection risks corrupted
+// in-memory state, half-finished transactions, and cascading failures
+// that are extremely hard to diagnose.
+process.on('unhandledRejection', (reason) => {
+  console.error('FATAL: Unhandled Promise Rejection:', reason);
+  // Give logs 1s to flush before exiting so the diagnostic reaches stderr.
+  setTimeout(() => process.exit(1), 1000);
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  // Give time for logs to flush, then exit (let process manager restart)
+  console.error('FATAL: Uncaught Exception:', error);
   setTimeout(() => process.exit(1), 1000);
 });
 

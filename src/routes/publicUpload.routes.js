@@ -2,6 +2,7 @@ import express from 'express';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
 import prisma from '../config/db.js';
 import {
   validateUploadToken,
@@ -11,6 +12,30 @@ import {
 } from '../controllers/publicUpload.controller.js';
 
 const router = express.Router();
+
+// Per-token rate limits for unauthenticated public routes. The route gate is
+// the upload-link token (shared with the customer), so anyone with the URL
+// can hit these endpoints — without these limits a leaked token could burn
+// Cloudinary quota / storage indefinitely.
+const tokenKeyGenerator = (req) => req.params?.token || req.ip;
+
+const uploadRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,   // 10 min window
+  max: 30,                     // 30 uploads per token per 10 min
+  keyGenerator: tokenKeyGenerator,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many uploads for this link. Please try again in a few minutes.' },
+});
+
+const tokenLookupRateLimit = rateLimit({
+  windowMs: 5 * 60 * 1000,     // 5 min window
+  max: 60,                      // 60 other requests per token (validate, remove, complete)
+  keyGenerator: tokenKeyGenerator,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests for this link. Please wait a few minutes.' },
+});
 
 // Custom storage that gets leadId from token validation
 const createCustomerStorage = () => {
@@ -98,12 +123,13 @@ const validateTokenMiddleware = async (req, res, next) => {
 
 // Validate upload token and get lead info
 // GET /api/public/upload/:token
-router.get('/:token', validateUploadToken);
+router.get('/:token', tokenLookupRateLimit, validateUploadToken);
 
 // Upload document via customer link
 // POST /api/public/upload/:token/document/:documentType
 router.post(
   '/:token/document/:documentType',
+  uploadRateLimit,
   validateTokenMiddleware,
   customerUpload.single('document'),
   customerUploadDocument
@@ -113,12 +139,13 @@ router.post(
 // DELETE /api/public/upload/:token/document/:documentType
 router.delete(
   '/:token/document/:documentType',
+  tokenLookupRateLimit,
   validateTokenMiddleware,
   customerRemoveDocument
 );
 
 // Mark upload as complete (sends notification to BDM)
 // POST /api/public/upload/:token/complete
-router.post('/:token/complete', validateTokenMiddleware, customerCompleteUpload);
+router.post('/:token/complete', tokenLookupRateLimit, validateTokenMiddleware, customerCompleteUpload);
 
 export default router;
