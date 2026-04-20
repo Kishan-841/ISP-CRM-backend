@@ -40,6 +40,7 @@ import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
 import { startInvoiceGenerationJob } from './jobs/invoiceGeneration.js';
 import { startContractRenewalReminder } from './jobs/contractRenewalReminder.js';
 import { startDemoPlanExpiryJob } from './jobs/demoPlanExpiry.js';
+import { startMeetingReminderJob } from './jobs/meetingReminder.js';
 
 // Fail fast on missing critical env vars — much better than silent runtime
 // auth failures hours later. DATABASE_URL is validated by Prisma on first
@@ -177,4 +178,5 @@ httpServer.listen(PORT, () => {
   startInvoiceGenerationJob();
   startContractRenewalReminder();
   startDemoPlanExpiryJob();
+  startMeetingReminderJob();
 });
