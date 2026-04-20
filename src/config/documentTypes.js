@@ -104,6 +104,15 @@ export const DOCUMENT_TYPES = {
     acceptedFormats: ['pdf', 'jpg', 'jpeg', 'png'],
     maxSize: 10 * 1024 * 1024,
     order: 11
+  },
+  SLA: {
+    id: 'SLA',
+    label: 'Service Level Agreement (SLA)',
+    description: 'Signed service level agreement document',
+    required: true,
+    acceptedFormats: ['pdf', 'jpg', 'jpeg', 'png'],
+    maxSize: 10 * 1024 * 1024,
+    order: 12
   }
 };
 
