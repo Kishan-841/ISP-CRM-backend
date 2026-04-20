@@ -14,10 +14,30 @@ export const isAdmin = (user) => {
 export const isAdminOrTestUser = isAdmin;
 
 /**
+ * Log when a MASTER user's universal-bypass is exercised so privileged
+ * actions leave a trail. Kept as a simple console.warn — a dedicated audit
+ * table would be cleaner but adds a hot-path DB write on every auth check.
+ * Silently swallow any logging error so it can never break auth.
+ */
+const logMasterBypass = (user, checkType, allowedRoles) => {
+  try {
+    if (user?.role !== 'MASTER') return;
+    console.warn(
+      `[AUDIT] MASTER bypass — user=${user.id} email=${user.email || '?'} ${checkType}=${Array.isArray(allowedRoles) ? allowedRoles.join(',') : allowedRoles}`,
+    );
+  } catch {
+    /* never throw from auth helper */
+  }
+};
+
+/**
  * Check if user has a specific role (MASTER bypasses all checks)
  */
 export const hasRole = (user, role) => {
-  if (user?.role === 'MASTER') return true;
+  if (user?.role === 'MASTER') {
+    logMasterBypass(user, 'hasRole', role);
+    return true;
+  }
   return user?.role === role;
 };
 
@@ -25,7 +45,10 @@ export const hasRole = (user, role) => {
  * Check if user has any of the specified roles (MASTER bypasses all checks)
  */
 export const hasAnyRole = (user, roles) => {
-  if (user?.role === 'MASTER') return true;
+  if (user?.role === 'MASTER') {
+    logMasterBypass(user, 'hasAnyRole', roles);
+    return true;
+  }
   return roles.includes(user?.role);
 };
 

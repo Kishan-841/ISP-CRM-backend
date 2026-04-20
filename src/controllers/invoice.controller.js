@@ -641,6 +641,29 @@ export const addPaymentToInvoice = asyncHandler(async function addPaymentToInvoi
         throw new Error('CANCELLED');
       }
 
+      // Idempotency guard: protect against accidental duplicate submits from
+      // the client (e.g. double-tapped save, network retry). If the same user
+      // recorded a payment for this invoice with the same amount + mode
+      // within the last 60 seconds, block as a likely duplicate rather than
+      // creating two ledger entries. 60s is short enough not to flag a
+      // deliberate same-day duplicate recorded hours apart.
+      const sixtySecondsAgo = new Date(Date.now() - 60 * 1000);
+      const recentDuplicate = await tx.invoicePayment.findFirst({
+        where: {
+          invoiceId: id,
+          amount: parsedAmount,
+          paymentMode,
+          createdById: userId,
+          createdAt: { gte: sixtySecondsAgo },
+        },
+        select: { id: true, receiptNumber: true },
+      });
+      if (recentDuplicate) {
+        const err = new Error('DUPLICATE_PAYMENT');
+        err.existingReceipt = recentDuplicate.receiptNumber;
+        throw err;
+      }
+
       // Calculate remaining
       const creditAmount = invoice.totalCreditAmount || 0;
       const existingPaid = invoice.totalPaidAmount || 0;
@@ -752,6 +775,12 @@ export const addPaymentToInvoice = asyncHandler(async function addPaymentToInvoi
     if (error.message === 'OVERPAYMENT') {
       return res.status(400).json({ message: 'Payment amount exceeds remaining balance.' });
     }
+    if (error.message === 'DUPLICATE_PAYMENT') {
+      return res.status(409).json({
+        message: `A matching payment was just recorded (receipt ${error.existingReceipt}). If this is a genuine second payment, wait a moment and try again.`,
+        existingReceipt: error.existingReceipt,
+      });
+    }
     throw error;
   }
 });
@@ -776,34 +805,60 @@ export const bulkPayInvoices = asyncHandler(async function bulkPayInvoices(req, 
       return res.status(400).json({ message: 'Payment mode is required.' });
     }
 
-    const results = [];
-    const errors = [];
-
+    // ─── Phase 1: pre-validate ALL invoices before touching the DB ────────
+    // If any invoice is in a bad state, fail the whole batch early so we
+    // never commit a partial set of payments. This is the financial
+    // correctness fix — previously each invoice ran in its own tx, so an
+    // error on invoice 5 would leave invoices 1-4 paid + ledger-entered
+    // and invoice 5+ untouched, creating a reconcilable mess.
+    const plannedPayments = [];
+    const validationErrors = [];
     for (const invoiceId of invoiceIds) {
-      try {
-        const receiptNumber = await generateReceiptNumber();
+      const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+      if (!invoice) {
+        validationErrors.push({ invoiceId, error: 'Invoice not found' });
+        continue;
+      }
+      if (invoice.status === 'PAID' || invoice.status === 'CANCELLED') {
+        validationErrors.push({ invoiceId, error: `Invoice is ${invoice.status.toLowerCase()}` });
+        continue;
+      }
+      const creditAmount = invoice.totalCreditAmount || 0;
+      const existingPaid = invoice.totalPaidAmount || 0;
+      const netPayable = invoice.grandTotal - creditAmount;
+      const remaining = netPayable - existingPaid;
+      if (remaining <= 0) {
+        validationErrors.push({ invoiceId, error: 'No remaining amount' });
+        continue;
+      }
+      plannedPayments.push({ invoice, existingPaid, remaining });
+    }
 
-        const result = await prisma.$transaction(async (tx) => {
-          const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
-          if (!invoice) {
-            throw new Error('Invoice not found');
-          }
-          if (invoice.status === 'PAID' || invoice.status === 'CANCELLED') {
-            throw new Error(`Invoice is ${invoice.status.toLowerCase()}`);
-          }
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        message: `Cannot bulk-pay — ${validationErrors.length} invoice(s) failed validation. No payments recorded.`,
+        errors: validationErrors,
+      });
+    }
 
-          const creditAmount = invoice.totalCreditAmount || 0;
-          const existingPaid = invoice.totalPaidAmount || 0;
-          const netPayable = invoice.grandTotal - creditAmount;
-          const remaining = netPayable - existingPaid;
+    // ─── Phase 2: generate receipt numbers (outside tx — fine if tx rolls back,
+    // sequence can have gaps; receipt numbers are write-only from this point)
+    const planWithReceipts = [];
+    for (const p of plannedPayments) {
+      planWithReceipts.push({ ...p, receiptNumber: await generateReceiptNumber() });
+    }
 
-          if (remaining <= 0) {
-            throw new Error('No remaining amount');
-          }
+    // ─── Phase 3: ALL-OR-NOTHING writes in one transaction ────────────────
+    let results;
+    try {
+      results = await prisma.$transaction(async (tx) => {
+        const out = [];
+        const ledgerCursorByCustomer = new Map(); // keep per-customer running balance cursor in one pass
 
+        for (const { invoice, existingPaid, remaining, receiptNumber } of planWithReceipts) {
           const payment = await tx.invoicePayment.create({
             data: {
-              invoiceId,
+              invoiceId: invoice.id,
               receiptNumber,
               paymentDate: transactionDate ? new Date(transactionDate) : new Date(),
               amount: remaining,
@@ -812,27 +867,36 @@ export const bulkPayInvoices = asyncHandler(async function bulkPayInvoices(req, 
               tdsAmount: 0,
               transactionDate: transactionDate ? new Date(transactionDate) : new Date(),
               remark: remark || 'Bulk payment',
-              createdById: userId
-            }
+              createdById: userId,
+            },
           });
 
           const updatedInvoice = await tx.invoice.update({
-            where: { id: invoiceId },
+            where: { id: invoice.id },
             data: {
               totalPaidAmount: existingPaid + remaining,
               remainingAmount: 0,
               status: 'PAID',
-              paidAt: new Date()
-            }
+              paidAt: new Date(),
+            },
           });
 
-          // Create ledger entry INSIDE transaction
-          const lastEntry = await tx.ledgerEntry.findFirst({
-            where: { customerId: updatedInvoice.leadId },
-            orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
-            select: { runningBalance: true }
-          });
-          const prevBal = Number(lastEntry?.runningBalance) || 0;
+          // Ledger: use cached cursor if this customer already had a balance
+          // updated in this same tx, else read the last entry from DB.
+          let prevBal;
+          if (ledgerCursorByCustomer.has(updatedInvoice.leadId)) {
+            prevBal = ledgerCursorByCustomer.get(updatedInvoice.leadId);
+          } else {
+            const lastEntry = await tx.ledgerEntry.findFirst({
+              where: { customerId: updatedInvoice.leadId },
+              orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
+              select: { runningBalance: true },
+            });
+            prevBal = Number(lastEntry?.runningBalance) || 0;
+          }
+          const newBal = prevBal - (Number(payment.amount) || 0);
+          ledgerCursorByCustomer.set(updatedInvoice.leadId, newBal);
+
           await tx.ledgerEntry.create({
             data: {
               customerId: updatedInvoice.leadId,
@@ -843,33 +907,36 @@ export const bulkPayInvoices = asyncHandler(async function bulkPayInvoices(req, 
               referenceNumber: payment.receiptNumber,
               debitAmount: 0,
               creditAmount: Number(payment.amount) || 0,
-              runningBalance: prevBal - (Number(payment.amount) || 0),
+              runningBalance: newBal,
               description: `Payment received via ${paymentMode} against ${updatedInvoice.invoiceNumber}`,
-              createdById: userId
-            }
+              createdById: userId,
+            },
           });
 
-          return { payment, invoice: updatedInvoice };
-        });
-
-        results.push({
-          invoiceId,
-          invoiceNumber: result.invoice.invoiceNumber,
-          receiptNumber: result.payment.receiptNumber,
-          amount: result.payment.amount,
-          status: 'success'
-        });
-      } catch (err) {
-        errors.push({ invoiceId, error: err.message });
-      }
+          out.push({
+            invoiceId: invoice.id,
+            invoiceNumber: updatedInvoice.invoiceNumber,
+            receiptNumber: payment.receiptNumber,
+            amount: payment.amount,
+            status: 'success',
+          });
+        }
+        return out;
+      }, { timeout: 30000 });
+    } catch (err) {
+      console.error('[bulkPayInvoices] transaction failed, rolling back:', err);
+      return res.status(500).json({
+        message: 'Bulk payment failed mid-way; no payments recorded. Please retry.',
+        error: err?.message,
+      });
     }
 
     emitSidebarRefreshByRole('ACCOUNTS_TEAM');
     emitSidebarRefreshByRole('SUPER_ADMIN');
 
     res.json({
-      message: `${results.length} invoice(s) paid successfully. ${errors.length} error(s).`,
-      data: { results, errors }
+      message: `${results.length} invoice(s) paid successfully.`,
+      data: { results, errors: [] },
     });
 });
 

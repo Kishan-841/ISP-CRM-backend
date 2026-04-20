@@ -445,6 +445,9 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
             user: { select: { id: true, name: true, role: true } },
           },
           orderBy: { startTime: 'asc' },
+          // Bound — a single lead with thousands of historic call logs would
+          // blow up memory + latency. 500 covers every realistic case.
+          take: 500,
         })
       : [],
     lead.campaignData?.assignedToId
@@ -505,7 +508,11 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         reason: true,
         changedBy: { select: { id: true, name: true, role: true } },
       },
-      orderBy: { changedAt: 'asc' },
+      orderBy: { changedAt: 'desc' },
+      // Bound — a very active lead could accumulate hundreds of status-change
+      // rows. Show the most recent 500 on the journey; the full history can
+      // be exposed on a dedicated audit page if ever needed.
+      take: 500,
     }),
     // Document upload links created by BDM for the customer to upload docs
     prisma.documentUploadLink.findMany({

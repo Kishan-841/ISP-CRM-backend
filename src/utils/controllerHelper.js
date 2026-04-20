@@ -25,9 +25,16 @@ export const asyncHandler = (fn) => async (req, res) => {
  * @param {number} [defaultLimit=25] - Default items per page
  * @returns {{ page: number, limit: number, skip: number }}
  */
+// Hard upper bound on pagination — prevents a malicious / buggy client from
+// requesting `limit=1000000` and OOMing the backend or hammering Postgres.
+// 500 is high enough for any legitimate paginated list use case. Exports
+// already have dedicated streaming endpoints.
+const MAX_PAGINATION_LIMIT = 500;
+
 export const parsePagination = (query, defaultLimit = 25) => {
-  const page = parseInt(query.page) || 1;
-  const limit = parseInt(query.limit) || defaultLimit;
+  const page = Math.max(1, parseInt(query.page) || 1);
+  const requested = parseInt(query.limit) || defaultLimit;
+  const limit = Math.min(Math.max(1, requested), MAX_PAGINATION_LIMIT);
   const skip = (page - 1) * limit;
   return { page, limit, skip };
 };
