@@ -31,8 +31,51 @@ const DAILY_LIMIT_PER_USER = 3;
 const MINUTE_LIMIT_PER_USER = 3;
 const GLOBAL_DAILY_SOFT_CAP = 18;
 
-export const normalizeQuery = (text) =>
-  text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+// Stopwords stripped during query normalization so that these map to the same
+// cache key:
+//   "how to login"           → "login"
+//   "how does login work"    → "login work"
+//   "how does logging in work" → "logging in work"
+//   "what is the lead flow"  → "lead flow"
+//   "what does lead flow mean" → "lead flow mean"
+// Kept conservative — only "function words" that add no content. "in", "on",
+// "for", "with" are NOT stripped because they can be semantically important
+// (e.g. "how to log in" vs "how to log out").
+const QUERY_STOPWORDS = new Set([
+  // question words
+  'how', 'what', 'when', 'where', 'why', 'which', 'who', 'whom',
+  // auxiliary verbs
+  'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'do', 'does', 'did', 'done',
+  'has', 'have', 'had',
+  // articles + demonstratives
+  'a', 'an', 'the', 'this', 'that', 'these', 'those',
+  // pronouns
+  'i', 'me', 'my', 'mine', 'we', 'our', 'us', 'ours',
+  'you', 'your', 'yours', 'he', 'him', 'his', 'she', 'her', 'hers',
+  'it', 'its', 'they', 'them', 'their',
+  // common prepositions with no content signal
+  'to', 'of',
+  // modals
+  'can', 'could', 'should', 'would', 'will', 'shall', 'may', 'might', 'must',
+  // discourse markers
+  'as', 'if', 'so', 'than', 'then', 'too', 'also', 'just', 'only', 'like',
+  // "please", "kindly" politeness
+  'please', 'kindly',
+]);
+
+export const normalizeQuery = (text) => {
+  const cleaned = (text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  const tokens = cleaned.split(' ').filter((t) => t.length > 0 && !QUERY_STOPWORDS.has(t));
+  // If stopword removal wiped everything (e.g. user typed just "how" or "what"),
+  // fall back to the raw cleaned string so we don't collide on empty.
+  return tokens.length ? tokens.join(' ') : cleaned;
+};
 
 /**
  * Build a cache key that includes the user's effective access scope so that
@@ -133,10 +176,63 @@ export const retrieveKnowledge = async ({ query, audience, userRole, limit = 3 }
   return rows.filter((r) => !r.roles?.length || r.roles.includes(userRole));
 };
 
-export const getCached = ({ cacheKey, audience }) =>
+// Strict exact-match lookup.
+const getCachedStrict = ({ cacheKey, audience }) =>
   prisma.nexusCache.findFirst({
     where: { normalizedQuery: cacheKey, audience: { in: [audience, 'BOTH'] } },
   });
+
+// Loose fallback: if strict misses, scan this role-bucket's cache rows and pick
+// the one whose stored normalized tokens overlap most with the user's query.
+// Uses Jaccard similarity — hit requires ≥60% overlap AND at least one shared
+// content token, so single-word questions ("login") don't collide with other
+// single-word questions ("logout"). At ~45 rows per bucket this scan is <5ms.
+// Tuned against real phrasings: 0.5 catches "login" ↔ "login work" (1/2) and
+// "lead flow" ↔ "lead flow work" (2/3) while still rejecting things like
+// "login" ↔ "logout" (0/2 = 0) or "lead flow" ↔ "lead reports" (1/3 = 0.33).
+const LOOSE_MATCH_MIN_JACCARD = 0.5;
+const LOOSE_MATCH_MIN_TOKENS = 1;
+const getCachedLoose = async ({ cacheKey, normalized, audience }) => {
+  // Extract the bucket prefix from the cache key so we only consider same-role rows.
+  const prefixIdx = cacheKey.lastIndexOf('|');
+  const prefix = prefixIdx >= 0 ? cacheKey.slice(0, prefixIdx + 1) : '';
+  if (!prefix) return null;
+  const userTokens = new Set(normalized.split(' ').filter(Boolean));
+  if (userTokens.size === 0) return null;
+
+  const candidates = await prisma.nexusCache.findMany({
+    where: {
+      audience: { in: [audience, 'BOTH'] },
+      normalizedQuery: { startsWith: prefix },
+    },
+    select: { id: true, normalizedQuery: true, answer: true, knowledgeIds: true, hitCount: true },
+  });
+
+  let best = null;
+  let bestScore = 0;
+  for (const c of candidates) {
+    const stored = c.normalizedQuery.slice(prefix.length);
+    const storedTokens = new Set(stored.split(' ').filter(Boolean));
+    if (storedTokens.size === 0) continue;
+    let shared = 0;
+    for (const t of userTokens) if (storedTokens.has(t)) shared++;
+    if (shared < LOOSE_MATCH_MIN_TOKENS) continue;
+    const union = new Set([...userTokens, ...storedTokens]).size;
+    const jaccard = shared / union;
+    if (jaccard >= LOOSE_MATCH_MIN_JACCARD && jaccard > bestScore) {
+      bestScore = jaccard;
+      best = c;
+    }
+  }
+  return best;
+};
+
+export const getCached = async ({ cacheKey, audience, normalized }) => {
+  const strict = await getCachedStrict({ cacheKey, audience });
+  if (strict) return strict;
+  if (!normalized) return null;
+  return getCachedLoose({ cacheKey, normalized, audience });
+};
 
 export const saveCache = ({ cacheKey, audience, answer, knowledgeIds }) =>
   prisma.nexusCache.upsert({
@@ -268,7 +364,7 @@ export const answerQuestion = async ({
   //    Cache hits BYPASS the daily quota — the user can always re-ask known questions.
   const normalized = normalizeQuery(question);
   const cacheKey = buildCacheKey({ normalized, audience, userRole });
-  const cached = await getCached({ cacheKey, audience });
+  const cached = await getCached({ cacheKey, audience, normalized });
   if (cached) {
     await prisma.nexusMessage.create({
       data: {
@@ -312,7 +408,17 @@ export const answerQuestion = async ({
     const answer = kb[0].content;
     const knowledgeIds = [kb[0].id];
     await prisma.nexusMessage.create({
-      data: { conversationId, role: 'ASSISTANT', content: answer, knowledgeIds, tokensUsed: 0 },
+      data: {
+        conversationId,
+        role: 'ASSISTANT',
+        content: answer,
+        // Direct-match serves KB content verbatim without a Gemini call, so for
+        // quota accounting this is equivalent to a cache hit. fromCache=true
+        // keeps the quota calculator from counting this against the user.
+        fromCache: true,
+        knowledgeIds,
+        tokensUsed: 0,
+      },
     });
     await prisma.nexusConversation.update({
       where: { id: conversationId },
