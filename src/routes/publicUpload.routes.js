@@ -2,7 +2,7 @@ import express from 'express';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import prisma from '../config/db.js';
 import {
   validateUploadToken,
@@ -17,7 +17,10 @@ const router = express.Router();
 // the upload-link token (shared with the customer), so anyone with the URL
 // can hit these endpoints — without these limits a leaked token could burn
 // Cloudinary quota / storage indefinitely.
-const tokenKeyGenerator = (req) => req.params?.token || req.ip;
+// Key by token when present, else fall through to the library's IP-safe
+// keyGenerator (handles IPv6 correctly).
+const tokenKeyGenerator = (req, res) =>
+  req.params?.token || ipKeyGenerator(req, res);
 
 const uploadRateLimit = rateLimit({
   windowMs: 10 * 60 * 1000,   // 10 min window

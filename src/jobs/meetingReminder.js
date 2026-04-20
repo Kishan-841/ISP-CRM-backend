@@ -30,7 +30,11 @@ async function fireSamMeetingReminders(windowStart, windowEnd) {
   const meetings = await prisma.sAMMeeting.findMany({
     where: {
       meetingDate: { gte: windowStart, lte: windowEnd },
-      status: { in: ['SCHEDULED'] },   // ignore COMPLETED / CANCELLED
+      // SAMMeeting.status defaults to 'COMPLETED' in the schema because the
+      // original flow is "log MOM after the fact". But users can also use
+      // it to schedule a future meeting, which also lands here with the
+      // default status. We remind on any non-cancelled future-dated meeting.
+      status: { not: 'CANCELLED' },
     },
     select: {
       id: true,
