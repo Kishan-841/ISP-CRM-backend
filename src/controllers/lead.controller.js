@@ -5521,20 +5521,36 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
       : (currentSharedVia ? `${currentSharedVia},docs_verification` : 'docs_verification');
 
     // Prepare update data
-    // OPS approval is no longer part of the doc-submission flow (removed in
-    // commit dddc497 — BDM submits directly, docs team picks it up next).
-    // Auto-approve OPS so the lead lands in the Docs queue immediately
-    // instead of getting stuck in the deprecated OPS queue. The old
-    // PENDING → OPS manual-approval path caused re-uploaded leads to
-    // vanish from Docs/Accounts/BDM dashboards.
+    // OPS + Sales Director (SA2) approvals are quotation-stage gates. On a
+    // DOC re-upload (after Accounts rejected and Docs sent back to BDM) the
+    // quote was already approved upstream — the lead should land directly
+    // in the Docs queue, NOT bounce through OPS + SA2 approval again.
+    //
+    // Preserve a prior SA2 decision: if SA2 was explicitly REJECTED, don't
+    // silently flip it to APPROVED. In every other case (already APPROVED,
+    // still PENDING, or null because this is the first submit) force to
+    // APPROVED so the lead keeps moving.
+    const preserveSa2Rejection = lead.superAdmin2ApprovalStatus === 'REJECTED';
     const updateData = {
       // Update sharedVia to move lead to docs verification stage
       sharedVia: newSharedVia,
       // Auto-approve OPS — Docs Team queue requires opsApprovalStatus=APPROVED
       opsApprovalStatus: 'APPROVED',
-      opsApprovedAt: new Date(),
-      opsApprovedById: userId,
+      opsApprovedAt: lead.opsApprovedAt || new Date(),
+      opsApprovedById: lead.opsApprovedById || userId,
       opsRejectedReason: null,
+      // Auto-approve SA2 too so the lead isn't re-queued for Sales Director
+      // after a routine doc re-upload. Keep the original approval timestamp
+      // if one exists (accurate audit trail for when the quote was actually
+      // approved). Only overwrite if it's missing.
+      ...(preserveSa2Rejection
+        ? {}
+        : {
+            superAdmin2ApprovalStatus: 'APPROVED',
+            superAdmin2ApprovedAt: lead.superAdmin2ApprovedAt || new Date(),
+            superAdmin2ApprovedById: lead.superAdmin2ApprovedById || userId,
+            superAdmin2RejectedReason: null,
+          }),
       // Reset docs verification status when pushed
       docsVerifiedAt: null,
       docsVerifiedById: null,
