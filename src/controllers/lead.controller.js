@@ -404,7 +404,7 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
     const userRole = req.user.role;
 
     // Only BDM-family roles can add direct leads to their own queue
-    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'].includes(userRole)) {
+    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'].includes(userRole)) {
       return res.status(403).json({ message: 'Only BDM users can add direct leads.' });
     }
 
@@ -11325,7 +11325,7 @@ export const createOpportunity = asyncHandler(async function createOpportunity(r
     const userName = req.user.name;
     const userRole = req.user.role;
 
-    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'].includes(userRole)) {
+    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'].includes(userRole)) {
       return res.status(403).json({ message: 'Only BDM users can create opportunities.' });
     }
 

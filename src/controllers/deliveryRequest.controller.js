@@ -823,7 +823,9 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
             serialNumbers: remainingSerials,
             receivedQuantity: remainingSerials.length,
             quantity: remainingSerials.length,
-            status: remainingSerials.length === 0 ? 'ASSIGNED' : 'IN_STORE'
+            // POItemStatus only has PURCHASED / IN_STORE. Fully-assigned items
+            // stay in IN_STORE with quantity=0 — callers check quantity, not status.
+            status: 'IN_STORE'
           }
         });
       }
