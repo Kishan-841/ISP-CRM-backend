@@ -131,11 +131,22 @@ import {
   revokeUploadLink,
   setUploadMethod
 } from '../controllers/publicUpload.controller.js';
+import {
+  getDeletionPreview,
+  deleteLeadEntirelyHandler,
+  getDeletionAuditList,
+} from '../controllers/leadDeletion.controller.js';
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(auth);
+
+// ========== MASTER-ONLY LEAD DELETION ==========
+// Permanently wipes a lead and every linked record. Controller enforces role.
+router.get('/deletion-audit', getDeletionAuditList);
+router.get('/:id/deletion-preview', getDeletionPreview);
+router.post('/:id/delete-entirely', deleteLeadEntirelyHandler);
 
 // Get BDM users for assignment dropdown (all authenticated users)
 router.get('/bdm-users', getBDMUsers);

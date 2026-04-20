@@ -113,6 +113,8 @@ model User {
   // NEXUS chatbot relations
   nexusConversations                 NexusConversation[]   @relation("NexusConversationUser")
   nexusKnowledgeCreated              NexusKnowledge[]      @relation("NexusKnowledgeCreatedBy")
+  // Master deletion audit
+  leadDeletionsPerformed             LeadDeletionAudit[]   @relation("LeadDeletionsPerformed")
 
   @@index([teamLeaderId])
 }
@@ -2194,4 +2196,33 @@ model NexusCache {
 
   @@index([audience, lastHitAt])
   @@index([knowledgeIds])
+}
+
+// ============================================================
+// Master lead deletion — permanent audit log
+// A MASTER / SUPER_ADMIN triggers deleteLeadEntirely(), which wipes
+// every record tied to the lead. Before running, we write one row here
+// with a snapshot of what was deleted so the action is traceable
+// forever. This table is never cascaded.
+// ============================================================
+
+model LeadDeletionAudit {
+  id                   String   @id @default(uuid())
+  leadId               String   // orphaned reference — lead no longer exists
+  leadNumber           String?
+  companyName          String?
+  contactName          String?
+  phone                String?
+  email                String?
+  customerUsername     String?
+  alsoDeletedCampaignData Boolean @default(false)
+  deletedById          String
+  deletedBy            User     @relation("LeadDeletionsPerformed", fields: [deletedById], references: [id])
+  deletedAt            DateTime @default(now())
+  reason               String   @db.Text
+  snapshot             Json     // { counts per table, key identifiers }
+
+  @@index([deletedAt])
+  @@index([deletedById])
+  @@index([leadId])
 }
