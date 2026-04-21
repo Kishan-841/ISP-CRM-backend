@@ -343,6 +343,11 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       deliveryStatus: true,
       createdAt: true,
       isColdLead: true,
+      creationSource: true,
+      installationStartedById: true,
+      installationCompletedById: true,
+      installationStartedBy:   { select: { id: true, name: true, role: true } },
+      installationCompletedBy: { select: { id: true, name: true, role: true } },
       quotationAttachments: true,
       documents: true,
       loginCompletedAt: true,
@@ -419,7 +424,15 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
           isSelfGenerated: true,
           createdBy: { select: { id: true, name: true, role: true } },
           assignedToId: true,
-          campaign: { select: { id: true, name: true, type: true } },
+          // campaign.createdBy attributes who uploaded the campaign itself —
+          // needed for BULK_UPLOAD_BDM vs BULK_UPLOAD_ADMIN attribution in
+          // the journey's opening event.
+          campaign: {
+            select: {
+              id: true, name: true, type: true, code: true,
+              createdBy: { select: { id: true, name: true, role: true } },
+            },
+          },
         },
       },
     },
@@ -429,9 +442,13 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     return res.status(404).json({ message: 'Customer not found.' });
   }
 
-  // Fetch call logs, ISR user, docs verifier, delivery requests, status change logs,
-  // document upload links, and login-completed user in parallel.
-  const [callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs, uploadLinks, loginCompletedByUser, nocAssignedByUser, vendorSetupByUser] = await Promise.all([
+  // Fetch all timeline-relevant auxiliary data in parallel. Every addition
+  // stays within a single Promise.all round-trip — avoids staircase latency.
+  const [
+    callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs,
+    uploadLinks, loginCompletedByUser, nocAssignedByUser, vendorSetupByUser,
+    samAssignment, firstInvoice, firstPayment,
+  ] = await Promise.all([
     lead.campaignData?.id
       ? prisma.callLog.findMany({
           where: { campaignDataId: lead.campaignData.id },
@@ -546,66 +563,97 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
           select: { id: true, name: true, role: true },
         })
       : null,
+    // Post-activation events — SAM, first invoice, first payment. Each
+    // returns null if absent, so the timeline skips the row cleanly.
+    // SAMAssignment uses customerId (=leadId) and has only one row per customer.
+    prisma.sAMAssignment.findUnique({
+      where: { customerId: id },
+      select: {
+        id: true, assignedAt: true,
+        samExecutive: { select: { id: true, name: true, role: true } },
+        assignedBy:   { select: { id: true, name: true, role: true } },
+      },
+    }),
+    prisma.invoice.findFirst({
+      where: { leadId: id },
+      select: { id: true, invoiceNumber: true, invoiceDate: true, grandTotal: true },
+      orderBy: { invoiceDate: 'asc' },
+    }),
+    prisma.invoicePayment.findFirst({
+      where: { invoice: { leadId: id } },
+      select: {
+        id: true, amount: true, paymentDate: true, paymentMode: true,
+        createdBy: { select: { id: true, name: true, role: true } },
+      },
+      orderBy: { paymentDate: 'asc' },
+    }),
   ]);
 
   // ─── Detect lead origin ─────────────────────────────────────────────
-  // Priority order:
-  //   1. COLD_LEAD   — BDM added a cold lead (isColdLead flag)
-  //   2. BDM_SELF    — BDM used "Create Opportunity" (synthetic campaign data)
-  //   3. CAMPAIGN_ISR — standard ISR → BDM pipeline
-  //   4. DIRECT       — fallback when no campaignData exists at all
-  let leadOrigin = 'CAMPAIGN_ISR';
-  let leadOriginLabel = 'Campaign → ISR';
-  let leadOriginDescription = 'Lead came from a campaign and was called by an ISR before being passed to a BDM.';
-  const campaignType = lead.campaignData?.campaign?.type;
-  const isSelf = lead.campaignData?.isSelfGenerated === true || campaignType === 'SELF';
-
-  if (lead.isColdLead) {
-    leadOrigin = 'COLD_LEAD';
-    leadOriginLabel = 'Cold Lead';
-    leadOriginDescription = 'Cold lead added directly by a BDM without ISR involvement. Still needs qualification.';
-  } else if (isSelf) {
-    leadOrigin = 'BDM_SELF';
-    leadOriginLabel = 'Create Opportunity';
-    leadOriginDescription = 'Opportunity was created directly by a BDM — no ISR was involved. Goes straight to the Feasibility Team.';
-  } else if (!lead.campaignData) {
-    leadOrigin = 'DIRECT';
-    leadOriginLabel = 'Direct Lead';
-    leadOriginDescription = 'Lead created directly without campaign data.';
-  } else if (isrUser && isrUser.role !== 'ISR') {
-    // Campaign exists but the "assigned" user isn't actually an ISR.
-    leadOrigin = 'DIRECT';
-    leadOriginLabel = 'Direct Lead';
-    leadOriginDescription = 'Lead created with campaign data but no ISR calling phase.';
-  }
-
-  const showISRStages = leadOrigin === 'CAMPAIGN_ISR';
+  // creationSource is set once at creation by the spawning controller —
+  // createDirectLead, createOpportunity, convertToLead, etc. No more
+  // fragile inference (which mis-identified Add Lead as Create Opportunity
+  // because both set isSelfGenerated=true).
+  const ORIGIN_LABELS = {
+    BULK_UPLOAD_BDM:   { label: 'Campaign → ISR (BDM-Uploaded Data)',   description: 'A BDM/Team Leader uploaded this contact into a campaign. ISR called them and converted to a lead.' },
+    BULK_UPLOAD_ADMIN: { label: 'Campaign → ISR (Admin-Uploaded Data)', description: 'An admin uploaded this contact into a campaign. ISR called them and converted to a lead.' },
+    ISR_SELF_DATA:     { label: 'ISR Self-Sourced Data',                description: 'An ISR added their own contact, called them, and converted to a lead.' },
+    BDM_DIRECT_LEAD:   { label: 'Direct Lead (Add Lead button)',        description: "BDM added this lead via the 'Add Lead' button on the New Lead Assigned page. Goes through BDM qualification before Feasibility." },
+    BDM_OPPORTUNITY:   { label: 'Opportunity (Created by BDM)',         description: "BDM used 'Create Opportunity' — qualification was skipped and the lead was sent straight to the Feasibility Team." },
+    COLD_LEAD:         { label: 'Cold Lead',                             description: 'Cold lead added by a BDM after a lukewarm meeting. Needs completion before moving forward.' },
+    SAM_REFERRAL:      { label: 'SAM Referral',                          description: 'Existing customer referred a new opportunity through the SAM team.' },
+    UNKNOWN:           { label: 'Legacy Lead',                            description: "This lead predates the origin-tracking system. Best-effort attribution below." },
+  };
+  const leadOrigin = lead.creationSource || 'UNKNOWN';
+  const leadOriginLabel = ORIGIN_LABELS[leadOrigin]?.label || leadOrigin;
+  const leadOriginDescription = ORIGIN_LABELS[leadOrigin]?.description || '';
+  // ISR-phase stages render only when the pipeline actually went through ISR.
+  const showISRStages = ['BULK_UPLOAD_BDM', 'BULK_UPLOAD_ADMIN', 'ISR_SELF_DATA'].includes(leadOrigin);
 
   // Build timeline events from lead fields
   const timeline = [];
 
   // ─── Origin-specific opening events ─────────────────────────────────
-  if (leadOrigin === 'CAMPAIGN_ISR') {
+  // Each origin renders a distinct opening sequence. The 3 ISR-flow origins
+  // (BULK_UPLOAD_BDM/ADMIN, ISR_SELF_DATA) share the Data → ISR Assigned →
+  // ISR Calls → Lead Converted arc; they differ only in who the "uploader"
+  // is on the opening event.
+  if (showISRStages) {
+    const campaignName = lead.campaignData?.campaign?.name;
+    // Attribute the DATA_UPLOADED event to the correct human based on origin.
+    // For BULK_UPLOAD_*, the campaign.createdBy is the uploader (one campaign,
+    // many contacts). For ISR_SELF_DATA, it's the ISR on the campaignData row.
+    const uploader =
+      leadOrigin === 'ISR_SELF_DATA'
+        ? lead.campaignData?.createdBy
+        : (lead.campaignData?.campaign?.createdBy || lead.campaignData?.createdBy);
+
+    const uploaderLabel =
+      leadOrigin === 'BULK_UPLOAD_BDM'
+        ? `BDM/Team Leader uploaded this contact into campaign "${campaignName || '—'}".`
+        : leadOrigin === 'BULK_UPLOAD_ADMIN'
+        ? `Admin uploaded this contact into campaign "${campaignName || '—'}".`
+        : `ISR added this contact themselves${campaignName ? ` (campaign "${campaignName}")` : ''}.`;
+
     if (lead.campaignData) {
-      const addedBy = lead.campaignData.createdBy;
-      const addedByLabel = addedBy?.role === 'BDM' || addedBy?.role === 'BDM_CP' || addedBy?.role === 'BDM_TEAM_LEADER'
-        ? `BDM added this contact to the campaign${lead.campaignData.campaign?.name ? ` "${lead.campaignData.campaign.name}"` : ''}.`
-        : `Contact added to campaign${lead.campaignData.campaign?.name ? ` "${lead.campaignData.campaign.name}"` : ''}.`;
       timeline.push({
         stage: 'DATA_UPLOADED',
-        label: 'Contact Added to Campaign',
+        label: leadOrigin === 'ISR_SELF_DATA' ? 'ISR Added Contact' : 'Contact Added to Campaign',
         timestamp: lead.campaignData.createdAt,
-        user: addedBy,
-        details: addedByLabel,
+        user: uploader,
+        details: uploaderLabel,
       });
     }
     if (isrUser) {
       timeline.push({
         stage: 'ISR_ASSIGNED',
-        label: 'Assigned to ISR for Calling',
+        label: leadOrigin === 'ISR_SELF_DATA' ? 'ISR Calling Phase' : 'Assigned to ISR for Calling',
         timestamp: lead.campaignData?.createdAt,
         user: isrUser,
-        details: 'ISR will call this contact and decide whether to convert to a lead.',
+        details:
+          leadOrigin === 'ISR_SELF_DATA'
+            ? 'ISR will call and decide whether to convert.'
+            : 'ISR will call this contact and decide whether to convert to a lead.',
       });
     }
     callLogs.forEach((log, index) => {
@@ -628,21 +676,20 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     if (lead.assignedTo) {
       timeline.push({
         stage: 'BDM_ASSIGNED',
-        label: 'Assigned Back to BDM for Qualification',
+        label: 'Assigned to BDM for Qualification',
         timestamp: lead.createdAt,
         user: lead.assignedTo,
         details: `BDM will qualify the lead and push it to Feasibility.${lead.assignedTo.teamLeader ? ` Team Leader: ${lead.assignedTo.teamLeader.name}` : ''}`,
         meta: { teamLeader: lead.assignedTo.teamLeader },
       });
     }
-  } else if (leadOrigin === 'BDM_SELF') {
-    // BDM used Create Opportunity — one origin event, no ISR stages.
+  } else if (leadOrigin === 'BDM_OPPORTUNITY') {
     timeline.push({
       stage: 'OPPORTUNITY_CREATED',
       label: 'Opportunity Created',
       timestamp: lead.createdAt,
       user: lead.createdBy || lead.assignedTo,
-      details: 'BDM added this opportunity directly via Create Opportunity (no ISR involvement).',
+      details: "BDM used 'Create Opportunity' — qualification skipped, sent straight to Feasibility.",
     });
     if (lead.assignedTo && (!lead.createdBy || lead.assignedTo.id !== lead.createdBy.id)) {
       timeline.push({
@@ -654,13 +701,13 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         meta: { teamLeader: lead.assignedTo.teamLeader },
       });
     }
-  } else if (leadOrigin === 'COLD_LEAD') {
+  } else if (leadOrigin === 'BDM_DIRECT_LEAD') {
     timeline.push({
-      stage: 'COLD_LEAD_ADDED',
-      label: 'Cold Lead Added',
+      stage: 'LEAD_CREATED',
+      label: 'Lead Added by BDM',
       timestamp: lead.createdAt,
       user: lead.createdBy || lead.assignedTo,
-      details: 'BDM added a cold lead. Needs qualification before moving forward.',
+      details: "BDM added this lead via the 'Add Lead' button on the New Lead Assigned page.",
     });
     if (lead.assignedTo && (!lead.createdBy || lead.assignedTo.id !== lead.createdBy.id)) {
       timeline.push({
@@ -671,14 +718,31 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         meta: { teamLeader: lead.assignedTo.teamLeader },
       });
     }
+  } else if (leadOrigin === 'SAM_REFERRAL') {
+    timeline.push({
+      stage: 'LEAD_CREATED',
+      label: 'Referred via SAM',
+      timestamp: lead.createdAt,
+      user: lead.createdBy || lead.assignedTo,
+      details: 'An existing customer referred a new opportunity through the SAM team.',
+    });
+    if (lead.assignedTo) {
+      timeline.push({
+        stage: 'BDM_ASSIGNED',
+        label: 'Assigned to BDM',
+        timestamp: lead.createdAt,
+        user: lead.assignedTo,
+        meta: { teamLeader: lead.assignedTo.teamLeader },
+      });
+    }
   } else {
-    // DIRECT fallback
+    // UNKNOWN / legacy fallback
     timeline.push({
       stage: 'LEAD_CREATED',
       label: 'Lead Created',
       timestamp: lead.createdAt,
       user: lead.createdBy || lead.assignedTo,
-      details: 'Lead added directly without ISR or campaign flow.',
+      details: 'Lead created before origin tracking was introduced — source inferred.',
     });
     if (lead.assignedTo) {
       timeline.push({
@@ -688,6 +752,20 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         user: lead.assignedTo,
       });
     }
+  }
+
+  // Cold-lead state is orthogonal to origin — a lead from any origin can be
+  // parked as cold. Surface as its own milestone rather than overwriting the
+  // origin badge, so the journey still shows "where it came from" + "where
+  // it sits now." StatusChangeLog on isColdLead is surfaced in Phase B.
+  if (lead.isColdLead) {
+    timeline.push({
+      stage: 'COLD_LEAD_PARKED',
+      label: 'Parked as Cold Lead',
+      timestamp: lead.createdAt,
+      user: lead.assignedTo,
+      details: 'BDM parked this lead as cold after a lukewarm meeting — needs completion to move forward.',
+    });
   }
 
   if (lead.feasibilityAssignedTo) {
@@ -701,8 +779,13 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   }
 
-  // Feasibility review outcome — approval vs rejection
-  if (lead.feasibilityReviewedAt) {
+  // StatusChangeLog field-presence lookup — used to skip field-derived rows
+  // when the audit log has a more detailed history. Legacy leads (no audit
+  // entries yet) still get their current state rendered from lead fields.
+  const auditFieldsSeen = new Set(statusChangeLogs.map((l) => l.field));
+
+  // Feasibility review outcome — approval vs rejection (legacy path only)
+  if (lead.feasibilityReviewedAt && !auditFieldsSeen.has('feasibilityReview')) {
     const isFeasible = !!lead.feasibilityVendorType; // vendor chosen = feasible
     timeline.push({
       stage: isFeasible ? 'FEASIBILITY_APPROVED' : 'FEASIBILITY_REJECTED',
@@ -715,6 +798,11 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       isError: !isFeasible,
       meta: { notes: lead.feasibilityNotes },
     });
+  } else if (lead.feasibilityReviewedAt && lead.feasibilityVendorType && auditFieldsSeen.has('feasibilityReview')) {
+    // Even when audit log covers decisions, enrich the FEASIBILITY_APPROVED
+    // row with vendor-type + capex detail that's not in the log reason.
+    // No-op here — audit row stands. If we need richer detail later, we can
+    // merge meta fields. Keeping as comment so future readers know why.
   }
 
   // ─── Quote / Quotation phase ──────────────────────────────────────
@@ -756,17 +844,19 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   }
 
+  // Legacy SA2 approval renderer — skipped when audit log has decisions
+  const sa2InAudit = auditFieldsSeen.has('superAdmin2ApprovalStatus');
   if (lead.superAdmin2ApprovalStatus === 'APPROVED' && lead.superAdmin2ApprovedAt) {
-    timeline.push({
-      stage: 'SALES_DIRECTOR_APPROVED',
-      label: 'Sales Director Approved Quotation',
-      timestamp: lead.superAdmin2ApprovedAt,
-      user: lead.superAdmin2ApprovedBy,
-      details: 'Quotation approved — BDM can now share it with the customer and request documents.',
-    });
-
-    // Implicit "Shared with Customer" milestone — placed 1 minute after approval so it
-    // orders correctly in the table, without claiming a false precise timestamp.
+    if (!sa2InAudit) {
+      timeline.push({
+        stage: 'SALES_DIRECTOR_APPROVED',
+        label: 'Sales Director Approved Quotation',
+        timestamp: lead.superAdmin2ApprovedAt,
+        user: lead.superAdmin2ApprovedBy,
+        details: 'Quotation approved — BDM can now share it with the customer and request documents.',
+      });
+    }
+    // Quote-shared milestone is derived, not an audit event — always render.
     timeline.push({
       stage: 'QUOTE_SHARED',
       label: 'Quote Shared with Customer',
@@ -774,7 +864,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       user: lead.assignedTo,
       details: 'BDM shared the approved quotation with the customer (offline/email). Customer document collection begins next.',
     });
-  } else if (lead.superAdmin2ApprovalStatus === 'REJECTED' && lead.superAdmin2ApprovedAt) {
+  } else if (lead.superAdmin2ApprovalStatus === 'REJECTED' && lead.superAdmin2ApprovedAt && !sa2InAudit) {
     timeline.push({
       stage: 'SALES_DIRECTOR_REJECTED',
       label: 'Sales Director Rejected Quotation',
@@ -784,7 +874,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       isError: true,
     });
   }
-  if (lead.opsApprovalStatus === 'REJECTED' && lead.opsApprovedAt) {
+  if (lead.opsApprovalStatus === 'REJECTED' && lead.opsApprovedAt && !auditFieldsSeen.has('opsApprovalStatus')) {
     timeline.push({
       stage: 'OPS_REJECTED',
       label: 'OPS Rejected',
@@ -836,7 +926,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     }
   }
 
-  if (lead.docsVerifiedById) {
+  // Docs legacy renderer — skipped when audit log has any docsStatus entries
+  if (lead.docsVerifiedById && !auditFieldsSeen.has('docsStatus')) {
     timeline.push({
       stage: 'DOCS_VERIFIED',
       label: lead.docsRejectedReason ? 'Docs Rejected' : 'Docs Verified',
@@ -848,7 +939,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   }
 
-  if (lead.accountsVerifiedBy) {
+  // Accounts legacy renderer — skipped when audit log has accountsStatus entries
+  if (lead.accountsVerifiedBy && !auditFieldsSeen.has('accountsStatus')) {
     timeline.push({
       stage: 'ACCOUNTS_VERIFIED',
       label: lead.accountsRejectedReason ? 'Accounts Rejected' : 'Accounts Verified',
@@ -999,6 +1091,17 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   }
 
+  // NOC hand-off to Delivery (for install prep). Was on the lead but not rendered before.
+  if (lead.nocPushedToDeliveryAt) {
+    timeline.push({
+      stage: 'NOC_PUSHED_TO_DELIVERY',
+      label: 'NOC Pushed to Delivery for Installation',
+      timestamp: lead.nocPushedToDeliveryAt,
+      user: lead.nocPushedToDeliveryBy,
+      details: 'Circuit ID generated. Delivery team takes over for on-site installation.',
+    });
+  }
+
   if (lead.customerCreatedBy) {
     timeline.push({
       stage: 'CUSTOMER_CREATED',
@@ -1014,7 +1117,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       stage: 'INSTALLATION_STARTED',
       label: 'Installation Started',
       timestamp: lead.installationStartedAt,
-      user: null,
+      user: lead.installationStartedBy,
       details: 'On-site installation work began.',
     });
   }
@@ -1024,7 +1127,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       stage: 'INSTALLATION_COMPLETED',
       label: 'Installation Completed',
       timestamp: lead.installationCompletedAt,
-      user: null,
+      user: lead.installationCompletedBy,
       details: 'Connection installed and ready for speed test.',
     });
   }
@@ -1049,19 +1152,23 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   }
 
+  // Customer acceptance — the ACCEPTED path always renders from the field;
+  // the REJECTED path defers to the audit log when present, else falls back.
   if (lead.customerAcceptanceBy) {
     const accepted = lead.customerAcceptanceStatus === 'ACCEPTED';
-    timeline.push({
-      stage: accepted ? 'CUSTOMER_ACCEPTED' : 'CUSTOMER_REJECTED',
-      label: accepted ? 'Customer Accepted Service' : `Customer ${lead.customerAcceptanceStatus || 'Rejected'}`,
-      timestamp: lead.customerAcceptanceAt,
-      user: lead.customerAcceptanceBy,
-      details: accepted
-        ? 'Customer verified speed test results and accepted the service. Actual plan can now be activated.'
-        : (lead.customerAcceptanceNotes || `Customer ${String(lead.customerAcceptanceStatus || 'rejected').toLowerCase()} the service.`),
-      isError: !accepted,
-      meta: { status: lead.customerAcceptanceStatus },
-    });
+    if (accepted || !auditFieldsSeen.has('customerAcceptance')) {
+      timeline.push({
+        stage: accepted ? 'CUSTOMER_ACCEPTED' : 'CUSTOMER_REJECTED',
+        label: accepted ? 'Customer Accepted Service' : `Customer ${lead.customerAcceptanceStatus || 'Rejected'}`,
+        timestamp: lead.customerAcceptanceAt,
+        user: lead.customerAcceptanceBy,
+        details: accepted
+          ? 'Customer verified speed test results and accepted the service. Actual plan can now be activated.'
+          : (lead.customerAcceptanceNotes || `Customer ${String(lead.customerAcceptanceStatus || 'rejected').toLowerCase()} the service.`),
+        isError: !accepted,
+        meta: { status: lead.customerAcceptanceStatus },
+      });
+    }
   }
 
   if (lead.actualPlanCreatedBy) {
@@ -1074,24 +1181,134 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   }
 
-  // ─── Reassignment events from the audit log ────────────────────────
-  // Promote assignedToId / feasibilityAssignedToId / nocAssignedToId changes
-  // from the audit log into main timeline rows so they're not buried.
+  // ─── Post-activation events (optional, only render when data exists) ──
+  // These close the story of a customer's onboarding — SAM takes over, first
+  // invoice issued, first payment received. Missing rows simply don't render.
+  if (samAssignment) {
+    timeline.push({
+      stage: 'SAM_ASSIGNED',
+      label: 'SAM Executive Assigned',
+      timestamp: samAssignment.assignedAt,
+      user: samAssignment.assignedBy,
+      details: samAssignment.samExecutive
+        ? `${samAssignment.samExecutive.name} will handle post-sale service.`
+        : 'SAM Executive assigned for post-sale service.',
+      meta: { samExecutive: samAssignment.samExecutive },
+    });
+  }
+  if (firstInvoice) {
+    timeline.push({
+      stage: 'FIRST_INVOICE',
+      label: 'First Invoice Generated',
+      timestamp: firstInvoice.invoiceDate,
+      user: null,
+      details: `${firstInvoice.invoiceNumber} · ₹${Number(firstInvoice.grandTotal || 0).toFixed(2)}`,
+      meta: { invoiceNumber: firstInvoice.invoiceNumber, amount: firstInvoice.grandTotal },
+    });
+  }
+  if (firstPayment) {
+    timeline.push({
+      stage: 'FIRST_PAYMENT',
+      label: 'First Payment Received',
+      timestamp: firstPayment.paymentDate,
+      user: firstPayment.createdBy,
+      details: `₹${Number(firstPayment.amount || 0).toFixed(2)} via ${firstPayment.paymentMode}`,
+      meta: { amount: firstPayment.amount, mode: firstPayment.paymentMode },
+    });
+  }
+
+  // ─── Events sourced from StatusChangeLog ───────────────────────────
+  // Two classes of events live in the audit log:
+  //   1. Reassignments (promoted to main timeline, not buried)
+  //   2. Rejection + re-submit events (append-only — every instance of
+  //      "docs rejected" or "BDM re-uploaded" gets its own row so the full
+  //      ping-pong is visible)
+  //
+  // The per-field derived rows on the lead (docsVerified, accountsVerified,
+  // opsApproval, superAdmin2Approval) still drive happy-path events above.
+  // This block is additive: StatusChangeLog rows never overwrite those.
   const REASSIGNMENT_FIELDS = {
     assignedToId: 'Lead Reassigned to Another BDM',
     feasibilityAssignedToId: 'Feasibility Reassigned',
     nocAssignedToId: 'NOC Reassigned',
     deliveryAssignedToId: 'Delivery Reassigned',
   };
+  // Rejection + re-submit rows. Each entry: [field, decisionValue, stage, labelFn]
+  // label is a function so we can surface reason + previous state when useful.
+  const AUDIT_EVENT_MAP = {
+    // Disposition events
+    bdmDisposition:              { stage: 'LEAD_DROPPED',               phase: 50,  label: 'Lead Dropped by BDM',              isError: true },
+    coldLeadParked:              { stage: 'COLD_LEAD_PARKED',            phase: 52,  label: 'Parked as Cold Lead',              isError: false },
+    feasibilityReview:           { stage: null, /* branch on newValue */ phase: 70,  label: null,                                isError: null },
+    opsApprovalStatus:           { stage: null,                          phase: 100, label: null,                                isError: null },
+    superAdmin2ApprovalStatus:   { stage: null,                          phase: 100, label: null,                                isError: null },
+    docsStatus:                  { stage: null,                          phase: 150, label: null,                                isError: null },
+    accountsStatus:              { stage: null,                          phase: 170, label: null,                                isError: null },
+    customerAcceptance:          { stage: 'CUSTOMER_REJECTED',           phase: 330, label: 'Customer Rejected Service',        isError: true },
+    // Re-submission events
+    docsSubmitted:               { stage: 'DOCS_SUBMITTED',              phase: 115, label: 'Documents Submitted by BDM',       isError: false },
+    docsResubmitted:             { stage: 'DOCS_RESUBMITTED',            phase: 115, label: 'Documents Re-uploaded by BDM',     isError: false, isRetry: true },
+    quotationSubmitted:          { stage: 'QUOTATION_SUBMITTED',         phase: 90,  label: 'Quotation Submitted for Approval', isError: false },
+    quotationResubmitted:        { stage: 'QUOTATION_RESUBMITTED',       phase: 90,  label: 'Quotation Re-submitted',           isError: false, isRetry: true },
+    feasibilityResubmitted:      { stage: 'FEASIBILITY_RESUBMITTED',     phase: 65,  label: 'Pushed to Feasibility Again',      isError: false, isRetry: true },
+    quotationUploaded:           { stage: 'QUOTATION_UPLOADED',          phase: 80,  label: 'Quotation Uploaded',               isError: false },
+  };
+
   statusChangeLogs.forEach((log) => {
-    const label = REASSIGNMENT_FIELDS[log.field];
-    if (!label) return;
+    // Reassignment path
+    const reassignLabel = REASSIGNMENT_FIELDS[log.field];
+    if (reassignLabel) {
+      timeline.push({
+        stage: 'REASSIGNMENT',
+        label: reassignLabel,
+        timestamp: log.changedAt,
+        user: log.changedBy,
+        details: `${log.oldValue || '—'} → ${log.newValue || '—'}${log.reason ? ` · ${log.reason}` : ''}`,
+      });
+      return;
+    }
+
+    // Audit-backed event path
+    const mapped = AUDIT_EVENT_MAP[log.field];
+    if (!mapped) return;
+
+    // Dynamic mapping for multi-decision fields (branch on newValue)
+    let stage = mapped.stage;
+    let label = mapped.label;
+    let isError = mapped.isError;
+
+    if (log.field === 'feasibilityReview') {
+      if (log.newValue === 'NOT_FEASIBLE') {
+        stage = 'FEASIBILITY_REJECTED'; label = 'Feasibility Rejected'; isError = true;
+      } else { stage = 'FEASIBILITY_APPROVED'; label = 'Feasibility Approved'; isError = false; }
+    } else if (log.field === 'opsApprovalStatus') {
+      if (log.newValue === 'REJECTED') {
+        stage = 'OPS_REJECTED'; label = 'OPS Rejected Quotation'; isError = true;
+      } else { stage = 'OPS_APPROVED'; label = 'OPS Approved Quotation'; isError = false; }
+    } else if (log.field === 'superAdmin2ApprovalStatus') {
+      if (log.newValue === 'REJECTED') {
+        stage = 'SALES_DIRECTOR_REJECTED'; label = 'Sales Director Rejected Quotation'; isError = true;
+      } else { stage = 'SALES_DIRECTOR_APPROVED'; label = 'Sales Director Approved Quotation'; isError = false; }
+    } else if (log.field === 'docsStatus') {
+      if (log.newValue === 'REJECTED') {
+        stage = 'DOCS_REJECTED'; label = 'Docs Rejected'; isError = true;
+      } else { stage = 'DOCS_VERIFIED'; label = 'Docs Verified'; isError = false; }
+    } else if (log.field === 'accountsStatus') {
+      if (log.newValue === 'ACCOUNTS_REJECTED') {
+        stage = 'ACCOUNTS_REJECTED'; label = 'Accounts Rejected'; isError = true;
+      } else if (log.newValue === 'SENT_BACK_TO_BDM') {
+        stage = 'ACCOUNTS_SENT_BACK'; label = 'Sent Back to BDM for Re-upload'; isError = true;
+      } else { stage = 'ACCOUNTS_APPROVED'; label = 'Accounts Approved'; isError = false; }
+    }
+
     timeline.push({
-      stage: 'REASSIGNMENT',
+      stage,
       label,
       timestamp: log.changedAt,
       user: log.changedBy,
-      details: `${log.oldValue || '—'} → ${log.newValue || '—'}${log.reason ? ` · ${log.reason}` : ''}`,
+      details: log.reason || (log.newValue ? `Status: ${log.newValue}` : null),
+      isError: !!isError,
+      meta: { auditField: log.field, auditOldValue: log.oldValue, auditNewValue: log.newValue, isRetry: !!mapped.isRetry },
     });
   });
 
@@ -1109,24 +1326,36 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     OPPORTUNITY_CREATED: 40,
     COLD_LEAD_ADDED: 40,
     BDM_ASSIGNED: 50,
+    LEAD_DROPPED: 51,
+    COLD_LEAD_PARKED: 52,
     FEASIBILITY_ASSIGNED: 60,
+    FEASIBILITY_RESUBMITTED: 65,
     FEASIBILITY_APPROVED: 70,
     FEASIBILITY_REJECTED: 70,
     QUOTATION_UPLOADED: 80,
     QUOTATION_SUBMITTED: 90,
+    QUOTATION_RESUBMITTED: 90,
     SALES_DIRECTOR_APPROVED: 100,
     SALES_DIRECTOR_REJECTED: 100,
+    OPS_APPROVED: 100,
     OPS_REJECTED: 100,
     QUOTE_SHARED: 110,
+    DOCS_SUBMITTED: 115,
+    DOCS_RESUBMITTED: 115,
     DOCS_UPLOAD_LINK: 120,
     LOGIN_COMPLETED: 130,
     DOCS_UPLOADED: 140,
     DOCS_VERIFIED: 150,
+    DOCS_REJECTED: 150,
+    ACCOUNTS_APPROVED: 160,
     ACCOUNTS_VERIFIED: 160,
-    GST_VERIFIED: 170,
+    ACCOUNTS_REJECTED: 170,
+    ACCOUNTS_SENT_BACK: 170,
+    GST_VERIFIED: 175,
     PUSHED_TO_INSTALLATION: 180,
     NOC_ASSIGNED: 190,
     DELIVERY_VENDOR_SETUP: 200,
+    NOC_PUSHED_TO_DELIVERY: 205,
     DELIVERY_REQUEST_CREATED: 210,
     DELIVERY_SUPER_ADMIN_APPROVED: 220,
     DELIVERY_SUPER_ADMIN_REJECTED: 220,
@@ -1144,6 +1373,9 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     CUSTOMER_ACCEPTED: 330,
     CUSTOMER_REJECTED: 330,
     ACTUAL_PLAN: 340,
+    SAM_ASSIGNED: 400,
+    FIRST_INVOICE: 410,
+    FIRST_PAYMENT: 420,
     REASSIGNMENT: 999, // pushed to the end — audit-style events
   };
   const orderOf = (e) => STAGE_ORDER[e.stage] ?? 500;

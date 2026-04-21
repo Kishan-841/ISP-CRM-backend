@@ -54,6 +54,8 @@ model User {
   superAdmin2ApprovedLeads           Lead[]                @relation("SuperAdmin2ApprovedBy")
   pushedToInstallation               Lead[]                @relation("PushedToInstallation")
   speedTestUploadedLeads             Lead[]                @relation("SpeedTestUploadedBy")
+  installationStartedLeads           Lead[]                @relation("LeadInstallStarted")
+  installationCompletedLeads         Lead[]                @relation("LeadInstallCompleted")
   notifications                      Notification[]
   receiptBatchesVerified             ReceiptBatchLog[]     @relation("ReceiptBatchVerifiedBy")
   storeProductsCreated               StoreProduct[]        @relation("StoreProductCreatedBy")
@@ -351,6 +353,11 @@ model Lead {
   // a lukewarm meeting. Cold leads live in the Lead Pipeline tab and are
   // excluded from the Opportunity Pipeline until the BDM completes them.
   isColdLead                Boolean              @default(false)
+  // Origin of the lead — set once at creation, never inferred. Used by the
+  // Customer 360 journey tab to show the correct lead source and opening
+  // events. Replaces the old inference block that couldn't distinguish
+  // "Add Lead" from "Create Opportunity" (both set isSelfGenerated=true).
+  creationSource            LeadCreationSource   @default(UNKNOWN)
   // Simplified feasibility review fields (vendor setup moved to delivery)
   feasibilityVendorType     String?              // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
   tentativeCapex            Float?               // Feasibility team's CAPEX estimate
@@ -369,7 +376,9 @@ model Lead {
   customerAcceptanceStatus  String?
   customerAcceptanceScreenshot String?
   installationCompletedAt   DateTime?
+  installationCompletedById String?
   installationStartedAt     DateTime?
+  installationStartedById   String?
   latencyTestScreenshot     String?
   speedTestScreenshot       String?
   speedTestUploadedAt       DateTime?
@@ -424,6 +433,8 @@ model Lead {
   superAdmin2ApprovedBy     User?                @relation("SuperAdmin2ApprovedBy", fields: [superAdmin2ApprovedById], references: [id], onDelete: SetNull)
   pushedToInstallationBy    User?                @relation("PushedToInstallation", fields: [pushedToInstallationById], references: [id], onDelete: SetNull)
   speedTestUploadedBy       User?                @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
+  installationStartedBy     User?                @relation("LeadInstallStarted",   fields: [installationStartedById],   references: [id], onDelete: SetNull)
+  installationCompletedBy   User?                @relation("LeadInstallCompleted", fields: [installationCompletedById], references: [id], onDelete: SetNull)
   products                  LeadProduct[]
   moms                      MOM[]
 
@@ -485,6 +496,7 @@ model Lead {
   @@index([customerGstNo])
   @@index([superAdmin2ApprovalStatus, status])
   @@index([isColdLead, assignedToId])
+  @@index([creationSource])
 }
 
 model LeadProduct {
@@ -1430,6 +1442,20 @@ enum LeadStatus {
 enum LeadType {
   QUALIFIED
   PUSHED_TO_PRESALES
+}
+
+// Origin of a lead — set at creation time so the Customer 360 journey can
+// attribute the lead to the correct source without ambiguous inference.
+// Every creation path in lead/campaign controllers writes one of these.
+enum LeadCreationSource {
+  BULK_UPLOAD_BDM      // BDM/TL uploaded campaign data, later converted by ISR
+  BULK_UPLOAD_ADMIN    // Admin/Master uploaded campaign data, later converted by ISR
+  ISR_SELF_DATA        // ISR added their own contact, then converted it
+  BDM_DIRECT_LEAD      // BDM clicked "Add Lead" on the New Lead Assigned page
+  BDM_OPPORTUNITY      // BDM clicked "Create Opportunity" (skips qualification)
+  COLD_LEAD            // BDM parked a cold lead from a lukewarm meeting
+  SAM_REFERRAL         // SAM referred an existing customer to a new opportunity
+  UNKNOWN              // Backfill default for legacy leads with ambiguous history
 }
 
 enum InterestLevel {

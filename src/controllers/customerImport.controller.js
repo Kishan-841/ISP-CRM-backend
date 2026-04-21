@@ -227,6 +227,10 @@ const createImportedCustomer = async (tx, cleaned, campaign, leadNumber, custome
       isImported: true,
       status: 'QUALIFIED',
       type: 'QUALIFIED',
+      // Legacy import — admin bulk-imported customer. Journey stages are
+      // retrofitted (all timestamps = now), so "BULK_UPLOAD_ADMIN" is the
+      // closest fit for the origin banner.
+      creationSource: 'BULK_UPLOAD_ADMIN',
       deliveryStatus: 'COMPLETED',
       customerAcceptanceStatus: 'ACCEPTED',
       customerAcceptanceAt: now,

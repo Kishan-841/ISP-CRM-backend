@@ -678,6 +678,10 @@ export const submitEnquiry = asyncHandler(async function submitEnquiry(req, res)
         status: 'NEW',
         requirements: requirements?.trim() || null,
         type: 'QUALIFIED',
+        // Customer-portal enquiries are referrals from an existing customer —
+        // route through the SAM origin bucket so the Customer 360 banner
+        // correctly attributes the source to customer referral.
+        creationSource: 'SAM_REFERRAL',
       },
     });
 

@@ -267,7 +267,15 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
     // Check if campaign data exists
     const campaignData = await prisma.campaignData.findUnique({
       where: { id: campaignDataId },
-      include: { lead: true, assignedByBdm: { select: { id: true, name: true } } }
+      include: {
+        lead: true,
+        assignedByBdm: { select: { id: true, name: true } },
+        // createdBy + campaign are needed to attribute the lead's creationSource.
+        // ISR_SELF_DATA vs BULK_UPLOAD_BDM vs BULK_UPLOAD_ADMIN all hinge on
+        // who originally uploaded this campaign contact — not who converts it.
+        createdBy: { select: { id: true, role: true } },
+        campaign: { select: { type: true, createdBy: { select: { role: true } } } },
+      }
     });
 
     if (!campaignData) {
@@ -298,6 +306,25 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
     // Generate sequential lead number
     const leadNumber = await generateLeadNumber();
 
+    // Resolve creationSource from the campaign-data uploader's role. ISR
+    // self-added contacts convert into ISR_SELF_DATA; BDM-family uploads
+    // become BULK_UPLOAD_BDM; admin uploads become BULK_UPLOAD_ADMIN. Fall
+    // back to UNKNOWN if none of the signals are present (very legacy data).
+    const uploaderRole = campaignData.createdBy?.role
+      || campaignData.campaign?.createdBy?.role
+      || null;
+    let creationSource = 'UNKNOWN';
+    if (campaignData.isSelfGenerated === true && uploaderRole === 'ISR') {
+      creationSource = 'ISR_SELF_DATA';
+    } else if (['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(uploaderRole)) {
+      creationSource = 'BULK_UPLOAD_BDM';
+    } else if (['SUPER_ADMIN', 'ADMIN', 'MASTER'].includes(uploaderRole)) {
+      creationSource = 'BULK_UPLOAD_ADMIN';
+    } else if (uploaderRole === 'ISR') {
+      // ISR uploaded it but didn't flag it self-generated — still ISR self-data.
+      creationSource = 'ISR_SELF_DATA';
+    }
+
     // Build lead data object
     const leadData = {
       campaignDataId,
@@ -306,6 +333,7 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
       createdById: userId,
       assignedToId: effectiveAssignedToId,
       status: 'NEW',
+      creationSource,
     };
 
     // If campaign data has a channel partner vendor, auto-set vendor on lead
@@ -542,6 +570,7 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
           assignedToId: userId,
           status: 'NEW',
           type: 'QUALIFIED',
+          creationSource: 'BDM_DIRECT_LEAD',
           ...(productIds && productIds.length > 0 && {
             products: { create: productIds.map((productId) => ({ productId })) }
           })
@@ -1892,6 +1921,31 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
       }
     });
 
+    // Journey audit — capture DROPPED and cold-lead parking as explicit events.
+    // QUALIFIED → Feasibility is already attributable via feasibilityAssignedAt
+    // on the lead, so no log needed for the happy path.
+    if (disposition === 'DROPPED') {
+      logStatusChange({
+        entityType: 'LEAD',
+        entityId: id,
+        field: 'bdmDisposition',
+        oldValue: lead.status,
+        newValue: 'DROPPED',
+        changedById: req.user.id,
+        reason: dropReason || notes || null,
+      });
+    } else if (disposition === 'QUALIFIED' && isColdLead && !lead.isColdLead) {
+      logStatusChange({
+        entityType: 'LEAD',
+        entityId: id,
+        field: 'coldLeadParked',
+        oldValue: null,
+        newValue: 'COLD',
+        changedById: req.user.id,
+        reason: notes || 'Parked as cold lead after lukewarm meeting',
+      });
+    }
+
     // Update products if provided
     if (productIds && Array.isArray(productIds) && productIds.length > 0) {
       // Delete existing product associations
@@ -2679,6 +2733,16 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
       }
     });
 
+    logStatusChange({
+      entityType: 'LEAD',
+      entityId: id,
+      field: 'feasibilityReview',
+      oldValue: lead.status,
+      newValue: decision,
+      changedById: ftUserId,
+      reason: decision === 'NOT_FEASIBLE' ? notes : null,
+    });
+
     if (lead.assignedToId) {
       if (decision === 'FEASIBLE') {
         notifyFeasibilityApproved(lead.assignedToId, {
@@ -3074,6 +3138,18 @@ export const opsTeamDisposition = asyncHandler(async function opsTeamDisposition
         createdBy: { select: { id: true, name: true, email: true } },
         assignedTo: { select: { id: true, name: true, email: true } }
       }
+    });
+
+    // Append-only audit row for the Customer 360 journey — captures every
+    // rejection/approval separately so re-pushes don't destroy history.
+    logStatusChange({
+      entityType: 'LEAD',
+      entityId: id,
+      field: 'opsApprovalStatus',
+      oldValue: lead.opsApprovalStatus,
+      newValue: decision,
+      changedById: userId,
+      reason: decision === 'REJECTED' ? reason : null,
     });
 
     // Sidebar refresh: OPS queue updated
@@ -3517,6 +3593,16 @@ export const superAdmin2Disposition = asyncHandler(async function superAdmin2Dis
       }
     });
 
+    logStatusChange({
+      entityType: 'LEAD',
+      entityId: id,
+      field: 'superAdmin2ApprovalStatus',
+      oldValue: lead.superAdmin2ApprovalStatus,
+      newValue: decision,
+      changedById: userId,
+      reason: decision === 'REJECTED' ? reason : null,
+    });
+
     // Sidebar refresh
     emitSidebarRefreshByRole('SUPER_ADMIN');
     if (decision === 'REJECTED') {
@@ -3881,6 +3967,16 @@ export const sendBackToBDM = asyncHandler(async function sendBackToBDM(req, res)
       }
     });
 
+    logStatusChange({
+      entityType: 'LEAD',
+      entityId: id,
+      field: 'accountsStatus',
+      oldValue: 'ACCOUNTS_REJECTED',
+      newValue: 'SENT_BACK_TO_BDM',
+      changedById: req.user.id,
+      reason: reason || 'Accounts rejected - requires document re-upload',
+    });
+
     res.json({
       message: 'Lead sent back to BDM for document re-upload',
       lead: { id: updated.id }
@@ -4069,6 +4165,16 @@ export const docsTeamDisposition = asyncHandler(async function docsTeamDispositi
           }
         }
       }
+    });
+
+    logStatusChange({
+      entityType: 'LEAD',
+      entityId: id,
+      field: 'docsStatus',
+      oldValue: lead.docsRejectedReason ? 'REJECTED' : (lead.docsVerifiedAt ? 'APPROVED' : 'PENDING'),
+      newValue: decision,
+      changedById: docsTeamUserId,
+      reason: decision === 'REJECTED' ? reason : null,
     });
 
     // Sidebar refresh: docs queue updated, if approved accounts gets new work
@@ -4279,6 +4385,9 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
     // If createAsLead is true, also create a Lead entry (not for SAM→ISR flow)
     if (effectiveCreateAsLead) {
       const leadNumber = await generateLeadNumber();
+      // SAM_EXECUTIVE/SAM_HEAD direct-create (no ISR routing) → SAM_REFERRAL.
+      // Otherwise this is an ISR creating their own lead → ISR_SELF_DATA.
+      const creationSource = isSAMRole ? 'SAM_REFERRAL' : 'ISR_SELF_DATA';
       const leadData = {
         campaignDataId: campaignData.id,
         leadNumber,
@@ -4286,7 +4395,8 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
         assignedToId: effectiveAssigneeId,
         linkedinUrl: linkedinUrl || null,
         status: 'NEW',
-        type: 'QUALIFIED'
+        type: 'QUALIFIED',
+        creationSource
       };
 
       // Add products if provided
@@ -5599,6 +5709,20 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
       }
     });
 
+    // Distinguish first-submit from a re-submit on the journey. A prior
+    // docsRejectedReason or accountsRejectedReason is the tell that BDM is
+    // fixing a rejection; else this is the first push to docs.
+    const wasRejected = !!(lead.docsRejectedReason || lead.accountsRejectedReason);
+    logStatusChange({
+      entityType: 'LEAD',
+      entityId: id,
+      field: wasRejected ? 'docsResubmitted' : 'docsSubmitted',
+      oldValue: wasRejected ? (lead.accountsRejectedReason ? 'ACCOUNTS_REJECTED' : 'DOCS_REJECTED') : null,
+      newValue: 'SUBMITTED',
+      changedById: userId,
+      reason: notes || null,
+    });
+
     // Format response
     const formattedLead = {
       id: updatedLead.id,
@@ -6270,6 +6394,16 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
           }
         }
       }
+    });
+
+    logStatusChange({
+      entityType: 'LEAD',
+      entityId: id,
+      field: 'accountsStatus',
+      oldValue: lead.accountsStatus || null,
+      newValue: decision === 'REJECTED' ? 'ACCOUNTS_REJECTED' : 'ACCOUNTS_APPROVED',
+      changedById: accountsUserId,
+      reason: decision === 'REJECTED' ? reason : null,
     });
 
     // Sidebar refresh: accounts queue updated, BDM can now push to installation
@@ -7615,14 +7749,16 @@ export const updateDeliveryStatus = asyncHandler(async function updateDeliverySt
       updateData.deliveryAssignedAt = new Date();
     }
 
-    // Set installation started timestamp
+    // Set installation started timestamp + actor (acting delivery team user)
     if (status === 'INSTALLING' && !lead.installationStartedAt) {
       updateData.installationStartedAt = new Date();
+      updateData.installationStartedById = userId;
     }
 
-    // Set installation completed timestamp when moving to demo plan pending
+    // Set installation completed timestamp + actor
     if (status === 'DEMO_PLAN_PENDING' && !lead.installationCompletedAt) {
       updateData.installationCompletedAt = new Date();
+      updateData.installationCompletedById = userId;
     }
 
     if (notes !== undefined) {
@@ -8624,13 +8760,16 @@ export const nocPushToDelivery = asyncHandler(async function nocPushToDelivery(r
     }
 
     // Update lead: auto-transition to INSTALLING (skip ACTIVATION_READY stage)
+    // Attribute installation-started to the NOC user pushing — they own the
+    // handoff. The delivery team takes over from here for the physical work.
     const updated = await prisma.lead.update({
       where: { id },
       data: {
         nocPushedToDeliveryAt: new Date(),
         nocPushedToDeliveryById: userId,
         deliveryStatus: 'INSTALLING',
-        installationStartedAt: new Date()
+        installationStartedAt: new Date(),
+        installationStartedById: userId
       },
       include: {
         deliveryAssignedTo: { select: { id: true, name: true, email: true } }
@@ -8817,6 +8956,20 @@ export const customerAcceptance = asyncHandler(async function customerAcceptance
         speedTestUploadedBy: { select: { id: true, name: true, email: true } }
       }
     });
+
+    // Audit: rejection path captured in the journey as its own row
+    // (acceptance is already rendered from customerAcceptanceAt on the lead).
+    if (status === 'REJECTED') {
+      logStatusChange({
+        entityType: 'LEAD',
+        entityId: id,
+        field: 'customerAcceptance',
+        oldValue: lead.customerAcceptanceStatus || null,
+        newValue: 'REJECTED',
+        changedById: userId,
+        reason: notes || 'Customer rejected the service after speed test',
+      });
+    }
 
     // Notify BDM about delivery completion and Accounts Team about new plan creation pending
     if (updated.assignedToId) {
@@ -11510,6 +11663,7 @@ export const createOpportunity = asyncHandler(async function createOpportunity(r
           status: 'QUALIFIED',
           type: 'QUALIFIED',
           isColdLead: false,
+          creationSource: 'BDM_OPPORTUNITY',
           // Feasibility assignment
           feasibilityAssignedToId,
           // Customer location
