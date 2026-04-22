@@ -56,6 +56,7 @@ model User {
   speedTestUploadedLeads             Lead[]                @relation("SpeedTestUploadedBy")
   installationStartedLeads           Lead[]                @relation("LeadInstallStarted")
   installationCompletedLeads         Lead[]                @relation("LeadInstallCompleted")
+  leadDeliveryDocsReviewed           Lead[]                @relation("LeadDeliveryDocsReviewed")
   notifications                      Notification[]
   receiptBatchesVerified             ReceiptBatchLog[]     @relation("ReceiptBatchVerifiedBy")
   storeProductsCreated               StoreProduct[]        @relation("StoreProductCreatedBy")
@@ -366,6 +367,11 @@ model Lead {
   actualOpex                Float?               // Delivery team's final OPEX from vendor setup
   feasibilityDescription    String?              // Free-text notes from FT review
   deliveryVendorSetupDone   Boolean              @default(false) // Must be true before material request
+  // Delivery team must review PO + IIL Protocol Sheet before proceeding to
+  // vendor setup. Set once via acknowledge-docs endpoint; vendor-setup
+  // controller refuses to run until this is non-null.
+  deliveryDocsReviewedAt    DateTime?
+  deliveryDocsReviewedById  String?
   circuitId                 String?              @unique
   customerIpAddresses       Json?
   nocPushedToDeliveryAt     DateTime?
@@ -435,6 +441,7 @@ model Lead {
   speedTestUploadedBy       User?                @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
   installationStartedBy     User?                @relation("LeadInstallStarted",   fields: [installationStartedById],   references: [id], onDelete: SetNull)
   installationCompletedBy   User?                @relation("LeadInstallCompleted", fields: [installationCompletedById], references: [id], onDelete: SetNull)
+  deliveryDocsReviewedBy    User?                @relation("LeadDeliveryDocsReviewed", fields: [deliveryDocsReviewedById], references: [id], onDelete: SetNull)
   products                  LeadProduct[]
   moms                      MOM[]
 

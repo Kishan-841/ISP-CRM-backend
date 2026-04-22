@@ -7115,6 +7115,11 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         tentativeOpex: true,
         feasibilityDescription: true,
         deliveryVendorSetupDone: true,
+        // Customer documents (PO + Protocol Sheet surfaced in delivery UI)
+        // plus review-gate state so the client can render the ack banner.
+        documents: true,
+        deliveryDocsReviewedAt: true,
+        deliveryDocsReviewedBy: { select: { id: true, name: true, email: true } },
         vendorId: true,
         createdAt: true,
         updatedAt: true,
@@ -11727,6 +11732,77 @@ export const createOpportunity = asyncHandler(async function createOpportunity(r
 });
 
 // ==========================================================================
+// DELIVERY DOCUMENTS REVIEW ACKNOWLEDGEMENT
+// Delivery team must view the customer's PO and IIL Protocol Sheet before
+// vendor setup becomes available. This endpoint records the acknowledgement
+// as an idempotent timestamp + actor on the lead.
+// ==========================================================================
+export const acknowledgeDeliveryDocs = asyncHandler(async function acknowledgeDeliveryDocs(req, res) {
+  const { id } = req.params;
+  const userId = req.user.id;
+  const isAdmin = isAdminOrTestUser(req.user);
+  const isDeliveryTeam = hasRole(req.user, 'DELIVERY_TEAM');
+
+  if (!isDeliveryTeam && !isAdmin) {
+    return res.status(403).json({ message: 'Only Delivery Team can acknowledge delivery documents.' });
+  }
+
+  const lead = await prisma.lead.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      documents: true,
+      deliveryDocsReviewedAt: true,
+      pushedToInstallationAt: true,
+    },
+  });
+  if (!lead) return res.status(404).json({ message: 'Lead not found.' });
+  if (!lead.pushedToInstallationAt) {
+    return res.status(400).json({ message: 'Lead has not been pushed to installation yet.' });
+  }
+
+  // Enforce both docs actually exist — can't acknowledge a review for missing
+  // documents. The client should block the button in that case but we defend
+  // against stale-state attacks too.
+  const docs = lead.documents || {};
+  if (!docs.PO || !docs.IIL_PROTOCOL_SHEET) {
+    return res.status(400).json({
+      message: 'Both PO and IIL Protocol Sheet must be uploaded before acknowledgement.',
+      missing: [!docs.PO && 'PO', !docs.IIL_PROTOCOL_SHEET && 'IIL_PROTOCOL_SHEET'].filter(Boolean),
+    });
+  }
+
+  // Idempotent — acknowledging twice just returns the existing state so the
+  // frontend never has to distinguish "already acknowledged" from "new ack."
+  if (lead.deliveryDocsReviewedAt) {
+    const current = await prisma.lead.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        deliveryDocsReviewedAt: true,
+        deliveryDocsReviewedBy: { select: { id: true, name: true, role: true } },
+      },
+    });
+    return res.json({ message: 'Already acknowledged.', lead: current });
+  }
+
+  const updated = await prisma.lead.update({
+    where: { id },
+    data: {
+      deliveryDocsReviewedAt: new Date(),
+      deliveryDocsReviewedById: userId,
+    },
+    select: {
+      id: true,
+      deliveryDocsReviewedAt: true,
+      deliveryDocsReviewedBy: { select: { id: true, name: true, role: true } },
+    },
+  });
+
+  res.json({ message: 'Delivery documents acknowledged.', lead: updated });
+});
+
+// ==========================================================================
 // DELIVERY VENDOR SETUP
 // Mandatory step before material request. The delivery team selects or
 // creates a vendor based on the vendor type chosen during feasibility, and
@@ -11764,12 +11840,21 @@ export const setupDeliveryVendor = asyncHandler(async function setupDeliveryVend
         deliveryStatus: true,
         pushedToInstallationAt: true,
         vendorId: true,
+        deliveryDocsReviewedAt: true,
       }
     });
 
     if (!lead) return res.status(404).json({ message: 'Lead not found.' });
     if (!lead.pushedToInstallationAt) {
       return res.status(400).json({ message: 'Lead has not been pushed to installation yet.' });
+    }
+    // Gate: delivery user must acknowledge the PO + Protocol Sheet first.
+    // Client-side UI also enforces this, but we defend server-side too.
+    if (!lead.deliveryDocsReviewedAt) {
+      return res.status(400).json({
+        message: 'Please review the PO and IIL Protocol Sheet before setting up the vendor.',
+        code: 'DELIVERY_DOCS_NOT_REVIEWED',
+      });
     }
 
     const updateData = { updatedAt: new Date() };

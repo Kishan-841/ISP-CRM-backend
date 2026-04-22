@@ -10,6 +10,7 @@ import {
   completeColdLead,
   createOpportunity,
   setupDeliveryVendor,
+  acknowledgeDeliveryDocs,
   updateLead,
   deleteLead,
   getBDMUsers,
@@ -197,6 +198,7 @@ router.post('/bdm/cold-leads/:id/complete', requireRole('BDM', 'BDM_CP', 'BDM_TE
 router.post('/bdm/create-opportunity', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createOpportunity);
 
 // Delivery vendor setup (mandatory before material request)
+router.post('/delivery/:id/acknowledge-docs', requireRole('DELIVERY_TEAM', 'SUPER_ADMIN'), acknowledgeDeliveryDocs);
 router.post('/delivery/:id/vendor-setup', requireRole('DELIVERY_TEAM', 'SUPER_ADMIN'), setupDeliveryVendor);
 
 // Reassign lead from Team Leader to BDM
