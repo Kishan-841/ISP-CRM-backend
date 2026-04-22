@@ -79,22 +79,46 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
 // pagination). Uses the same search filter shape as /search so the exported
 // rows match what the UI is currently showing.
 export const exportCustomers = asyncHandler(async function exportCustomers(req, res) {
-  const { q = '' } = req.query;
+  const { q = '', dateFrom, dateTo, leadId } = req.query;
   const searchTerm = q.trim();
 
-  const where = searchTerm.length >= 2
-    ? {
-        OR: buildSearchFilter(searchTerm, [
-          'campaignData.company',
-          'campaignData.name',
-          'campaignData.firstName',
-          'campaignData.lastName',
-          { field: 'campaignData.phone' },
-          'customerUsername',
-          'customerGstNo',
-        ]),
+  // Three filter shapes, in priority order:
+  //   1. leadId        → single-customer export (ignores other filters)
+  //   2. dateFrom/dateTo → range export (filter by Lead.createdAt)
+  //   3. q (search)    → matches what the UI is currently showing
+  let where = {};
+  if (leadId) {
+    where = { id: leadId };
+  } else {
+    const createdAtFilter = {};
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      if (!isNaN(from.getTime())) createdAtFilter.gte = from;
+    }
+    if (dateTo) {
+      // Treat dateTo as end-of-day inclusive so "2026-04-20 → 2026-04-21"
+      // captures the full 21st, not just midnight.
+      const to = new Date(dateTo);
+      if (!isNaN(to.getTime())) {
+        to.setHours(23, 59, 59, 999);
+        createdAtFilter.lte = to;
       }
-    : {};
+    }
+    if (Object.keys(createdAtFilter).length > 0) {
+      where.createdAt = createdAtFilter;
+    }
+    if (searchTerm.length >= 2) {
+      where.OR = buildSearchFilter(searchTerm, [
+        'campaignData.company',
+        'campaignData.name',
+        'campaignData.firstName',
+        'campaignData.lastName',
+        { field: 'campaignData.phone' },
+        'customerUsername',
+        'customerGstNo',
+      ]);
+    }
+  }
 
   const leads = await prisma.lead.findMany({
     where,
@@ -113,6 +137,19 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
       arcAmount: true,
       otcAmount: true,
       advanceAmount: true,
+      // BDM-entered requirement fields
+      bandwidthRequirement: true,
+      numberOfIPs: true,
+      // CAPEX / OPEX — prefer actuals (from delivery) and fall back to the
+      // feasibility tentative when the delivery hasn't filled the actuals yet.
+      tentativeCapex: true,
+      tentativeOpex: true,
+      actualCapex: true,
+      actualOpex: true,
+      // OTC status derivation
+      otcInvoiceId: true,
+      otcInvoiceGeneratedAt: true,
+      advancePayments: { select: { amount: true } },
       // Plan
       actualPlanName: true,
       actualPlanBandwidth: true,
@@ -157,13 +194,44 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
     orderBy: { createdAt: 'desc' },
   });
 
+  // Pull OTC invoice status in one shot (avoids N+1). Only for leads that have
+  // an otcInvoiceId — many won't.
+  const otcInvoiceIds = leads.map((l) => l.otcInvoiceId).filter(Boolean);
+  const otcInvoiceMap = new Map();
+  if (otcInvoiceIds.length > 0) {
+    const otcInvoices = await prisma.invoice.findMany({
+      where: { id: { in: otcInvoiceIds } },
+      select: { id: true, status: true },
+    });
+    otcInvoices.forEach((inv) => otcInvoiceMap.set(inv.id, inv.status));
+  }
+
   // Format a Date/null consistently as ISO date string for Excel readability
   const fmt = (d) => (d ? new Date(d).toISOString().slice(0, 19).replace('T', ' ') : '');
 
-  // Flatten each lead into a single row
+  // OTC payment state — 3 levels:
+  //   'Paid in Advance' → advance payments exist (paid before OTC invoice)
+  //   'Paid'            → OTC invoice exists and is fully paid
+  //   'Unpaid'          → neither (OTC still owing)
+  const otcStatusFor = (l) => {
+    const otc = Number(l.otcAmount || 0);
+    if (otc === 0) return 'N/A';
+    const advanceTotal = (l.advancePayments || []).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    if (advanceTotal > 0) return 'Paid in Advance';
+    const invStatus = l.otcInvoiceId ? otcInvoiceMap.get(l.otcInvoiceId) : null;
+    if (invStatus === 'PAID') return 'Paid';
+    return 'Unpaid';
+  };
+
+  // Flatten each lead into a single row. Ordering: identity columns first
+  // (Lead#, company, contact, phone, email), then BDM-entered commercials
+  // (bandwidth, IPs, ARC, OTC, OTC status, CAPEX, OPEX) as the user
+  // requested, then the rest of the lifecycle fields.
   const rows = leads.map((l) => {
     const cd = l.campaignData || {};
     const contact = cd.name || `${cd.firstName || ''} ${cd.lastName || ''}`.trim();
+    const capex = l.actualCapex ?? l.tentativeCapex ?? '';
+    const opex  = l.actualOpex  ?? l.tentativeOpex  ?? '';
     return {
       'Lead #': l.leadNumber || '',
       'Company': cd.company || '',
@@ -171,6 +239,15 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
       'Title': cd.title || '',
       'Phone': cd.phone || '',
       'Email': cd.email || '',
+      // New commercial columns — placed right after contact info per spec.
+      'Bandwidth (BDM)': l.bandwidthRequirement || '',
+      'No. of IPs (BDM)': l.numberOfIPs ?? '',
+      'ARC': l.arcAmount ?? '',
+      'OTC': l.otcAmount ?? '',
+      'OTC Status': otcStatusFor(l),
+      'CAPEX': capex,
+      'OPEX': opex,
+      // Remaining columns
       'City': cd.city || '',
       'State': cd.state || '',
       'Industry': cd.industry || '',
@@ -197,8 +274,6 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
       'Plan End': fmt(l.actualPlanEndDate),
       'Demo Plan': l.demoPlanName || '',
       'Demo Active': l.demoPlanIsActive ? 'Yes' : 'No',
-      'ARC Amount': l.arcAmount ?? '',
-      'OTC Amount': l.otcAmount ?? '',
       'Advance Amount': l.advanceAmount ?? '',
       'Lead Created': fmt(l.createdAt),
       'Feasibility Reviewed': fmt(l.feasibilityReviewedAt),
@@ -229,7 +304,19 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
 
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-  const filename = `customer-360-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  // Filename reflects the export mode — makes downloads self-describing
+  // without the user having to remember which filters they had set.
+  let filename = `customer-360-export-${new Date().toISOString().slice(0, 10)}`;
+  if (leadId && leads[0]) {
+    const co = (leads[0].campaignData?.company || leads[0].leadNumber || 'single')
+      .replace(/[^a-z0-9]+/gi, '-').slice(0, 40).toLowerCase();
+    filename = `customer-360-${co}-${new Date().toISOString().slice(0, 10)}`;
+  } else if (dateFrom || dateTo) {
+    const f = dateFrom ? String(dateFrom).slice(0, 10) : 'start';
+    const t = dateTo ? String(dateTo).slice(0, 10) : 'today';
+    filename = `customer-360-export-${f}_to_${t}`;
+  }
+  filename += '.xlsx';
   res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('X-Total-Count', String(rows.length));
