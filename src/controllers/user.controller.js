@@ -1,33 +1,65 @@
 import bcrypt from 'bcryptjs';
 import prisma from '../config/db.js';
-import { asyncHandler } from '../utils/controllerHelper.js';
+import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
 
 export const getUsers = asyncHandler(async function getUsers(req, res) {
   const isTL = req.user.role === 'BDM_TEAM_LEADER';
+  const { search, role } = req.query;
+  // Backward-compat: callers that never pass `page` (campaign assignment
+  // dropdowns, bdm-reports picker, etc.) still get the full list. Only
+  // paginate when `page` is explicitly supplied by the Employees tab.
+  const isPaginated = req.query.page !== undefined;
 
-  // Team Leader only sees BDMs assigned to them
-  const whereClause = isTL
-    ? { role: 'BDM', teamLeaderId: req.user.id }
-    : {};
+  // Team Leader only sees BDMs assigned to them; admins can filter by role.
+  // Search matches name or email, case-insensitive.
+  const whereClause = {
+    ...(isTL ? { role: 'BDM', teamLeaderId: req.user.id } : {}),
+    ...(role && !isTL ? { role } : {}),
+    ...(search && String(search).trim()
+      ? {
+          OR: [
+            { name:  { contains: String(search).trim(), mode: 'insensitive' } },
+            { email: { contains: String(search).trim(), mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
 
-  const users = await prisma.user.findMany({
-    where: whereClause,
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      mobile: true,
-      role: true,
-      isActive: true,
-      createdAt: true,
-      updatedAt: true,
-      teamLeaderId: true,
-      teamLeader: { select: { id: true, name: true } }
-    },
-    orderBy: { createdAt: 'desc' }
-  });
+  const userSelect = {
+    id: true,
+    email: true,
+    name: true,
+    mobile: true,
+    role: true,
+    isActive: true,
+    createdAt: true,
+    updatedAt: true,
+    teamLeaderId: true,
+    teamLeader: { select: { id: true, name: true } },
+  };
 
-  res.json({ users });
+  if (!isPaginated) {
+    const users = await prisma.user.findMany({
+      where: whereClause,
+      select: userSelect,
+      orderBy: { createdAt: 'desc' },
+    });
+    return res.json({ users });
+  }
+
+  const { page, limit, skip } = parsePagination(req.query);
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({
+      where: whereClause,
+      select: userSelect,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.user.count({ where: whereClause }),
+  ]);
+
+  res.json(paginatedResponse({ data: users, total, page, limit, dataKey: 'users' }));
 });
 
 export const getUserById = asyncHandler(async function getUserById(req, res) {
