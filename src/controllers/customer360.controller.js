@@ -700,6 +700,12 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   // Build timeline events from lead fields
   const timeline = [];
 
+  // StatusChangeLog field-presence lookup — used throughout to skip
+  // field-derived rows when the audit log has a richer entry for the same
+  // event. Declared up-front so both the opening (cold-lead) block and the
+  // later rejection blocks can reference it.
+  const auditFieldsSeen = new Set(statusChangeLogs.map((l) => l.field));
+
   // ─── Origin-specific opening events ─────────────────────────────────
   // Each origin renders a distinct opening sequence. The 3 ISR-flow origins
   // (BULK_UPLOAD_BDM/ADMIN, ISR_SELF_DATA) share the Data → ISR Assigned →
@@ -842,10 +848,11 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   }
 
   // Cold-lead state is orthogonal to origin — a lead from any origin can be
-  // parked as cold. Surface as its own milestone rather than overwriting the
-  // origin badge, so the journey still shows "where it came from" + "where
-  // it sits now." StatusChangeLog on isColdLead is surfaced in Phase B.
-  if (lead.isColdLead) {
+  // parked as cold. When Phase B audit logging is present, the audit block
+  // below renders this with the correct parked-at timestamp; the
+  // field-derived row is a legacy fallback for cold leads parked before
+  // logging was introduced.
+  if (lead.isColdLead && !auditFieldsSeen.has('coldLeadParked')) {
     timeline.push({
       stage: 'COLD_LEAD_PARKED',
       label: 'Parked as Cold Lead',
@@ -866,10 +873,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   }
 
-  // StatusChangeLog field-presence lookup — used to skip field-derived rows
-  // when the audit log has a more detailed history. Legacy leads (no audit
-  // entries yet) still get their current state rendered from lead fields.
-  const auditFieldsSeen = new Set(statusChangeLogs.map((l) => l.field));
+  // (auditFieldsSeen declared earlier, near the top of the timeline build)
 
   // Feasibility review outcome — approval vs rejection (legacy path only)
   if (lead.feasibilityReviewedAt && !auditFieldsSeen.has('feasibilityReview')) {
@@ -1332,13 +1336,14 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     docsStatus:                  { stage: null,                          phase: 150, label: null,                                isError: null },
     accountsStatus:              { stage: null,                          phase: 170, label: null,                                isError: null },
     customerAcceptance:          { stage: 'CUSTOMER_REJECTED',           phase: 330, label: 'Customer Rejected Service',        isError: true },
-    // Re-submission events
+    // Re-submission events. Note: quotationUploaded and quotationSubmitted
+    // intentionally NOT mapped here — they're already rendered by the
+    // field-derived block above (which pulls the log entry for timestamp)
+    // so mapping them here would cause duplicate rows.
     docsSubmitted:               { stage: 'DOCS_SUBMITTED',              phase: 115, label: 'Documents Submitted by BDM',       isError: false },
     docsResubmitted:             { stage: 'DOCS_RESUBMITTED',            phase: 115, label: 'Documents Re-uploaded by BDM',     isError: false, isRetry: true },
-    quotationSubmitted:          { stage: 'QUOTATION_SUBMITTED',         phase: 90,  label: 'Quotation Submitted for Approval', isError: false },
     quotationResubmitted:        { stage: 'QUOTATION_RESUBMITTED',       phase: 90,  label: 'Quotation Re-submitted',           isError: false, isRetry: true },
     feasibilityResubmitted:      { stage: 'FEASIBILITY_RESUBMITTED',     phase: 65,  label: 'Pushed to Feasibility Again',      isError: false, isRetry: true },
-    quotationUploaded:           { stage: 'QUOTATION_UPLOADED',          phase: 80,  label: 'Quotation Uploaded',               isError: false },
   };
 
   statusChangeLogs.forEach((log) => {
