@@ -13,6 +13,7 @@
  */
 
 import prisma from '../config/db.js';
+import { collectCloudinaryRefs, cleanupLeadCloudinary } from './leadCloudinaryCleanup.service.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -211,7 +212,12 @@ async function _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCa
     throw err;
   }
 
-  return prisma.$transaction(async (tx) => {
+  // Also collect Cloudinary references pre-transaction. Complaint IDs and
+  // service-order IDs are cascaded away in step 10 of the transaction, so if
+  // we wait we'd have no way to reconstruct their folder prefixes.
+  const cloudinaryRefs = await collectCloudinaryRefs(leadId);
+
+  const audit = await prisma.$transaction(async (tx) => {
     // ─── 1. NEXUS chat (customer portal traces) ─────────────────────────
     if (preview.lead.customerUsername) {
       await tx.nexusConversation.deleteMany({
@@ -303,6 +309,14 @@ async function _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCa
     // Give the transaction room to run — deletions + writes can take a while.
     timeout: 30000,
   });
+
+  // Post-commit Cloudinary cleanup. Runs AFTER the DB is consistent so a CDN
+  // failure leaves orphaned blobs (logged) rather than partially-deleted data.
+  // Deliberately awaited — the caller sees the operation as "done" only when
+  // both the DB and Cloudinary side settle, which matches user expectations
+  // for a destructive admin action. Failures are swallowed internally.
+  await cleanupLeadCloudinary(cloudinaryRefs);
+  return audit;
 }
 
 /**
