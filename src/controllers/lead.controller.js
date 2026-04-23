@@ -180,8 +180,10 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       interestLevel: lead.interestLevel,
       opsApprovalStatus: lead.opsApprovalStatus,
       opsRejectedReason: lead.opsRejectedReason,
+      opsApprovalNotes: lead.opsApprovalNotes,
       superAdmin2ApprovalStatus: lead.superAdmin2ApprovalStatus,
       superAdmin2RejectedReason: lead.superAdmin2RejectedReason,
+      superAdmin2ApprovalNotes: lead.superAdmin2ApprovalNotes,
       loginCompletedAt: lead.loginCompletedAt,
       documents: lead.documents || [],
       docsVerifiedAt: lead.docsVerifiedAt,
@@ -3072,7 +3074,10 @@ export const getOpsTeamReviewHistory = asyncHandler(async function getOpsTeamRev
 export const opsTeamDisposition = asyncHandler(async function opsTeamDisposition(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
-    const { decision, reason } = req.body;
+    // `notes` is optional context that OPS forwards to Sales Director + BDM.
+    // Trimmed and capped at a reasonable length so the field can't be abused
+    // to store multi-megabyte blobs of free text.
+    const { decision, reason, notes } = req.body;
     const isOpsTeam = hasRole(req.user, 'OPS_TEAM');
 
     if (!isOpsTeam && !isAdminOrTestUser(req.user)) {
@@ -3108,10 +3113,14 @@ export const opsTeamDisposition = asyncHandler(async function opsTeamDisposition
     }
 
     // Prepare update data
+    const trimmedNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : null;
     const updateData = {
       opsApprovalStatus: decision,
       opsApprovedAt: new Date(),
-      opsApprovedById: userId
+      opsApprovedById: userId,
+      // Store (or clear) the optional approval note. Applied on both
+      // APPROVED and REJECTED so the next-step user sees the latest context.
+      opsApprovalNotes: trimmedNotes || null,
     };
 
     if (decision === 'REJECTED') {
@@ -3302,8 +3311,11 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
           documents: true,
           opsApprovalStatus: true,
           opsApprovedAt: true,
+          // Forward OPS's optional approval note to the Sales Director UI
+          opsApprovalNotes: true,
           superAdmin2ApprovalStatus: true,
           superAdmin2RejectedReason: true,
+          superAdmin2ApprovalNotes: true,
           arcAmount: true,
           otcAmount: true,
           advanceAmount: true,
@@ -3531,7 +3543,8 @@ export const getSuperAdmin2History = asyncHandler(async function getSuperAdmin2H
 export const superAdmin2Disposition = asyncHandler(async function superAdmin2Disposition(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
-    const { decision, reason } = req.body;
+    // Optional `notes` — forwarded to the Docs team + BDM on the next step.
+    const { decision, reason, notes } = req.body;
     const isSA2 = hasRole(req.user, 'SUPER_ADMIN_2');
 
     if (!isSA2 && !isAdminOrTestUser(req.user)) {
@@ -3565,10 +3578,12 @@ export const superAdmin2Disposition = asyncHandler(async function superAdmin2Dis
       return res.status(400).json({ message: 'This lead is not pending Super Admin 2 approval.' });
     }
 
+    const trimmedNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : null;
     const updateData = {
       superAdmin2ApprovalStatus: decision,
       superAdmin2ApprovedAt: new Date(),
-      superAdmin2ApprovedById: userId
+      superAdmin2ApprovedById: userId,
+      superAdmin2ApprovalNotes: trimmedNotes || null,
     };
 
     if (decision === 'REJECTED') {
@@ -3726,6 +3741,11 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       accountsVerifiedAt: true,
       arcAmount: true,
       otcAmount: true,
+      // Optional approval notes from OPS + Sales Director — the Docs team
+      // is the next-step user; surfacing these here lets them see any
+      // handoff context before verifying documents.
+      opsApprovalNotes: true,
+      superAdmin2ApprovalNotes: true,
       campaignData: {
         select: {
           company: true,

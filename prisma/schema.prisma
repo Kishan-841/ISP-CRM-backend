@@ -318,10 +318,16 @@ model Lead {
   opsApprovedAt             DateTime?
   opsApprovedById           String?
   opsRejectedReason         String?
+  // Optional approval notes captured by OPS at decision-time. Unlike
+  // rejection reasons these apply to both APPROVED and REJECTED — they
+  // forward context to the Sales Director (next step) and to the BDM.
+  opsApprovalNotes          String?
   superAdmin2ApprovalStatus SuperAdmin2ApprovalStatus?
   superAdmin2ApprovedAt     DateTime?
   superAdmin2ApprovedById   String?
   superAdmin2RejectedReason String?
+  // Same pattern for Sales Director — surfaced to the Docs team + BDM.
+  superAdmin2ApprovalNotes  String?
   loginCompletedAt          DateTime?
   loginCompletedById        String?
   docUploadMethod           String?
