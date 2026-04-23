@@ -4,6 +4,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import prisma from '../config/db.js';
+import { sanitizePublicId } from '../config/cloudinary.js';
 import {
   validateUploadToken,
   customerUploadDocument,
@@ -60,7 +61,7 @@ const createCustomerStorage = () => {
         folder: `isp_crm/documents/${leadId}/${documentType}`,
         resource_type: resourceType,
         allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
-        public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`
+        public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
       };
     }
   });

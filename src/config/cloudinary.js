@@ -9,6 +9,17 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Cloudinary public_ids only allow letters, numbers, underscores, hyphens,
+// and forward slashes. Spaces, `&`, `(`, `)`, etc. trigger a 400 and — via
+// the multer-storage-cloudinary@4 / multer@2 mismatch — an unhandled
+// rejection that crashes the server.
+const sanitizePublicId = (originalName) =>
+  originalName
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 100) || 'file';
+
 // Generic storage for backward compatibility (generic document uploads)
 const genericStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
@@ -28,7 +39,7 @@ const genericStorage = new CloudinaryStorage({
       resource_type: resourceType,
       allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
       // Use original filename with timestamp for uniqueness
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`
+      public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
     };
   }
 });
@@ -56,7 +67,7 @@ const typedStorage = new CloudinaryStorage({
       resource_type: resourceType,
       allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
       // Use original filename with timestamp for uniqueness
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`
+      public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
     };
   }
 });
@@ -110,7 +121,7 @@ const complaintStorage = new CloudinaryStorage({
       folder: `isp_crm/complaints/${complaintId}`,
       resource_type: resourceType,
       allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`
+      public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
     };
   }
 });
@@ -138,7 +149,7 @@ const orderStorage = new CloudinaryStorage({
       folder: `isp_crm/orders/${orderId}`,
       resource_type: resourceType,
       allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, '')}`
+      public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
     };
   }
 });
@@ -189,5 +200,6 @@ export {
   uploadOrderAttachments,
   deleteFromCloudinary,
   deleteMultipleFromCloudinary,
-  getResourceType
+  getResourceType,
+  sanitizePublicId
 };
