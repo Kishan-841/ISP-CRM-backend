@@ -5,6 +5,27 @@ import prisma from '../config/db.js';
 
 const router = Router();
 
+// Strip helmet's iframe-hostile response headers. Must run for EVERY
+// response this router emits — success AND error — because the browser
+// will refuse to render an iframe whose response carries
+// `Content-Security-Policy: frame-ancestors 'self'` or
+// `X-Frame-Options: SAMEORIGIN`, even when the body is a 401 error page.
+// Previously these were stripped only in the success path, so auth
+// failures and upstream 403s came back with the restrictive headers and
+// the preview modal showed a blank "refused to connect" frame.
+const stripFrameRestrictions = (req, res, next) => {
+  res.removeHeader('X-Frame-Options');
+  res.removeHeader('Cross-Origin-Opener-Policy');
+  res.removeHeader('Cross-Origin-Embedder-Policy');
+  res.removeHeader('Content-Security-Policy');
+  res.removeHeader('X-Content-Type-Options');
+  res.removeHeader('X-Download-Options');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+};
+
+router.use(stripFrameRestrictions);
+
 // Auth that accepts token from query param (iframes can't send headers)
 const authFromHeaderOrQuery = async (req, res, next) => {
   const headerToken = req.headers.authorization?.replace('Bearer ', '');
@@ -56,16 +77,8 @@ router.get('/file', authFromHeaderOrQuery, async (req, res) => {
       return res.status(upstream.status).send(`Upstream ${upstream.status}`);
     }
 
-    // Strip helmet's restrictive headers so the iframe can render the response.
-    // Most critical: CSP frame-ancestors blocks iframe embedding entirely,
-    // and nosniff + octet-stream forces download even with inline disposition.
-    res.removeHeader('X-Frame-Options');
-    res.removeHeader('Cross-Origin-Opener-Policy');
-    res.removeHeader('Cross-Origin-Embedder-Policy');
-    res.removeHeader('Content-Security-Policy');
-    res.removeHeader('X-Content-Type-Options');
-    res.removeHeader('X-Download-Options');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    // iframe-hostile headers have already been stripped by
+    // stripFrameRestrictions middleware at router level.
 
     // Override content type — Cloudinary raw uploads come back as
     // application/octet-stream which browsers refuse to render inline.
