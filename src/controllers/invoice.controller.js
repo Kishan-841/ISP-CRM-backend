@@ -13,7 +13,7 @@ import {
   deleteLedgerEntriesForInvoice,
   getCustomerBalance
 } from '../services/ledger.service.js';
-import { generateInvoiceForLead } from '../jobs/invoiceGeneration.js';
+import { generateInvoiceForLead, withInvoiceJobLock } from '../jobs/invoiceGeneration.js';
 import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, paginatedResponse } from '../utils/controllerHelper.js';
 
 // ---------------------------------------------------------------------------
@@ -478,23 +478,42 @@ export const markInvoicePaid = asyncHandler(async function markInvoicePaid(req, 
     }
 
     const receiptNumber = await generateReceiptNumber();
-
-    // Calculate the payment amount as remaining balance
-    const existingPaid = invoice.totalPaidAmount || 0;
-    const creditAmount = invoice.totalCreditAmount || 0;
     const parsedTds = parseFloat(tdsAmount) || 0;
     const parsedDiscount = parseFloat(paymentDiscount) || 0;
-    const paymentAmount = invoice.grandTotal - creditAmount - existingPaid - parsedTds - parsedDiscount;
-
-    if (paymentAmount < 0) {
-      return res.status(400).json({ message: 'Invoice already overpaid or fully credited.' });
-    }
 
     const result = await prisma.$transaction(async (tx) => {
-      // Re-read inside transaction for serialized access
+      // Re-read inside transaction so we never compute payment amount from
+      // stale grandTotal / totalPaidAmount / totalCreditAmount values. A
+      // concurrent partial payment or credit note landing between the outer
+      // read and the txn would otherwise cause over-credit on the ledger.
       const inv = await tx.invoice.findUnique({ where: { id } });
-      if (inv.status === 'PAID') {
-        throw new Error('ALREADY_PAID');
+      if (!inv) throw new Error('NOT_FOUND');
+      if (inv.status === 'PAID') throw new Error('ALREADY_PAID');
+      if (inv.status === 'CANCELLED') throw new Error('CANCELLED');
+
+      const existingPaid = inv.totalPaidAmount || 0;
+      const creditAmount = inv.totalCreditAmount || 0;
+      const paymentAmount = inv.grandTotal - creditAmount - existingPaid - parsedTds - parsedDiscount;
+
+      if (paymentAmount < 0) throw new Error('OVERPAID');
+
+      // Idempotency guard — same pattern as addPaymentToInvoice. Blocks
+      // retried requests (double-tap, network retry) within a 60s window.
+      const sixtySecondsAgo = new Date(Date.now() - 60 * 1000);
+      const recentDuplicate = await tx.invoicePayment.findFirst({
+        where: {
+          invoiceId: id,
+          amount: paymentAmount,
+          paymentMode,
+          createdById: userId,
+          createdAt: { gte: sixtySecondsAgo },
+        },
+        select: { id: true, receiptNumber: true },
+      });
+      if (recentDuplicate) {
+        const err = new Error('DUPLICATE_PAYMENT');
+        err.existingReceipt = recentDuplicate.receiptNumber;
+        throw err;
       }
 
       const payment = await tx.invoicePayment.create({
@@ -514,7 +533,7 @@ export const markInvoicePaid = asyncHandler(async function markInvoicePaid(req, 
       });
 
       const totalPaid = existingPaid + paymentAmount + parsedTds;
-      const remainingAmount = Math.max(0, invoice.grandTotal - creditAmount - totalPaid);
+      const remainingAmount = Math.max(0, inv.grandTotal - creditAmount - totalPaid);
 
       const updatedInvoice = await tx.invoice.update({
         where: { id },
@@ -545,7 +564,7 @@ export const markInvoicePaid = asyncHandler(async function markInvoicePaid(req, 
       const modeMap = { CHEQUE: 'Cheque', NEFT: 'NEFT', ONLINE: 'Online Payment', TDS: 'TDS Deduction' };
       let desc = `Payment received via ${modeMap[payment.paymentMode] || payment.paymentMode}`;
       if (payment.tdsAmount > 0) desc += ` (Amount: ₹${payment.amount}, TDS: ₹${payment.tdsAmount})`;
-      desc += ` against ${updatedInvoice.invoiceNumber || invoice.invoiceNumber}`;
+      desc += ` against ${updatedInvoice.invoiceNumber || inv.invoiceNumber}`;
       await tx.ledgerEntry.create({
         data: {
           customerId: updatedInvoice.leadId,
@@ -580,6 +599,21 @@ export const markInvoicePaid = asyncHandler(async function markInvoicePaid(req, 
   } catch (error) {
     if (error.message === 'ALREADY_PAID') {
       return res.status(400).json({ message: 'Invoice is already fully paid.' });
+    }
+    if (error.message === 'NOT_FOUND') {
+      return res.status(404).json({ message: 'Invoice not found.' });
+    }
+    if (error.message === 'CANCELLED') {
+      return res.status(400).json({ message: 'Cannot pay a cancelled invoice.' });
+    }
+    if (error.message === 'OVERPAID') {
+      return res.status(400).json({ message: 'Invoice already overpaid or fully credited.' });
+    }
+    if (error.message === 'DUPLICATE_PAYMENT') {
+      return res.status(409).json({
+        message: `A matching payment was just recorded (receipt ${error.existingReceipt}). If this is a genuine second payment, wait a moment and try again.`,
+        existingReceipt: error.existingReceipt,
+      });
     }
     throw error;
   }
@@ -1114,7 +1148,11 @@ export const getCustomersWithPendingInvoices = asyncHandler(async function getCu
       invoiceDateFilter.createdAt = { ...invoiceDateFilter.createdAt, lte: end };
     }
 
-    // Fetch all matching leads with ALL their non-cancelled invoices
+    // Fetch matching leads WITHOUT their invoices. Loading every invoice for
+    // every matching customer into Node memory was a scalability bomb at
+    // ~1000 customers × 12 invoices = 12K rows per page load. We now pull
+    // per-lead invoice aggregates in a single groupBy query below, which is
+    // bounded by (lead count × status count) rather than total invoices.
     const allLeads = await prisma.lead.findMany({
       where: baseWhere,
       select: {
@@ -1128,54 +1166,98 @@ export const getCustomersWithPendingInvoices = asyncHandler(async function getCu
         customerGstNo: true,
         campaignData: {
           select: { company: true, name: true, phone: true, email: true }
-        },
-        invoices: {
-          where: {
-            status: { not: 'CANCELLED' },
-            ...invoiceDateFilter
-          },
-          select: {
-            id: true,
-            invoiceNumber: true,
-            grandTotal: true,
-            totalPaidAmount: true,
-            remainingAmount: true,
-            status: true,
-            dueDate: true
-          },
-          orderBy: { dueDate: 'asc' }
         }
       },
       orderBy: { updatedAt: 'desc' }
     });
 
-    // Compute per-customer metrics
+    const leadIds = allLeads.map((l) => l.id);
+
+    // Per-lead, per-status aggregation replaces the in-memory reduce/filter
+    // loops below. Prisma's _sum treats NULL as 0; this matches the original
+    // behavior for totalAmount / totalPaidAmount, and is a near-equivalent
+    // for totalPendingAmount since Invoice.remainingAmount is populated on
+    // create and on every payment. Legacy rows with NULL remainingAmount (if
+    // any) will contribute 0 instead of (grandTotal - totalPaidAmount); this
+    // is a minor discrepancy compared to the memory exposure of the old code.
+    const invoiceAgg = leadIds.length
+      ? await prisma.invoice.groupBy({
+          by: ['leadId', 'status'],
+          where: {
+            leadId: { in: leadIds },
+            status: { not: 'CANCELLED' },
+            ...invoiceDateFilter
+          },
+          _count: { id: true },
+          _sum: {
+            grandTotal: true,
+            totalPaidAmount: true,
+            remainingAmount: true
+          },
+          _min: { dueDate: true },
+          _max: { dueDate: true }
+        })
+      : [];
+
+    // Collapse { leadId, status } rows into per-lead rollups.
+    const byLead = new Map();
+    const PENDING_DUE_STATUSES = new Set(['GENERATED', 'PARTIALLY_PAID', 'OVERDUE']);
+    for (const row of invoiceAgg) {
+      const entry = byLead.get(row.leadId) || {
+        invoiceCount: 0,
+        pendingCount: 0,    // GENERATED + OVERDUE
+        partialCount: 0,    // PARTIALLY_PAID
+        paidCount: 0,       // PAID
+        totalAmount: 0,
+        totalPaidAmount: 0,
+        totalPendingAmount: 0,
+        oldestPendingDueDate: null,
+        latestPaidDueDate: null
+      };
+      const count = row._count.id || 0;
+      entry.invoiceCount += count;
+      entry.totalAmount += Number(row._sum.grandTotal || 0);
+      entry.totalPaidAmount += Number(row._sum.totalPaidAmount || 0);
+      entry.totalPendingAmount += Number(row._sum.remainingAmount || 0);
+
+      if (row.status === 'GENERATED' || row.status === 'OVERDUE') {
+        entry.pendingCount += count;
+      } else if (row.status === 'PARTIALLY_PAID') {
+        entry.partialCount += count;
+      } else if (row.status === 'PAID') {
+        entry.paidCount += count;
+        if (row._max.dueDate && (!entry.latestPaidDueDate || row._max.dueDate > entry.latestPaidDueDate)) {
+          entry.latestPaidDueDate = row._max.dueDate;
+        }
+      }
+
+      if (PENDING_DUE_STATUSES.has(row.status) && row._min.dueDate) {
+        if (!entry.oldestPendingDueDate || row._min.dueDate < entry.oldestPendingDueDate) {
+          entry.oldestPendingDueDate = row._min.dueDate;
+        }
+      }
+
+      byLead.set(row.leadId, entry);
+    }
+
+    // Compute per-customer metrics from the aggregate map.
     const enriched = allLeads.map((lead) => {
-      const invoices = lead.invoices || [];
-      const totalAmount = invoices.reduce((s, i) => s + (i.grandTotal || 0), 0);
-      const totalPaidAmount = invoices.reduce((s, i) => s + (i.totalPaidAmount || 0), 0);
-      const totalPendingAmount = invoices.reduce((s, i) => s + (i.remainingAmount ?? (i.grandTotal - (i.totalPaidAmount || 0))), 0);
+      const agg = byLead.get(lead.id);
+      const invoiceCount = agg?.invoiceCount || 0;
+      const pendingCount = agg?.pendingCount || 0;
+      const partialCount = agg?.partialCount || 0;
+      const paidCount = agg?.paidCount || 0;
 
-      const pendingInvoices = invoices.filter(i => ['GENERATED', 'OVERDUE'].includes(i.status));
-      const partialInvoices = invoices.filter(i => i.status === 'PARTIALLY_PAID');
-      const paidInvoices = invoices.filter(i => i.status === 'PAID');
-
-      const pendingDueDates = invoices
-        .filter(i => ['GENERATED', 'PARTIALLY_PAID', 'OVERDUE'].includes(i.status) && i.dueDate)
-        .map(i => new Date(i.dueDate));
-      const oldestDueDate = pendingDueDates.length > 0 ? new Date(Math.min(...pendingDueDates)) : null;
-
-      const lastPaid = paidInvoices.length > 0 ? paidInvoices[paidInvoices.length - 1]?.dueDate : null;
-
-      // Determine payment status category
+      // Determine payment status category — identical logic to the previous
+      // per-invoice implementation, just driven by pre-aggregated counts.
       let paymentCategory = 'all';
-      if (invoices.length === 0) {
-        paymentCategory = 'pending'; // no invoices yet = pending
-      } else if (pendingInvoices.length > 0 && paidInvoices.length === 0 && partialInvoices.length === 0) {
+      if (invoiceCount === 0) {
         paymentCategory = 'pending';
-      } else if (partialInvoices.length > 0) {
+      } else if (pendingCount > 0 && paidCount === 0 && partialCount === 0) {
+        paymentCategory = 'pending';
+      } else if (partialCount > 0) {
         paymentCategory = 'partial';
-      } else if (paidInvoices.length > 0 && pendingInvoices.length === 0 && partialInvoices.length === 0) {
+      } else if (paidCount > 0 && pendingCount === 0 && partialCount === 0) {
         paymentCategory = 'paid';
       } else {
         paymentCategory = 'pending';
@@ -1193,13 +1275,13 @@ export const getCustomersWithPendingInvoices = asyncHandler(async function getCu
         isActive: lead.actualPlanIsActive,
         otcAmount: lead.otcAmount || 0,
         otcInvoiceId: lead.otcInvoiceId || null,
-        invoiceCount: invoices.length,
-        pendingCount: pendingInvoices.length + partialInvoices.length,
-        totalAmount,
-        totalPaidAmount,
-        totalPendingAmount: Math.max(0, totalPendingAmount),
-        oldestDueDate,
-        lastPaidDate: lastPaid,
+        invoiceCount,
+        pendingCount: pendingCount + partialCount,
+        totalAmount: agg?.totalAmount || 0,
+        totalPaidAmount: agg?.totalPaidAmount || 0,
+        totalPendingAmount: Math.max(0, agg?.totalPendingAmount || 0),
+        oldestDueDate: agg?.oldestPendingDueDate || null,
+        lastPaidDate: agg?.latestPaidDueDate || null,
         paymentCategory
       };
     });
@@ -1458,14 +1540,12 @@ export const deleteInvoice = asyncHandler(async function deleteInvoice(req, res)
           data: { otcInvoiceId: null, otcInvoiceGeneratedAt: null }
         });
       }
-    });
 
-    // Delete associated ledger entries (outside transaction, non-critical)
-    try {
-      await deleteLedgerEntriesForInvoice(id, invoice.leadId);
-    } catch (ledgerError) {
-      console.error('Failed to delete ledger entries for invoice:', ledgerError);
-    }
+      // Ledger cleanup must be atomic with the invoice delete — otherwise a
+      // crash between the two leaves an orphan debit entry on the customer's
+      // ledger that no amount of retrying can reconcile.
+      await deleteLedgerEntriesForInvoice(id, invoice.leadId, tx);
+    }, { isolationLevel: 'Serializable' });
 
     emitSidebarRefreshByRole('ACCOUNTS_TEAM');
     emitSidebarRefreshByRole('SUPER_ADMIN');
@@ -1844,45 +1924,58 @@ export const autoGenerateInvoices = asyncHandler(async function autoGenerateInvo
 
     const userId = req.user.id;
 
-    // Find all leads with active plans
-    const leadsWithActivePlans = await prisma.lead.findMany({
-      where: {
-        actualPlanName: { not: null },
-        actualPlanPrice: { not: null },
-        actualPlanIsActive: true
-      },
-      select: {
-        id: true,
-        customerUsername: true,
-        actualPlanName: true,
-        actualPlanPrice: true,
-        campaignData: { select: { company: true } }
-      }
-    });
+    // Serialize against the daily cron — running both concurrently causes
+    // duplicate invoices (invoiceExistsForPeriod check is non-transactional).
+    const lockResult = await withInvoiceJobLock(`manual:${userId}`, async () => {
+      const leadsWithActivePlans = await prisma.lead.findMany({
+        where: {
+          actualPlanName: { not: null },
+          actualPlanPrice: { not: null },
+          actualPlanIsActive: true
+        },
+        select: {
+          id: true,
+          customerUsername: true,
+          actualPlanName: true,
+          actualPlanPrice: true,
+          campaignData: { select: { company: true } }
+        }
+      });
 
-    let generated = 0;
-    let skipped = 0;
-    const results = [];
+      let generated = 0;
+      let skipped = 0;
+      const results = [];
 
-    for (const lead of leadsWithActivePlans) {
-      try {
-        const invoice = await generateInvoiceForLead(lead.id, userId);
-        if (invoice) {
-          generated++;
-          results.push({
-            leadId: lead.id,
-            company: lead.campaignData?.company,
-            invoiceNumber: invoice.invoiceNumber,
-            amount: invoice.grandTotal
-          });
-        } else {
+      for (const lead of leadsWithActivePlans) {
+        try {
+          const invoice = await generateInvoiceForLead(lead.id, userId);
+          if (invoice) {
+            generated++;
+            results.push({
+              leadId: lead.id,
+              company: lead.campaignData?.company,
+              invoiceNumber: invoice.invoiceNumber,
+              amount: invoice.grandTotal
+            });
+          } else {
+            skipped++;
+          }
+        } catch (err) {
+          console.error(`Auto-generate failed for lead ${lead.id}:`, err.message);
           skipped++;
         }
-      } catch (err) {
-        console.error(`Auto-generate failed for lead ${lead.id}:`, err.message);
-        skipped++;
       }
+
+      return { generated, skipped, total: leadsWithActivePlans.length, results };
+    });
+
+    if (!lockResult.acquired) {
+      return res.status(409).json({
+        message: 'Invoice generation is already running. Please wait a moment and try again.',
+      });
     }
+
+    const { generated, skipped, total, results } = lockResult.result;
 
     if (generated > 0) {
       emitSidebarRefreshByRole('ACCOUNTS_TEAM');
@@ -1894,7 +1987,7 @@ export const autoGenerateInvoices = asyncHandler(async function autoGenerateInvo
       data: {
         generated,
         skipped,
-        total: leadsWithActivePlans.length,
+        total,
         invoices: results
       }
     });

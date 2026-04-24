@@ -424,19 +424,38 @@ const markOverdueInvoices = async () => {
  */
 let isJobRunning = false;
 
-const runInvoiceJob = async (source) => {
+/**
+ * Attempt to run `fn` under the invoice-job exclusive lock.
+ *
+ * Both the daily cron and the manual "Auto Generate" HTTP endpoint must
+ * serialize through this — running both concurrently causes duplicate
+ * invoices because `invoiceExistsForPeriod` is a non-transactional check
+ * and both runs can pass it before either creates the invoice.
+ *
+ * Returns `{ acquired: true, result }` on success, or `{ acquired: false }`
+ * when another run is already in progress. Caller decides what to do with
+ * the latter (cron silently skips; HTTP endpoint returns 409).
+ */
+export const withInvoiceJobLock = async (source, fn) => {
   if (isJobRunning) {
     console.log(`[Invoice Job] Skipping ${source} run - previous run still in progress`);
-    return;
+    return { acquired: false };
   }
   isJobRunning = true;
   try {
-    console.log(`[Invoice Job] Running ${source} invoice generation...`);
-    await generatePendingInvoices();
-    await markOverdueInvoices();
+    const result = await fn();
+    return { acquired: true, result };
   } finally {
     isJobRunning = false;
   }
+};
+
+const runInvoiceJob = async (source) => {
+  await withInvoiceJobLock(source, async () => {
+    console.log(`[Invoice Job] Running ${source} invoice generation...`);
+    await generatePendingInvoices();
+    await markOverdueInvoices();
+  });
 };
 
 export const startInvoiceGenerationJob = () => {

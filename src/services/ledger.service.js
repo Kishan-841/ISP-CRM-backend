@@ -556,43 +556,50 @@ export const backfillLedgerEntries = async (customerId = null) => {
  * Delete ledger entries for a specific invoice and recalculate running balances.
  * Used when voiding/deleting an invoice (e.g., during plan upgrade).
  *
- * Uses a Serializable transaction to prevent concurrent operations from
- * reading stale balances during the recalculation window.
+ * Two calling modes:
+ *   - Standalone: `deleteLedgerEntriesForInvoice(invoiceId, customerId)` runs in
+ *     its own Serializable transaction with retry on serialization conflicts.
+ *   - Inside an outer transaction: pass the tx client as the third arg to make
+ *     the ledger cleanup atomic with the caller's other writes (e.g. deleting
+ *     the invoice row). The caller is responsible for choosing the isolation
+ *     level of the outer transaction.
  */
-export const deleteLedgerEntriesForInvoice = async (invoiceId, customerId) => {
-  try {
-    const deletedCount = await withSerializableRetry(async (tx) => {
-      // Delete ledger entries for this invoice
-      const deleted = await tx.ledgerEntry.deleteMany({
-        where: {
-          referenceId: invoiceId,
-          referenceType: 'INVOICE'
-        }
-      });
+const deleteLedgerEntriesForInvoiceTx = async (tx, invoiceId, customerId) => {
+  const deleted = await tx.ledgerEntry.deleteMany({
+    where: {
+      referenceId: invoiceId,
+      referenceType: 'INVOICE'
+    }
+  });
 
-      // Recalculate running balances for remaining entries
-      if (customerId && deleted.count > 0) {
-        const entries = await tx.ledgerEntry.findMany({
-          where: { customerId },
-          orderBy: [
-            { entryDate: 'asc' },
-            { createdAt: 'asc' },
-            { id: 'asc' }
-          ]
-        });
-
-        let runningBalance = 0;
-        for (const entry of entries) {
-          runningBalance = runningBalance + (Number(entry.debitAmount) || 0) - (Number(entry.creditAmount) || 0);
-          await tx.ledgerEntry.update({
-            where: { id: entry.id },
-            data: { runningBalance }
-          });
-        }
-      }
-
-      return deleted.count;
+  if (customerId && deleted.count > 0) {
+    const entries = await tx.ledgerEntry.findMany({
+      where: { customerId },
+      orderBy: [
+        { entryDate: 'asc' },
+        { createdAt: 'asc' },
+        { id: 'asc' }
+      ]
     });
+
+    let runningBalance = 0;
+    for (const entry of entries) {
+      runningBalance = runningBalance + (Number(entry.debitAmount) || 0) - (Number(entry.creditAmount) || 0);
+      await tx.ledgerEntry.update({
+        where: { id: entry.id },
+        data: { runningBalance }
+      });
+    }
+  }
+
+  return deleted.count;
+};
+
+export const deleteLedgerEntriesForInvoice = async (invoiceId, customerId, tx = null) => {
+  try {
+    const deletedCount = tx
+      ? await deleteLedgerEntriesForInvoiceTx(tx, invoiceId, customerId)
+      : await withSerializableRetry((innerTx) => deleteLedgerEntriesForInvoiceTx(innerTx, invoiceId, customerId));
 
     console.log(`[Ledger] Deleted ${deletedCount} ledger entries for invoice ${invoiceId}`);
     if (customerId && deletedCount > 0) {

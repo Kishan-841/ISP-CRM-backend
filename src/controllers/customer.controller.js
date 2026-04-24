@@ -427,11 +427,19 @@ export const getComplaintRequests = asyncHandler(async function getComplaintRequ
     });
   }
 
-  // ALL tab: pending customer requests + all formal complaints, combined
-  const [pendingRequests, complaints] = await Promise.all([
+  // ALL tab: merge pending customer requests + formal complaints.
+  //
+  // Memory safety: we only need the top `skip + limit` rows of the merged
+  // set, which is guaranteed to be within the top `skip + limit` of EACH
+  // source (both are sorted by createdAt desc). Fetching `take: skip+limit`
+  // from each bounds the row count regardless of how many complaints the
+  // customer has historically. Totals come from two separate count queries.
+  const upperBound = skip + limit;
+  const [pendingRequests, complaints, requestTotal, complaintTotal] = await Promise.all([
     prisma.customerComplaintRequest.findMany({
       where: { leadId, status: 'PENDING' },
       orderBy: { createdAt: 'desc' },
+      take: upperBound,
       select: {
         id: true, requestNumber: true, description: true, status: true, createdAt: true,
         category: { select: { name: true } },
@@ -442,13 +450,16 @@ export const getComplaintRequests = asyncHandler(async function getComplaintRequ
     prisma.complaint.findMany({
       where: { leadId },
       orderBy: { createdAt: 'desc' },
+      take: upperBound,
       select: {
         id: true, complaintNumber: true, description: true, status: true, priority: true, createdAt: true,
         category: { select: { name: true } },
         subCategory: { select: { name: true } },
         attachments: { select: { id: true, fileName: true, fileUrl: true, fileType: true } },
       }
-    })
+    }),
+    prisma.customerComplaintRequest.count({ where: { leadId, status: 'PENDING' } }),
+    prisma.complaint.count({ where: { leadId } }),
   ]);
 
   const combined = [
@@ -466,7 +477,7 @@ export const getComplaintRequests = asyncHandler(async function getComplaintRequ
   ];
   combined.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-  const total = combined.length;
+  const total = requestTotal + complaintTotal;
   const paginated = combined.slice(skip, skip + limit);
 
   res.json({

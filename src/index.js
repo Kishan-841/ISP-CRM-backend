@@ -64,16 +64,23 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000'];
 
+// Vercel preview allowlist: the project name must be a PREFIX of the
+// hostname, otherwise anyone who creates a vercel project containing the
+// string (e.g. `evil-isp-crm-frontend.vercel.app`) would pass CORS and
+// be able to send credentialed cross-origin requests.
+const VERCEL_PROJECT_NAME = process.env.VERCEL_PROJECT_NAME || 'isp-crm-frontend';
+const vercelOriginRegex = new RegExp(
+  `^https://${VERCEL_PROJECT_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-[a-z0-9-]+)?\\.vercel\\.app$`
+);
+
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (curl, mobile apps, etc.)
     if (!origin) return callback(null, true);
     // Check exact match
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    // Allow all Vercel preview URLs for this project
-    if (origin.endsWith('.vercel.app') && origin.includes('isp-crm-frontend')) {
-      return callback(null, true);
-    }
+    // Allow Vercel preview URLs that match our project name as a prefix
+    if (vercelOriginRegex.test(origin)) return callback(null, true);
     callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

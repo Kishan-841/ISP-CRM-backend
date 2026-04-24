@@ -42,8 +42,10 @@ router.get('/leads/invoiceable', getInvoiceableLeads);
 // Check which leads need invoices (preview)
 router.get('/auto-generate/check', checkPendingInvoices);
 
-// Auto-generate invoices for all leads that need them
-router.post('/auto-generate', autoGenerateInvoices);
+// Auto-generate invoices for all leads that need them. Admin-gated because
+// it runs a bulk job that mutates every active customer — pairs with the
+// cron lock to prevent concurrent executions.
+router.post('/auto-generate', requireRole('SUPER_ADMIN', 'ADMIN'), autoGenerateInvoices);
 
 // Get invoices for a specific lead
 router.get('/lead/:leadId', getLeadInvoices);

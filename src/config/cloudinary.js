@@ -72,22 +72,37 @@ const typedStorage = new CloudinaryStorage({
   }
 });
 
-// File filter
-const fileFilter = (req, file, cb) => {
-  const allowedMimes = [
-    'image/jpeg',
-    'image/jpg',
-    'image/png',
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  ];
+// File filter — validates BOTH the client-sent Content-Type and the file
+// extension. `file.mimetype` is trivially spoofable by a malicious client
+// (just set the multipart `Content-Type`), so the extension check is a
+// second layer: an SVG renamed to `doc.pdf` with spoofed `image/png`
+// mimetype passes the mimetype check but fails the extension check.
+//
+// Cloudinary's `allowed_formats` (set on each storage config below)
+// provides the third layer — it inspects the actual uploaded content and
+// rejects anything outside the whitelisted formats. Full magic-byte
+// validation would require switching from CloudinaryStorage to
+// memoryStorage + manual upload, which is out of scope for this fix.
+const ALLOWED_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
 
-  if (allowedMimes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only PDF, DOC, DOCX, JPG, and PNG files are allowed'), false);
+const ALLOWED_EXTS = new Set(['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx']);
+
+const fileFilter = (req, file, cb) => {
+  if (!ALLOWED_MIMES.has(file.mimetype)) {
+    return cb(new Error('Only PDF, DOC, DOCX, JPG, and PNG files are allowed'), false);
   }
+  const ext = (file.originalname.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
+  if (!ALLOWED_EXTS.has(ext)) {
+    return cb(new Error('File extension does not match an allowed type.'), false);
+  }
+  cb(null, true);
 };
 
 // Create multer upload instances
