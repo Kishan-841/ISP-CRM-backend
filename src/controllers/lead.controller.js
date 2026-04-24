@@ -4023,17 +4023,21 @@ export const sendBackToBDM = asyncHandler(async function sendBackToBDM(req, res)
 export const getDocsTeamReviewHistory = asyncHandler(async function getDocsTeamReviewHistory(req, res) {
     const userId = req.user.id;
     const isDocsTeam = req.user.role === 'DOCS_TEAM';
+    // Admin-tier roles (MASTER / SUPER_ADMIN / ADMIN / SALES_DIRECTOR) can
+    // see every docs reviewer's history, not just their own. This endpoint
+    // previously hard-rejected them with 403.
+    const isAdminTier = isAdminOrTestUser(req.user);
 
-    if (!isDocsTeam) {
-      return res.status(403).json({ message: 'Only Docs Team can access this endpoint.' });
+    if (!isDocsTeam && !isAdminTier) {
+      return res.status(403).json({ message: 'Only Docs Team or Admin can access this endpoint.' });
     }
 
     const { filter = 'all' } = req.query; // all, approved, rejected
 
-    // Build filter based on query
+    // Docs Team member → their own reviews. Admin-tier → every reviewer.
     let whereClause = {
-      docsVerifiedById: userId,
-      docsVerifiedAt: { not: null }
+      docsVerifiedAt: { not: null },
+      ...(isDocsTeam && !isAdminTier ? { docsVerifiedById: userId } : {})
     };
 
     if (filter === 'approved') {
