@@ -4509,33 +4509,51 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader or Admin can access this endpoint.' });
     }
 
-    // Admin/TL can view a specific BDM's dashboard by passing userId query param
-    const targetUserId = (isAdmin || isTL) && req.query.userId ? req.query.userId : req.user.id;
+    // Who's pipeline to show?
+    //   - BDM: always themselves
+    //   - TL with no query: themselves (legacy behaviour)
+    //   - Admin with no query, OR any role passing userId=all: aggregate
+    //     across every active BDM / BDM_CP / BDM_TEAM_LEADER so super-admin
+    //     and master logins see a platform-wide view instead of their own
+    //     empty pipeline.
+    //   - Admin/TL with a specific userId: that BDM (or TL team)
+    const queryUserId = req.query.userId;
+    const wantsAllBdms = (isAdmin || isTL) && (queryUserId === 'all' || (isAdmin && !queryUserId));
 
-    // When viewing a BDM_TEAM_LEADER's dashboard, we aggregate the TL's own
-    // leads plus every active BDM assigned under them.
-    let userIds = [targetUserId];
-
-    // Verify target user is BDM/BDM_CP/BDM_TEAM_LEADER if admin/TL is viewing
-    if ((isAdmin || isTL) && req.query.userId) {
-      const targetUser = await prisma.user.findUnique({
-        where: { id: targetUserId },
-        select: { role: true }
+    let userIds;
+    if (wantsAllBdms) {
+      const allBdms = await prisma.user.findMany({
+        where: {
+          isActive: true,
+          role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] }
+        },
+        select: { id: true }
       });
-      if (!targetUser || !['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(targetUser.role)) {
-        return res.status(400).json({ message: 'Target user is not a BDM or Team Leader.' });
-      }
-      if (targetUser.role === 'BDM_TEAM_LEADER') {
-        const teamMembers = await prisma.user.findMany({
-          where: { teamLeaderId: targetUserId, isActive: true },
-          select: { id: true }
+      userIds = allBdms.map(u => u.id);
+    } else {
+      const targetUserId = (isAdmin || isTL) && queryUserId ? queryUserId : req.user.id;
+      userIds = [targetUserId];
+
+      // Verify target user is BDM/BDM_CP/BDM_TEAM_LEADER if admin/TL is viewing
+      if ((isAdmin || isTL) && queryUserId) {
+        const targetUser = await prisma.user.findUnique({
+          where: { id: targetUserId },
+          select: { role: true }
         });
-        userIds = [targetUserId, ...teamMembers.map(u => u.id)];
+        if (!targetUser || !['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(targetUser.role)) {
+          return res.status(400).json({ message: 'Target user is not a BDM or Team Leader.' });
+        }
+        if (targetUser.role === 'BDM_TEAM_LEADER') {
+          const teamMembers = await prisma.user.findMany({
+            where: { teamLeaderId: targetUserId, isActive: true },
+            select: { id: true }
+          });
+          userIds = [targetUserId, ...teamMembers.map(u => u.id)];
+        }
       }
     }
 
-    const userId = targetUserId;
-    // Lead filter that spans the TL's whole team (or just the BDM themselves)
+    // Lead filter — spans the set of user IDs selected above.
     const assignedIn = { in: userIds };
 
     // Handle date filter from query params
