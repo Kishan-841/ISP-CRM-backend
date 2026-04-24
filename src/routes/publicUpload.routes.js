@@ -41,6 +41,35 @@ const tokenLookupRateLimit = rateLimit({
   message: { message: 'Too many requests for this link. Please wait a few minutes.' },
 });
 
+// Allow-lists mirror the staff upload path (config/cloudinary.js). Excel is
+// accepted globally at the filter layer for the IIL Protocol Sheet doc
+// type; per-document-type restrictions live in config/documentTypes.js and
+// are enforced at the UI via the per-doc `accept` attribute.
+const ALLOWED_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+
+const ALLOWED_EXTS = new Set(['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx']);
+
+const RAW_MIMES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+
+const pickResourceType = (mimetype) => (RAW_MIMES.has(mimetype) ? 'raw' : 'auto');
+
+const CLOUDINARY_ALLOWED_FORMATS = ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
+
 // Custom storage that gets leadId from token validation
 const createCustomerStorage = () => {
   return new CloudinaryStorage({
@@ -50,39 +79,25 @@ const createCustomerStorage = () => {
       const leadId = req.leadId || 'unknown';
       const documentType = req.params.documentType || 'general';
 
-      let resourceType = 'auto';
-      if (file.mimetype === 'application/pdf' ||
-          file.mimetype === 'application/msword' ||
-          file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-        resourceType = 'raw';
-      }
-
       return {
         folder: `isp_crm/documents/${leadId}/${documentType}`,
-        resource_type: resourceType,
-        allowed_formats: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
+        resource_type: pickResourceType(file.mimetype),
+        allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
         public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
       };
     }
   });
 };
 
-// File filter
 const fileFilter = (req, file, cb) => {
-  const allowedMimes = [
-    'image/jpeg',
-    'image/jpg',
-    'image/png',
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  ];
-
-  if (allowedMimes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only PDF, DOC, DOCX, JPG, and PNG files are allowed'), false);
+  if (!ALLOWED_MIMES.has(file.mimetype)) {
+    return cb(new Error('Only PDF, DOC, DOCX, XLS, XLSX, JPG, and PNG files are allowed'), false);
   }
+  const ext = (file.originalname.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
+  if (!ALLOWED_EXTS.has(ext)) {
+    return cb(new Error('File extension does not match an allowed type.'), false);
+  }
+  cb(null, true);
 };
 
 const customerUpload = multer({

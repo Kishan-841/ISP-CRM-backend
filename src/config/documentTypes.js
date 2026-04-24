@@ -38,7 +38,7 @@ export const DOCUMENT_TYPES = {
     label: 'IIL Protocol Sheet',
     description: 'Internet Information Link protocol document',
     required: true,
-    acceptedFormats: ['pdf', 'jpg', 'jpeg', 'png'],
+    acceptedFormats: ['pdf', 'jpg', 'jpeg', 'png', 'xlsx', 'xls'],
     maxSize: 10 * 1024 * 1024,
     order: 4
   },
