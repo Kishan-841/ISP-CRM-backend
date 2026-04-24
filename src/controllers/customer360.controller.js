@@ -728,6 +728,15 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         ? `Admin uploaded this contact into campaign "${campaignName || '—'}".`
         : `ISR added this contact themselves${campaignName ? ` (campaign "${campaignName}")` : ''}.`;
 
+    // When a BDM self-assigns a BULK_UPLOAD_BDM campaign, they end up being
+    // the "ISR" for that row too — the pipeline uses the ISR slot, but the
+    // human is a BDM. Re-label so the journey doesn't keep saying "ISR …"
+    // for work the BDM actually did.
+    const bdmRoles = new Set(['BDM', 'BDM_TEAM_LEADER']);
+    const callingRole = (u) => (u && bdmRoles.has(u.role) ? 'BDM' : 'ISR');
+    const isrSlotRole = callingRole(isrUser);
+    const converterRole = callingRole(lead.createdBy);
+
     if (lead.campaignData) {
       timeline.push({
         stage: 'DATA_UPLOADED',
@@ -738,21 +747,29 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       });
     }
     if (isrUser) {
+      const assignedLabel =
+        leadOrigin === 'ISR_SELF_DATA'
+          ? (isrSlotRole === 'BDM' ? 'BDM Calling Phase' : 'ISR Calling Phase')
+          : (isrSlotRole === 'BDM' ? 'Assigned to BDM for Calling' : 'Assigned to ISR for Calling');
+      const assignedDetails =
+        isrSlotRole === 'BDM'
+          ? 'BDM will call this contact and decide whether to convert to a lead.'
+          : leadOrigin === 'ISR_SELF_DATA'
+          ? 'ISR will call and decide whether to convert.'
+          : 'ISR will call this contact and decide whether to convert to a lead.';
       timeline.push({
         stage: 'ISR_ASSIGNED',
-        label: leadOrigin === 'ISR_SELF_DATA' ? 'ISR Calling Phase' : 'Assigned to ISR for Calling',
+        label: assignedLabel,
         timestamp: lead.campaignData?.createdAt,
         user: isrUser,
-        details:
-          leadOrigin === 'ISR_SELF_DATA'
-            ? 'ISR will call and decide whether to convert.'
-            : 'ISR will call this contact and decide whether to convert to a lead.',
+        details: assignedDetails,
       });
     }
     callLogs.forEach((log, index) => {
+      const callerRole = callingRole(log.user);
       timeline.push({
         stage: 'ISR_CALL',
-        label: `ISR Call #${index + 1}`,
+        label: `${callerRole} Call #${index + 1}`,
         timestamp: log.startTime,
         user: log.user,
         details: `Disposition: ${log.status}${log.duration ? ` · Duration: ${log.duration}s` : ''}${log.notes ? ` · Note: ${log.notes}` : ''}`,
@@ -761,10 +778,13 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
     timeline.push({
       stage: 'LEAD_CREATED',
-      label: 'Lead Converted by ISR',
+      label: `Lead Converted by ${converterRole}`,
       timestamp: lead.createdAt,
       user: lead.createdBy,
-      details: 'ISR marked this contact as interested and converted it into a qualified lead.',
+      details:
+        converterRole === 'BDM'
+          ? 'BDM marked this contact as interested and converted it into a qualified lead.'
+          : 'ISR marked this contact as interested and converted it into a qualified lead.',
     });
     if (lead.assignedTo) {
       timeline.push({
@@ -911,8 +931,16 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   const quoteUploadedLog = statusChangeLogs.find((l) => l.field === 'quotationUploaded');
   const quoteSubmittedLog = statusChangeLogs.find((l) => l.field === 'quotationSubmitted');
 
+  // Flows vary on whether OPS approval happens first (legacy) or the lead
+  // goes straight to Sales Director. Earlier we gated both rows on
+  // lead.opsApprovedAt, which silently hid the whole quotation block for
+  // the direct-to-SA2 path. Use whichever timestamp we have, in priority
+  // order: explicit submit/upload log → OPS approval → SA2 approval.
   if (quotationUploaded) {
-    const ts = quoteUploadedLog?.changedAt || lead.opsApprovedAt;
+    const ts = quoteUploadedLog?.changedAt
+      || quoteSubmittedLog?.changedAt
+      || lead.opsApprovedAt
+      || lead.superAdmin2ApprovedAt;
     if (ts) {
       timeline.push({
         stage: 'QUOTATION_UPLOADED',
@@ -924,8 +952,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     }
   }
 
-  if (quotationUploaded && lead.opsApprovedAt) {
-    const ts = quoteSubmittedLog?.changedAt || lead.opsApprovedAt;
+  if (quotationUploaded && (quoteSubmittedLog || lead.opsApprovedAt || lead.superAdmin2ApprovedAt)) {
+    const ts = quoteSubmittedLog?.changedAt || lead.opsApprovedAt || lead.superAdmin2ApprovedAt;
     timeline.push({
       stage: 'QUOTATION_SUBMITTED',
       label: 'Quotation Submitted for Approval',
@@ -988,31 +1016,57 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     });
   });
 
-  // Customer login to portal for document upload
+  // Login-completed step — who actually signed in determines the label.
+  // When the BDM marks it on behalf of the customer (common when the BDM
+  // walks them through it), the actor is a staff user, not the customer.
   if (lead.loginCompletedAt) {
+    const loginRole = loginCompletedByUser?.role;
+    const loginByBdm = loginRole === 'BDM' || loginRole === 'BDM_TEAM_LEADER';
     timeline.push({
       stage: 'LOGIN_COMPLETED',
-      label: 'Customer Completed Login',
+      label: loginByBdm ? 'Login Completed by BDM' : 'Customer Completed Login',
       timestamp: lead.loginCompletedAt,
       user: loginCompletedByUser,
-      details: 'Customer signed in to begin document upload.',
+      details: loginByBdm
+        ? 'BDM marked the customer login step complete on their behalf.'
+        : 'Customer signed in to begin document upload.',
     });
   }
 
-  // Derive the earliest customer document upload from the lead.documents JSON map.
+  // Document uploads can come from two sources: staff uploads via the
+  // BDM dashboard (each doc tagged with uploadedBy: <userId>) and customer
+  // uploads via a public token link (tagged with uploadedBy: 'customer').
+  // Inspect the uploadedBy values to label accurately.
   if (lead.documents && typeof lead.documents === 'object' && !Array.isArray(lead.documents)) {
     const docEntries = Object.entries(lead.documents);
     const uploadedAts = docEntries
       .map(([, v]) => (v && typeof v === 'object' && v.uploadedAt) ? new Date(v.uploadedAt) : null)
       .filter(Boolean);
     if (uploadedAts.length > 0) {
+      const uploaders = docEntries
+        .map(([, v]) => (v && typeof v === 'object') ? v.uploadedBy : null)
+        .filter((u) => u !== undefined && u !== null);
+      const hasCustomerUpload = uploaders.some((u) => u === 'customer');
+      const hasStaffUpload = uploaders.some((u) => u && u !== 'customer');
+      let docsLabel;
+      let docsDetails;
+      if (hasCustomerUpload && !hasStaffUpload) {
+        docsLabel = 'Documents Uploaded by Customer';
+        docsDetails = `Customer uploaded ${docEntries.length} document${docEntries.length === 1 ? '' : 's'}. Docs team can now verify them.`;
+      } else if (hasStaffUpload && !hasCustomerUpload) {
+        docsLabel = 'Documents Uploaded by BDM';
+        docsDetails = `BDM uploaded ${docEntries.length} document${docEntries.length === 1 ? '' : 's'}. Docs team can now verify them.`;
+      } else {
+        docsLabel = 'Documents Uploaded';
+        docsDetails = `${docEntries.length} document${docEntries.length === 1 ? '' : 's'} uploaded (mix of customer and BDM). Docs team can now verify them.`;
+      }
       const earliest = new Date(Math.min(...uploadedAts.map((d) => d.getTime())));
       timeline.push({
         stage: 'DOCS_UPLOADED',
-        label: 'Documents Uploaded by Customer',
+        label: docsLabel,
         timestamp: earliest,
         user: null,
-        details: `Customer uploaded ${docEntries.length} document${docEntries.length === 1 ? '' : 's'}. Docs team can now verify them.`,
+        details: docsDetails,
       });
     }
   }
