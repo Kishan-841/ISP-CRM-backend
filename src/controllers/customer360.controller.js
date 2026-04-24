@@ -2,6 +2,134 @@ import prisma from '../config/db.js';
 import * as XLSX from 'xlsx';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
 
+// Derive "where is this lead right now" from the densely-flagged Lead row.
+// The pipeline is a forward state machine — we walk the flags from terminal
+// state back to earliest so a lead at, say, Accounts still shows as Accounts
+// even though its feasibilityAssignedToId is also set from an earlier stage.
+//
+// Returns { stage, owner }. `owner` is the concrete person in whose login
+// the work sits today (name string), or a team label like "Docs Team" when
+// no single user owns it.
+function deriveCurrentStage(lead) {
+  // Post-activation customer lifecycle
+  if (lead.actualPlanIsActive) {
+    return {
+      stage: 'Active Customer',
+      owner: lead.samAssignment?.samExecutive?.name || 'SAM',
+    };
+  }
+  if (lead.actualPlanName) {
+    return { stage: 'Plan Creation', owner: 'Accounts Team' };
+  }
+  if (lead.demoPlanIsActive) {
+    return { stage: 'Demo Plan', owner: 'Accounts Team' };
+  }
+  if (lead.customerAcceptanceAt) {
+    return { stage: 'Awaiting Plan Activation', owner: 'Accounts Team' };
+  }
+  if (lead.speedTestUploadedAt) {
+    return { stage: 'Customer Acceptance', owner: 'Delivery Team' };
+  }
+  if (lead.installationCompletedAt) {
+    return { stage: 'Speed Test', owner: 'Delivery Team' };
+  }
+  if (lead.installationStartedAt) {
+    return { stage: 'Installation', owner: 'Delivery Team' };
+  }
+
+  // Delivery queue
+  if (lead.deliveryStatus === 'COMPLETED') {
+    return { stage: 'Awaiting Installation', owner: 'Delivery Team' };
+  }
+  if (lead.deliveryStatus === 'DISPATCHED') {
+    return { stage: 'Dispatched', owner: 'Delivery Team' };
+  }
+  if (lead.deliveryStatus === 'ASSIGNED') {
+    return { stage: 'Delivery — Assigned to Store', owner: 'Store Manager' };
+  }
+  if (['APPROVED', 'AREA_HEAD_APPROVED', 'SUPER_ADMIN_APPROVED'].includes(lead.deliveryStatus)) {
+    return { stage: 'Delivery — Approved', owner: 'Delivery Team' };
+  }
+  if (lead.deliveryStatus === 'PENDING_APPROVAL') {
+    return { stage: 'Delivery Approval', owner: 'Area Head / Super Admin' };
+  }
+
+  // NOC
+  if (lead.nocConfiguredAt) {
+    return { stage: 'NOC → Delivery', owner: 'Delivery Team' };
+  }
+  if (lead.nocAssignedToId) {
+    return { stage: 'NOC', owner: lead.nocAssignedTo?.name || 'NOC Team' };
+  }
+  if (lead.pushedToInstallationAt) {
+    return { stage: 'Pushed to Installation', owner: 'NOC Team' };
+  }
+
+  // Accounts / docs
+  if (lead.accountsStatus === 'ACCOUNTS_APPROVED') {
+    return { stage: 'Awaiting OPS Push', owner: 'OPS Team' };
+  }
+  if (lead.accountsStatus === 'ACCOUNTS_REJECTED') {
+    return { stage: 'Accounts Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (lead.docsVerifiedAt && !lead.docsRejectedReason) {
+    return { stage: 'Accounts Verification', owner: 'Accounts Team' };
+  }
+  if (lead.docsRejectedReason) {
+    return { stage: 'Docs Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  const docsUploaded =
+    lead.documents &&
+    typeof lead.documents === 'object' &&
+    !Array.isArray(lead.documents) &&
+    Object.keys(lead.documents).length > 0;
+  if (docsUploaded && !lead.docsVerifiedAt) {
+    return { stage: 'Docs Verification', owner: 'Docs Team' };
+  }
+
+  // SA2 / OPS quotation approvals
+  if (lead.superAdmin2ApprovalStatus === 'APPROVED' && !docsUploaded) {
+    return { stage: 'Docs Collection', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (lead.superAdmin2ApprovalStatus === 'REJECTED') {
+    return { stage: 'SA2 Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (lead.superAdmin2ApprovalStatus === 'PENDING') {
+    return { stage: 'Sales Director Approval', owner: 'Sales Director' };
+  }
+  if (lead.opsApprovalStatus === 'APPROVED' && !lead.superAdmin2ApprovalStatus) {
+    return { stage: 'Sales Director Approval', owner: 'Sales Director' };
+  }
+  if (lead.opsApprovalStatus === 'PENDING') {
+    return { stage: 'OPS Approval', owner: 'OPS Team' };
+  }
+  if (lead.opsApprovalStatus === 'REJECTED') {
+    return { stage: 'OPS Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+
+  // Quotation / feasibility
+  const hasQuotation = Array.isArray(lead.quotationAttachments)
+    ? lead.quotationAttachments.length > 0
+    : !!lead.quotationAttachments;
+  if (hasQuotation) {
+    return { stage: 'Quotation Ready', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (lead.feasibilityReviewedAt) {
+    return { stage: 'Quotation', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (lead.feasibilityAssignedToId) {
+    return { stage: 'Feasibility', owner: lead.feasibilityAssignedTo?.name || 'Feasibility Team' };
+  }
+
+  // Pre-feasibility BDM / status-based
+  if (lead.status === 'DROPPED') return { stage: 'Dropped', owner: null };
+  if (lead.status === 'FOLLOW_UP') return { stage: 'Follow-up', owner: lead.assignedTo?.name || 'BDM' };
+  if (lead.status === 'QUALIFIED') return { stage: 'Qualified', owner: lead.assignedTo?.name || 'BDM' };
+  if (lead.assignedToId) return { stage: 'BDM', owner: lead.assignedTo?.name || 'BDM' };
+
+  return { stage: 'New', owner: null };
+}
+
 // GET /api/customer-360/search?q=term&page=1&limit=20
 export const searchCustomers = asyncHandler(async function searchCustomers(req, res) {
   const { q = '' } = req.query;
@@ -35,6 +163,30 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
         actualPlanIsActive: true,
         actualPlanName: true,
         createdAt: true,
+        // Fields feeding the current-stage derivation.
+        demoPlanIsActive: true,
+        customerAcceptanceAt: true,
+        speedTestUploadedAt: true,
+        installationCompletedAt: true,
+        installationStartedAt: true,
+        nocConfiguredAt: true,
+        nocAssignedToId: true,
+        pushedToInstallationAt: true,
+        accountsStatus: true,
+        docsVerifiedAt: true,
+        docsRejectedReason: true,
+        documents: true,
+        superAdmin2ApprovalStatus: true,
+        opsApprovalStatus: true,
+        quotationAttachments: true,
+        feasibilityReviewedAt: true,
+        feasibilityAssignedToId: true,
+        assignedToId: true,
+        // Relations for the owner name
+        assignedTo: { select: { name: true } },
+        feasibilityAssignedTo: { select: { name: true } },
+        nocAssignedTo: { select: { name: true } },
+        samAssignment: { select: { samExecutive: { select: { name: true } } } },
         campaignData: {
           select: {
             company: true,
@@ -55,21 +207,26 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
     prisma.lead.count({ where }),
   ]);
 
-  const items = leads.map((lead) => ({
-    id: lead.id,
-    company: lead.campaignData?.company || '',
-    name: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim(),
-    phone: lead.campaignData?.phone || '',
-    email: lead.campaignData?.email || '',
-    city: lead.campaignData?.city || '',
-    state: lead.campaignData?.state || '',
-    status: lead.status,
-    deliveryStatus: lead.deliveryStatus,
-    customerUsername: lead.customerUsername,
-    planActive: lead.actualPlanIsActive,
-    planName: lead.actualPlanName,
-    createdAt: lead.createdAt,
-  }));
+  const items = leads.map((lead) => {
+    const { stage, owner } = deriveCurrentStage(lead);
+    return {
+      id: lead.id,
+      company: lead.campaignData?.company || '',
+      name: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim(),
+      phone: lead.campaignData?.phone || '',
+      email: lead.campaignData?.email || '',
+      city: lead.campaignData?.city || '',
+      state: lead.campaignData?.state || '',
+      status: lead.status,
+      deliveryStatus: lead.deliveryStatus,
+      customerUsername: lead.customerUsername,
+      planActive: lead.actualPlanIsActive,
+      planName: lead.actualPlanName,
+      currentStage: stage,
+      currentOwner: owner,
+      createdAt: lead.createdAt,
+    };
+  });
 
   res.json(paginatedResponse({ data: items, total, page, limit }));
 });
