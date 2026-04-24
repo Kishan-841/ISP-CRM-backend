@@ -912,19 +912,28 @@ export const deleteLead = asyncHandler(async function deleteLead(req, res) {
 
 // Get BDM users for assignment dropdown
 export const getBDMUsers = asyncHandler(async function getBDMUsers(req, res) {
-    const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+    // Use direct role comparison, NOT hasRole() — hasRole short-circuits to
+    // true for MASTER, which would flip this branch on for the master login
+    // and return only the master user themselves (they don't lead a team).
+    // This helper is about "what role is this user?", not "is this user
+    // allowed to act like a TL?".
+    const isTL = req.user.role === 'BDM_TEAM_LEADER';
 
-    // Team leader sees themselves + their team members
+    // Team leader → their team (plus themselves).
+    // Everyone else (admin, master, super-admin, sales director, etc.) →
+    // the full BDM pool, which now includes BDM_CP and BDM_TEAM_LEADER so
+    // the Pipeline ARC dropdown can drill into any role that owns leads.
     const whereClause = isTL
       ? { isActive: true, OR: [{ role: 'BDM', teamLeaderId: req.user.id }, { id: req.user.id }] }
-      : { role: 'BDM', isActive: true };
+      : { isActive: true, role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] } };
 
     const bdmUsers = await prisma.user.findMany({
       where: whereClause,
       select: {
         id: true,
         name: true,
-        email: true
+        email: true,
+        role: true,
       },
       orderBy: { name: 'asc' }
     });
