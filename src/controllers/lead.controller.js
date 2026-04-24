@@ -6,7 +6,7 @@ import { isValidDocumentType, validateDocuments, getRequiredDocumentTypes } from
 import { deleteFromCloudinary, getResourceType } from '../config/cloudinary.js';
 import { generateOTCInvoiceNumber, generateInvoiceNumber, generateCreditNoteNumber, generateVendorPONumber, generateLeadNumber } from '../services/documentNumber.service.js';
 import { createInvoiceLedgerEntry, deleteLedgerEntriesForInvoice, createCreditNoteLedgerEntry } from '../services/ledger.service.js';
-import { isAdminOrTestUser, hasRole, hasAnyRole } from '../utils/roleHelper.js';
+import { isAdminOrTestUser, canHardDelete, hasRole, hasAnyRole } from '../utils/roleHelper.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { sendEmail } from '../services/email.service.js';
 import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, paginatedResponse } from '../utils/controllerHelper.js';
@@ -892,6 +892,13 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
 // Delete lead
 export const deleteLead = asyncHandler(async function deleteLead(req, res) {
     const { id } = req.params;
+
+    // The route gates with requireRole('SUPER_ADMIN') but SALES_DIRECTOR has
+    // a middleware-level bypass for view-parity; re-enforce here so sales
+    // directors can't use the bypass to actually delete leads.
+    if (!canHardDelete(req.user)) {
+      return res.status(403).json({ message: 'Only super admins can delete leads.' });
+    }
 
     const existing = await prisma.lead.findUnique({ where: { id } });
     if (!existing) {

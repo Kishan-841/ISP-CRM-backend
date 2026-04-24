@@ -1,5 +1,5 @@
 import prisma from '../config/db.js';
-import { isAdminOrTestUser, hasRole, hasAnyRole } from '../utils/roleHelper.js';
+import { isAdminOrTestUser, canHardDelete, hasRole, hasAnyRole } from '../utils/roleHelper.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import {
   generateInvoiceNumber,
@@ -1501,7 +1501,9 @@ export const getCustomerInvoiceDetail = asyncHandler(async function getCustomerI
 export const deleteInvoice = asyncHandler(async function deleteInvoice(req, res) {
     const { id } = req.params;
 
-    if (!isAdminOrTestUser(req.user)) {
+    // Sales directors have view parity with super admin elsewhere but must
+    // not be able to wipe invoices (and the ledger rows they anchor).
+    if (!canHardDelete(req.user)) {
       return res.status(403).json({ message: 'Only super admins can delete invoices.' });
     }
 

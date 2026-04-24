@@ -14,6 +14,19 @@ export const isAdmin = (user) => {
 export const isAdminOrTestUser = isAdmin;
 
 /**
+ * Stricter check for destructive / non-reversible operations
+ * (permanent lead delete, invoice delete, etc.).
+ *
+ * SALES_DIRECTOR has view-level parity with SUPER_ADMIN elsewhere but is
+ * intentionally excluded here — sales leadership can read and approve, not
+ * wipe ledger-affecting records. MASTER is the developer-debug login and
+ * retains its universal bypass.
+ */
+export const canHardDelete = (user) => {
+  return user?.role === 'SUPER_ADMIN' || user?.role === 'MASTER';
+};
+
+/**
  * Log when a MASTER user's universal-bypass is exercised so privileged
  * actions leave a trail. Kept as a simple console.warn — a dedicated audit
  * table would be cleaner but adds a hot-path DB write on every auth check.
