@@ -802,7 +802,10 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
           data: {
             receivedQuantity: remainingQty > 0 ? remainingQty : 0,
             quantity: Math.max(0, poItem.quantity - assignedQty),
-            status: remainingQty <= 0 ? 'ASSIGNED' : 'IN_STORE'
+            // POItemStatus enum is only PURCHASED / IN_STORE. Fully-assigned
+            // items stay in IN_STORE with quantity=0 — callers check
+            // quantity, not status. (Matches the serial-number branch below.)
+            status: 'IN_STORE'
           }
         });
       }
