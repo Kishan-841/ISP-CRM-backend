@@ -4,7 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
 import { createServer } from 'http';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
@@ -87,13 +87,41 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 };
-// Rate limiting
+// Rate limiting — the default of 100/min was too tight for a real CRM
+// session: a single dashboard load fires sidebar counts, notifications,
+// queue fetches, and paginated lists; open two tabs on a shared office
+// NAT and legitimate users hit the cap. Defaults now scale for that,
+// and RATE_LIMIT_MAX / RATE_LIMIT_WINDOW_MS let prod tune without code
+// changes. Authenticated user requests keyed per-user (via the JWT's
+// userId) so one heavy user doesn't starve everyone behind the same IP.
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000;
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 600;
+
 const generalLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 100,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests, please try again later.' },
+  keyGenerator: (req, res) => {
+    const auth = req.headers.authorization;
+    if (auth?.startsWith('Bearer ')) {
+      // Use JWT subject if we can decode it — no verification needed here,
+      // the downstream auth middleware verifies for real. This is only a
+      // rate-limit bucket key, and a spoofed token just shares someone
+      // else's bucket (hurts the spoofer, not us).
+      try {
+        const payload = auth.slice(7).split('.')[1];
+        if (payload) {
+          const decoded = JSON.parse(Buffer.from(payload, 'base64').toString());
+          if (decoded?.userId) return `user:${decoded.userId}`;
+        }
+      } catch { /* fall through to IP */ }
+    }
+    // ipKeyGenerator handles IPv6 prefix collapsing per the library's
+    // guidance — a plain req.ip bucket would let IPv6 users bypass.
+    return ipKeyGenerator(req, res);
+  },
 });
 
 // Middleware
