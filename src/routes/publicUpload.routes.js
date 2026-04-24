@@ -70,6 +70,12 @@ const pickResourceType = (mimetype) => (RAW_MIMES.has(mimetype) ? 'raw' : 'auto'
 
 const CLOUDINARY_ALLOWED_FORMATS = ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
 
+// Pass format explicitly from the trusted extension. Cloudinary's auto
+// format detection fails on Office Open XML (xlsx/docx are ZIP-packaged)
+// and returns the misleading "unknown file format" 400 error.
+const extractFormat = (originalname) =>
+  (originalname.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
+
 // Custom storage that gets leadId from token validation
 const createCustomerStorage = () => {
   return new CloudinaryStorage({
@@ -82,6 +88,7 @@ const createCustomerStorage = () => {
       return {
         folder: `isp_crm/documents/${leadId}/${documentType}`,
         resource_type: pickResourceType(file.mimetype),
+        format: extractFormat(file.originalname),
         allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
         public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
       };

@@ -64,6 +64,14 @@ const pickResourceType = (mimetype) => (RAW_MIMES.has(mimetype) ? 'raw' : 'auto'
 
 const CLOUDINARY_ALLOWED_FORMATS = ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
 
+// Cloudinary's auto-detection can't reliably classify Office Open XML files
+// (xlsx/docx are ZIP-packaged, and Cloudinary often returns format "unknown"
+// → upload rejected by allowed_formats with a 400). Passing `format`
+// explicitly from the trusted file extension removes the ambiguity.
+// The extension has already been validated by fileFilter against ALLOWED_EXTS.
+const extractFormat = (originalname) =>
+  (originalname.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
+
 const fileFilter = (req, file, cb) => {
   if (!ALLOWED_MIMES.has(file.mimetype)) {
     return cb(new Error('Only PDF, DOC, DOCX, XLS, XLSX, JPG, and PNG files are allowed'), false);
@@ -83,6 +91,7 @@ const genericStorage = new CloudinaryStorage({
   params: async (req, file) => ({
     folder: 'isp_crm/documents',
     resource_type: pickResourceType(file.mimetype),
+    format: extractFormat(file.originalname),
     allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
     public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
   })
@@ -98,6 +107,7 @@ const typedStorage = new CloudinaryStorage({
     return {
       folder: `isp_crm/documents/${leadId}/${documentType}`,
       resource_type: pickResourceType(file.mimetype),
+      format: extractFormat(file.originalname),
       allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
       public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
     };
@@ -113,6 +123,7 @@ const complaintStorage = new CloudinaryStorage({
     return {
       folder: `isp_crm/complaints/${complaintId}`,
       resource_type: pickResourceType(file.mimetype),
+      format: extractFormat(file.originalname),
       allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
       public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
     };
@@ -128,6 +139,7 @@ const orderStorage = new CloudinaryStorage({
     return {
       folder: `isp_crm/orders/${orderId}`,
       resource_type: pickResourceType(file.mimetype),
+      format: extractFormat(file.originalname),
       allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
       public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
     };
