@@ -62,15 +62,32 @@ const RAW_MIMES = new Set([
 
 const pickResourceType = (mimetype) => (RAW_MIMES.has(mimetype) ? 'raw' : 'auto');
 
-const CLOUDINARY_ALLOWED_FORMATS = ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
-
-// Cloudinary's auto-detection can't reliably classify Office Open XML files
-// (xlsx/docx are ZIP-packaged, and Cloudinary often returns format "unknown"
-// → upload rejected by allowed_formats with a 400). Passing `format`
-// explicitly from the trusted file extension removes the ambiguity.
-// The extension has already been validated by fileFilter against ALLOWED_EXTS.
+// Cloudinary's `allowed_formats` runs its own content-based format detection
+// BEFORE accepting the file. Office Open XML files (xlsx, docx, pptx) are
+// ZIP-packaged, so the detector sees a ZIP and returns format "unknown" —
+// then rejects the upload with 400 "An unknown file format not allowed".
+// `multer-storage-cloudinary@4` surfaces that 400 as an unhandled promise
+// rejection, which crashes the process via our global handler.
+//
+// We drop `allowed_formats` here and rely on the multer fileFilter
+// (ALLOWED_MIMES + ALLOWED_EXTS) as the authoritative whitelist. The
+// fileFilter runs before any Cloudinary call, so the server never accepts
+// an unknown type in the first place.
 const extractFormat = (originalname) =>
   (originalname.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
+
+// Raw uploads (PDF/DOC/Excel) need the extension baked into the public_id
+// so Cloudinary stores, retrieves, and serves the file with the correct
+// content type. Images go through the image pipeline and manage their own
+// extension, so we leave their public_id extensionless.
+const buildPublicId = (file) => {
+  const base = `${Date.now()}-${sanitizePublicId(file.originalname)}`;
+  if (pickResourceType(file.mimetype) === 'raw') {
+    const ext = extractFormat(file.originalname);
+    return ext ? `${base}.${ext}` : base;
+  }
+  return base;
+};
 
 const fileFilter = (req, file, cb) => {
   if (!ALLOWED_MIMES.has(file.mimetype)) {
@@ -91,9 +108,7 @@ const genericStorage = new CloudinaryStorage({
   params: async (req, file) => ({
     folder: 'isp_crm/documents',
     resource_type: pickResourceType(file.mimetype),
-    format: extractFormat(file.originalname),
-    allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
-    public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
+    public_id: buildPublicId(file)
   })
 });
 
@@ -107,9 +122,7 @@ const typedStorage = new CloudinaryStorage({
     return {
       folder: `isp_crm/documents/${leadId}/${documentType}`,
       resource_type: pickResourceType(file.mimetype),
-      format: extractFormat(file.originalname),
-      allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
-      public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
+      public_id: buildPublicId(file)
     };
   }
 });
@@ -123,9 +136,7 @@ const complaintStorage = new CloudinaryStorage({
     return {
       folder: `isp_crm/complaints/${complaintId}`,
       resource_type: pickResourceType(file.mimetype),
-      format: extractFormat(file.originalname),
-      allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
-      public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
+      public_id: buildPublicId(file)
     };
   }
 });
@@ -139,9 +150,7 @@ const orderStorage = new CloudinaryStorage({
     return {
       folder: `isp_crm/orders/${orderId}`,
       resource_type: pickResourceType(file.mimetype),
-      format: extractFormat(file.originalname),
-      allowed_formats: CLOUDINARY_ALLOWED_FORMATS,
-      public_id: `${Date.now()}-${sanitizePublicId(file.originalname)}`
+      public_id: buildPublicId(file)
     };
   }
 });
