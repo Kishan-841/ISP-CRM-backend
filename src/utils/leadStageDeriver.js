@@ -24,6 +24,8 @@ export const BUCKETS = Object.freeze({
   SALES_DIRECTOR: 'SALES_DIRECTOR',
   DOCS: 'DOCS',
   ACCOUNTS: 'ACCOUNTS',
+  NOC: 'NOC',
+  STORE: 'STORE',
   DELIVERY: 'DELIVERY',
   PENDING_ACTIVATION: 'PENDING_ACTIVATION',
   ACTIVE: 'ACTIVE',
@@ -31,10 +33,14 @@ export const BUCKETS = Object.freeze({
   DROPPED: 'DROPPED',
 });
 
-// Visible tabs in the admin Buckets view. Cold leads, active customers,
-// and pending-activation leads are excluded by design — they have their
-// own dedicated screens (Lead Pipeline / Customer 360) and admins asked to
-// keep this view focused on "leads currently in someone's working queue."
+// Visible tabs in the admin Buckets view. The principle is "in which login
+// is this lead waiting?" — so every team that has its own login gets its
+// own tab. NOC and Store had been folded into Delivery; they're separate
+// roles with separate queues, so they're separate tabs now.
+//
+// Cold leads, active customers, and pending-activation leads are excluded —
+// they have dedicated screens (Lead Pipeline / Customer 360) and aren't
+// "in someone's working queue."
 export const VISIBLE_BUCKETS = Object.freeze([
   BUCKETS.BDM,
   BUCKETS.FEASIBILITY,
@@ -42,6 +48,8 @@ export const VISIBLE_BUCKETS = Object.freeze([
   BUCKETS.SALES_DIRECTOR,
   BUCKETS.DOCS,
   BUCKETS.ACCOUNTS,
+  BUCKETS.NOC,
+  BUCKETS.STORE,
   BUCKETS.DELIVERY,
 ]);
 
@@ -208,12 +216,20 @@ const STAGE_TO_BUCKET = {
   'Demo Plan': BUCKETS.ACCOUNTS,
   'Awaiting Plan Activation': BUCKETS.ACCOUNTS,
 
-  'Pushed to Installation': BUCKETS.DELIVERY,
-  'NOC': BUCKETS.DELIVERY,
+  // NOC's queue: lead has been pushed from accounts/ops to NOC (awaiting an
+  // engineer to be assigned), or an engineer is mid-config.
+  'Pushed to Installation': BUCKETS.NOC,
+  'NOC': BUCKETS.NOC,
+
+  // Store's queue: NOC handed off to Delivery, Delivery requested materials,
+  // Store Manager has to allocate / dispatch stock.
+  'Delivery — Assigned to Store': BUCKETS.STORE,
+
+  // Delivery team's queue: everything else in the post-NOC physical chain.
+  // NOC → Delivery means NOC is done and Delivery picks it up next.
   'NOC → Delivery': BUCKETS.DELIVERY,
   'Delivery Approval': BUCKETS.DELIVERY,
   'Delivery — Approved': BUCKETS.DELIVERY,
-  'Delivery — Assigned to Store': BUCKETS.DELIVERY,
   'Dispatched': BUCKETS.DELIVERY,
   'Awaiting Installation': BUCKETS.DELIVERY,
   'Installation': BUCKETS.DELIVERY,
