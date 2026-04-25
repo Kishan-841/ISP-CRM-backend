@@ -12058,8 +12058,6 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
             state: true,
           },
         },
-        // Used to split Active Customer between PENDING_ACTIVATION and ACTIVE
-        _count: { select: { invoices: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -12067,28 +12065,25 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
     // Derive stage + bucket for every lead in one pass.
     const annotated = leads.map((lead) => {
       const derived = deriveCurrentStage(lead);
-      const bucket = bucketFromLead(lead, derived, {
-        hasInvoice: (lead._count?.invoices || 0) > 0,
-      });
+      const bucket = bucketFromLead(lead, derived);
       return { lead, derived, bucket };
     });
 
-    // Summary counts — only the visible (non-DROPPED) buckets.
+    // Summary + filter — only leads in a visible bucket. Cold, Active,
+    // Dropped/Not-Feasible all map to non-visible buckets and disappear.
     const summary = { TOTAL: 0 };
     for (const key of VISIBLE_BUCKETS) summary[key] = 0;
     for (const item of annotated) {
-      if (item.bucket === BUCKETS.DROPPED) continue;
+      if (!VISIBLE_BUCKETS.includes(item.bucket)) continue;
       summary[item.bucket] = (summary[item.bucket] || 0) + 1;
       summary.TOTAL += 1;
     }
 
-    // Filter to the requested bucket (or all visible). DROPPED is never
-    // returned, even if explicitly requested.
     let filtered;
     if (requestedBucket && VISIBLE_BUCKETS.includes(requestedBucket)) {
       filtered = annotated.filter((b) => b.bucket === requestedBucket);
     } else {
-      filtered = annotated.filter((b) => b.bucket !== BUCKETS.DROPPED);
+      filtered = annotated.filter((b) => VISIBLE_BUCKETS.includes(b.bucket));
     }
 
     const total = filtered.length;

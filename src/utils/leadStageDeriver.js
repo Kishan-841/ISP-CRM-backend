@@ -31,6 +31,10 @@ export const BUCKETS = Object.freeze({
   DROPPED: 'DROPPED',
 });
 
+// Visible tabs in the admin Buckets view. Cold leads, active customers,
+// and pending-activation leads are excluded by design — they have their
+// own dedicated screens (Lead Pipeline / Customer 360) and admins asked to
+// keep this view focused on "leads currently in someone's working queue."
 export const VISIBLE_BUCKETS = Object.freeze([
   BUCKETS.BDM,
   BUCKETS.FEASIBILITY,
@@ -39,9 +43,6 @@ export const VISIBLE_BUCKETS = Object.freeze([
   BUCKETS.DOCS,
   BUCKETS.ACCOUNTS,
   BUCKETS.DELIVERY,
-  BUCKETS.PENDING_ACTIVATION,
-  BUCKETS.ACTIVE,
-  BUCKETS.COLD,
 ]);
 
 export function deriveCurrentStage(lead) {
@@ -191,12 +192,21 @@ const STAGE_TO_BUCKET = {
   'Accounts Rejected': BUCKETS.BDM,
 
   'Feasibility': BUCKETS.FEASIBILITY,
+  // OPS bucket — both quotation approval AND the post-accounts "push to
+  // install" step. Once accounts approve, the lead sits waiting for OPS to
+  // push it forward, so it belongs in the OPS pile, not the accounts pile.
   'OPS Approval': BUCKETS.OPS,
+  'Awaiting OPS Push': BUCKETS.OPS,
+
   'Sales Director Approval': BUCKETS.SALES_DIRECTOR,
   'Docs Verification': BUCKETS.DOCS,
-
   'Accounts Verification': BUCKETS.ACCOUNTS,
-  'Awaiting OPS Push': BUCKETS.ACCOUNTS,
+
+  // Plan setup happens at Accounts (demo plan + actual plan creation) —
+  // surface it under Accounts so admins know who's working on it.
+  'Plan Creation': BUCKETS.ACCOUNTS,
+  'Demo Plan': BUCKETS.ACCOUNTS,
+  'Awaiting Plan Activation': BUCKETS.ACCOUNTS,
 
   'Pushed to Installation': BUCKETS.DELIVERY,
   'NOC': BUCKETS.DELIVERY,
@@ -210,13 +220,6 @@ const STAGE_TO_BUCKET = {
   'Speed Test': BUCKETS.DELIVERY,
   'Customer Acceptance': BUCKETS.DELIVERY,
 
-  // Pre-activation phase: customer accepted, plan being set up but not yet
-  // a fully-billing customer. ACTIVE is resolved separately based on
-  // hasInvoice (see bucketFromLead).
-  'Plan Creation': BUCKETS.PENDING_ACTIVATION,
-  'Demo Plan': BUCKETS.PENDING_ACTIVATION,
-  'Awaiting Plan Activation': BUCKETS.PENDING_ACTIVATION,
-
   'Dropped': BUCKETS.DROPPED,
   'Not Feasible': BUCKETS.DROPPED,
 };
@@ -224,20 +227,17 @@ const STAGE_TO_BUCKET = {
 /**
  * Resolve the bucket for a lead.
  *
+ * Cold leads, active customers, and dropped/not-feasible leads all map to
+ * non-visible buckets and get filtered out of the admin Buckets view —
+ * they're either parked, fully done, or terminated, and have their own
+ * dedicated screens (Lead Pipeline / Customer 360). Only leads currently
+ * sitting in someone's working queue surface here.
+ *
  * @param {Object} lead — same shape passed to deriveCurrentStage
  * @param {{stage: string}} derived — output of deriveCurrentStage
- * @param {Object} options
- * @param {boolean} options.hasInvoice — true if at least one invoice exists
- *   for this lead. Splits "Active Customer" into ACTIVE (fully-billing) vs
- *   PENDING_ACTIVATION (plan flipped on but not yet on the billing cycle).
  */
-export function bucketFromLead(lead, derived, { hasInvoice = false } = {}) {
-  // Cold leads are parked regardless of where their flags say they are.
+export function bucketFromLead(lead, derived) {
   if (lead.isColdLead) return BUCKETS.COLD;
-
-  if (derived.stage === 'Active Customer') {
-    return hasInvoice ? BUCKETS.ACTIVE : BUCKETS.PENDING_ACTIVATION;
-  }
-
+  if (derived.stage === 'Active Customer') return BUCKETS.ACTIVE;
   return STAGE_TO_BUCKET[derived.stage] || BUCKETS.BDM;
 }
