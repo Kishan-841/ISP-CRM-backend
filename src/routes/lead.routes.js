@@ -3,6 +3,7 @@ import { auth, requireRole } from '../middleware/auth.js';
 import { uploadToCloudinary, uploadTypedDocument } from '../config/cloudinary.js';
 import {
   getLeads,
+  getLeadsByBucket,
   getLead,
   convertToLead,
   createDirectLead,
@@ -518,6 +519,12 @@ router.patch('/noc/:id/customer-switch', configureCustomerSwitch);
 
 // Get all leads (role-based filtering in controller)
 router.get('/', getLeads);
+
+// Lead Buckets — admin / master / super-admin / sales-director view that
+// shows where every lead is sitting right now, grouped by team. Role-gated
+// inside the controller. MUST stay above '/:id' so the bucket path doesn't
+// get swallowed as an id.
+router.get('/buckets', getLeadsByBucket);
 
 // Get single lead
 router.get('/:id', getLead);

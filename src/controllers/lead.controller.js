@@ -10,6 +10,7 @@ import { isAdminOrTestUser, canHardDelete, hasRole, hasAnyRole } from '../utils/
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { sendEmail } from '../services/email.service.js';
 import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, paginatedResponse } from '../utils/controllerHelper.js';
+import { deriveCurrentStage, bucketFromLead, BUCKETS, VISIBLE_BUCKETS } from '../utils/leadStageDeriver.js';
 import { logStatusChange } from '../services/statusChangeLog.service.js';
 
 // Get all leads
@@ -11971,5 +11972,156 @@ export const setupDeliveryVendor = asyncHandler(async function setupDeliveryVend
     res.json({
       lead: updated,
       message: 'Vendor setup saved successfully.'
+    });
+});
+// ─── Lead Buckets (admin / master view) ─────────────────────────────────────
+// GET /api/leads/buckets?bucket=BDM&page=1&limit=25&search=
+//
+// Returns lead counts per team-bucket plus the paginated lead list for the
+// requested bucket. Buckets are derived from each lead's current state via
+// the shared leadStageDeriver, so this view never disagrees with Customer
+// 360's "current stage" column.
+//
+// Restricted to org-wide viewers: MASTER, SUPER_ADMIN, ADMIN, SALES_DIRECTOR.
+// Dropped / not-feasible leads are intentionally hidden — they're terminal,
+// not "in someone's bucket".
+export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req, res) {
+    const role = req.user.role;
+    const allowed = isAdminOrTestUser(req.user) || role === 'SALES_DIRECTOR';
+    if (!allowed) {
+      return res.status(403).json({ message: 'Access denied.' });
+    }
+
+    const { page, limit, skip } = parsePagination(req.query, 25);
+    const requestedBucket = (req.query.bucket || '').toUpperCase();
+    const search = (req.query.search || '').trim();
+
+    const searchWhere =
+      search.length >= 2
+        ? {
+            OR: [
+              { campaignData: { is: { company: { contains: search, mode: 'insensitive' } } } },
+              { campaignData: { is: { name: { contains: search, mode: 'insensitive' } } } },
+              { campaignData: { is: { phone: { contains: search } } } },
+              { campaignData: { is: { email: { contains: search, mode: 'insensitive' } } } },
+              { customerUsername: { contains: search, mode: 'insensitive' } },
+              { leadNumber: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {};
+
+    const leads = await prisma.lead.findMany({
+      where: searchWhere,
+      select: {
+        id: true,
+        leadNumber: true,
+        status: true,
+        isColdLead: true,
+        createdAt: true,
+        // Stage derivation flags
+        actualPlanIsActive: true,
+        actualPlanName: true,
+        demoPlanIsActive: true,
+        customerAcceptanceAt: true,
+        speedTestUploadedAt: true,
+        installationCompletedAt: true,
+        installationStartedAt: true,
+        deliveryStatus: true,
+        nocConfiguredAt: true,
+        nocAssignedToId: true,
+        pushedToInstallationAt: true,
+        accountsStatus: true,
+        docsVerifiedAt: true,
+        docsRejectedReason: true,
+        documents: true,
+        superAdmin2ApprovalStatus: true,
+        opsApprovalStatus: true,
+        quotationAttachments: true,
+        feasibilityReviewedAt: true,
+        feasibilityAssignedToId: true,
+        assignedToId: true,
+        // Owner-name relations
+        assignedTo: { select: { id: true, name: true, role: true } },
+        feasibilityAssignedTo: { select: { id: true, name: true } },
+        nocAssignedTo: { select: { id: true, name: true } },
+        samAssignment: { select: { samExecutive: { select: { name: true } } } },
+        // Display fields
+        campaignData: {
+          select: {
+            company: true,
+            name: true,
+            firstName: true,
+            lastName: true,
+            phone: true,
+            email: true,
+            city: true,
+            state: true,
+          },
+        },
+        // Used to split Active Customer between PENDING_ACTIVATION and ACTIVE
+        _count: { select: { invoices: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Derive stage + bucket for every lead in one pass.
+    const annotated = leads.map((lead) => {
+      const derived = deriveCurrentStage(lead);
+      const bucket = bucketFromLead(lead, derived, {
+        hasInvoice: (lead._count?.invoices || 0) > 0,
+      });
+      return { lead, derived, bucket };
+    });
+
+    // Summary counts — only the visible (non-DROPPED) buckets.
+    const summary = { TOTAL: 0 };
+    for (const key of VISIBLE_BUCKETS) summary[key] = 0;
+    for (const item of annotated) {
+      if (item.bucket === BUCKETS.DROPPED) continue;
+      summary[item.bucket] = (summary[item.bucket] || 0) + 1;
+      summary.TOTAL += 1;
+    }
+
+    // Filter to the requested bucket (or all visible). DROPPED is never
+    // returned, even if explicitly requested.
+    let filtered;
+    if (requestedBucket && VISIBLE_BUCKETS.includes(requestedBucket)) {
+      filtered = annotated.filter((b) => b.bucket === requestedBucket);
+    } else {
+      filtered = annotated.filter((b) => b.bucket !== BUCKETS.DROPPED);
+    }
+
+    const total = filtered.length;
+    const paginated = filtered.slice(skip, skip + limit);
+
+    const items = paginated.map(({ lead, derived, bucket }) => ({
+      id: lead.id,
+      leadNumber: lead.leadNumber,
+      company: lead.campaignData?.company || '',
+      contactName:
+        lead.campaignData?.name ||
+        `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim(),
+      phone: lead.campaignData?.phone || '',
+      email: lead.campaignData?.email || '',
+      city: lead.campaignData?.city || '',
+      state: lead.campaignData?.state || '',
+      currentStage: derived.stage,
+      currentOwner: derived.owner,
+      assignedToName: lead.assignedTo?.name || null,
+      bucket,
+      isColdLead: lead.isColdLead,
+      createdAt: lead.createdAt,
+    }));
+
+    res.json({
+      summary,
+      activeBucket: requestedBucket && VISIBLE_BUCKETS.includes(requestedBucket) ? requestedBucket : null,
+      leads: items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
     });
 });
