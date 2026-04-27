@@ -650,7 +650,7 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
     let skippedNoPhone = 0;
     let skippedInvalidPhone = 0;
     let skippedNoName = 0;
-    let skippedNoCompany = 0;
+    let skippedNoEmail = 0;
     let skippedNoTitle = 0;
     const invalidRecords = []; // Track invalid records for error display
 
@@ -736,20 +736,24 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
         continue;
       }
 
-      // Company is required
+      // Company is optional — saved when provided, blank otherwise.
       const company = item.company || item.Company || item['Company Name'] || '';
-      if (!company.toString().trim()) {
-        skippedNoCompany++;
+
+      // Email is required
+      const email = item.email || item.Email || item['Email Address'] || '';
+      if (!email.toString().trim()) {
+        skippedNoEmail++;
         invalidRecords.push({
-          company: '-',
+          company: company.toString().trim() || '-',
           name: fullName || '-',
           phone: cleanedPhone,
-          errorReason: 'Missing company'
+          errorReason: 'Missing email'
         });
         continue;
       }
 
-      // Title is required
+      // Title is required (legacy "Designation"/"designation" headers still
+      // accepted as aliases so older spreadsheets keep working).
       const title = item.title || item.Title || item.Designation || item.designation || '';
       if (!title.toString().trim()) {
         skippedNoTitle++;
@@ -757,7 +761,7 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
           company: company.toString().trim() || '-',
           name: fullName || '-',
           phone: cleanedPhone,
-          errorReason: 'Missing title/designation'
+          errorReason: 'Missing title'
         });
         continue;
       }
@@ -777,11 +781,11 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
 
       newRecords.push({
         campaignId: id,
-        company: company.toString().trim(),
+        company: company.toString().trim() || null,
         firstName,
         lastName,
         title: title.toString().trim(),
-        email: item.email || item.Email || item['Email Address'] || null,
+        email: email.toString().trim(),
         phone: cleanedPhone,
         industry: item.industry || item.Industry || null,
         city: item.city || item.City || item.Location || item.location || null,
@@ -869,11 +873,11 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
       skippedNoPhone,
       skippedInvalidPhone,
       skippedNoName,
-      skippedNoCompany,
+      skippedNoEmail,
       skippedNoTitle,
       totalReceived: data.length,
       invalidRecords,
-      message: `${createdCount} records added. ${duplicateCount} duplicates, ${skippedNoPhone} no phone, ${skippedInvalidPhone} invalid phone, ${skippedNoName} no name, ${skippedNoCompany} no company, ${skippedNoTitle} no title skipped.`
+      message: `${createdCount} records added. ${duplicateCount} duplicates, ${skippedNoPhone} no phone, ${skippedInvalidPhone} invalid phone, ${skippedNoName} no name, ${skippedNoEmail} no email, ${skippedNoTitle} no title skipped.`
     });
 });
 
@@ -1569,7 +1573,7 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
     let skippedNoPhone = 0;
     let skippedInvalidPhone = 0;
     let skippedNoName = 0;
-    let skippedNoCompany = 0;
+    let skippedNoEmail = 0;
     let skippedNoTitle = 0;
     let duplicateCount = 0;
     const invalidRecords = [];
@@ -1653,20 +1657,24 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
         continue;
       }
 
-      // Company is required
+      // Company is optional — saved when provided, blank otherwise.
       const company = item.company || item.Company || item['Company Name'] || '';
-      if (!company.toString().trim()) {
-        skippedNoCompany++;
+
+      // Email is required
+      const email = item.email || item.Email || item['Email Address'] || '';
+      if (!email.toString().trim()) {
+        skippedNoEmail++;
         invalidRecords.push({
-          company: '-',
+          company: company.toString().trim() || '-',
           name: fullName || '-',
           phone: cleanedPhone,
-          errorReason: 'Missing company'
+          errorReason: 'Missing email'
         });
         continue;
       }
 
-      // Title is required
+      // Title is required (legacy "Designation"/"designation" headers still
+      // accepted as aliases so older spreadsheets keep working).
       const title = item.title || item.Title || item.Designation || item.designation || '';
       if (!title.toString().trim()) {
         skippedNoTitle++;
@@ -1674,7 +1682,7 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
           company: company.toString().trim() || '-',
           name: fullName || '-',
           phone: cleanedPhone,
-          errorReason: 'Missing title/designation'
+          errorReason: 'Missing title'
         });
         continue;
       }
@@ -1694,11 +1702,11 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
 
       newRecords.push({
         campaignId: campaign.id,
-        company: company.toString().trim(),
+        company: company.toString().trim() || null,
         firstName,
         lastName,
         title: title.toString().trim(),
-        email: item.email || item.Email || item['Email Address'] || null,
+        email: email.toString().trim(),
         phone: cleanedPhone,
         industry: item.industry || item.Industry || null,
         city: item.city || item.City || item.Location || item.location || null,
@@ -1733,7 +1741,7 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
         skippedNoPhone,
         skippedInvalidPhone,
         skippedNoName,
-        skippedNoCompany,
+        skippedNoEmail,
         skippedNoTitle,
         totalReceived: data.length,
         invalidRecords,
@@ -1762,11 +1770,11 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
       skippedNoPhone,
       skippedInvalidPhone,
       skippedNoName,
-      skippedNoCompany,
+      skippedNoEmail,
       skippedNoTitle,
       totalReceived: data.length,
       invalidRecords,
-      message: `Campaign created with ${createdCount} records. ${duplicateCount} duplicates, ${skippedNoPhone} no phone, ${skippedInvalidPhone} invalid phone, ${skippedNoName} no name, ${skippedNoCompany} no company, ${skippedNoTitle} no title skipped.`
+      message: `Campaign created with ${createdCount} records. ${duplicateCount} duplicates, ${skippedNoPhone} no phone, ${skippedInvalidPhone} invalid phone, ${skippedNoName} no name, ${skippedNoEmail} no email, ${skippedNoTitle} no title skipped.`
     });
 });
 
