@@ -26,12 +26,17 @@ router.get('/isr-list', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD',
 // Users by role - accessible by BDM (for delivery user assignment), complaint-handling roles, and SUPER_ADMIN
 router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 'SAM_EXECUTIVE', 'NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'OPS_TEAM', 'SUPER_ADMIN'), getUsersByRole);
 
+// Per-user dashboard read + single-user lookup — open to OPS_TEAM (read-only
+// viewer) in addition to the roles below. Gated explicitly so they sit above
+// the broader router.use(). The `/dashboard` route MUST come first so the
+// `:userId/dashboard` segment isn't swallowed by `:id`.
+router.get('/:userId/dashboard', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserDashboardStats);
+router.get('/:id', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserById);
+
 // Routes below require SUPER_ADMIN or BDM_TEAM_LEADER role
 router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'));
 
 router.get('/', getUsers);
-router.get('/:id', getUserById);
-router.get('/:userId/dashboard', getUserDashboardStats);
 router.post('/', createUser);
 router.put('/:id', updateUser);
 router.delete('/:id', requireRole('SUPER_ADMIN'), deleteUser);

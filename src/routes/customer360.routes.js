@@ -15,7 +15,7 @@ import {
 const router = Router();
 
 router.use(auth);
-router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR'));
+router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'OPS_TEAM'));
 
 router.get('/search', searchCustomers);
 router.get('/export', exportCustomers);

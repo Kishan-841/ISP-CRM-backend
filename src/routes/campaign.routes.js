@@ -91,8 +91,8 @@ router.get('/reports/my-performance', getMyCampaignPerformance);
 router.get('/reports/export-campaign-data', exportCampaignData);
 
 // ISR Pipeline Funnel routes
-router.get('/reports/pipeline-funnel', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'ISR', 'BDM_TEAM_LEADER'), getISRPipelineFunnel);
-router.get('/reports/pipeline-comparison', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'), getISRPipelineComparison);
+router.get('/reports/pipeline-funnel', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'ISR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getISRPipelineFunnel);
+router.get('/reports/pipeline-comparison', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getISRPipelineComparison);
 
 // Shared routes (both Admin and assigned ISR)
 router.get('/:id', getCampaign);

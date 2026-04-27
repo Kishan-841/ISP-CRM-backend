@@ -1533,19 +1533,20 @@ export const getBDMScheduledMeetings = asyncHandler(async function getBDMSchedul
     const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
+    const isOps = hasRole(req.user, 'OPS_TEAM');
 
-    if (!isBDM && !isBDMCP && !isTL && !isAdmin) {
+    if (!isBDM && !isBDMCP && !isTL && !isAdmin && !isOps) {
       return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader or Admin can access this endpoint.' });
     }
 
-    // Admin/TL can view a specific BDM's meetings via ?userId= query param
-    // Admin/MASTER without userId param sees ALL meetings
-    const targetUserId = (isAdmin || isTL) && req.query.userId ? req.query.userId : req.user.id;
-    const showAll = isAdmin && !req.query.userId;
+    // Admin/TL/OPS can view a specific BDM's meetings via ?userId= query param
+    // Admin/MASTER/OPS without userId param sees ALL meetings
+    const targetUserId = (isAdmin || isTL || isOps) && req.query.userId ? req.query.userId : req.user.id;
+    const showAll = (isAdmin || isOps) && !req.query.userId;
 
     // When target is a BDM_TEAM_LEADER, include the TL + every BDM under them
     let assignedIn = [targetUserId];
-    if ((isAdmin || isTL) && req.query.userId) {
+    if ((isAdmin || isTL || isOps) && req.query.userId) {
       const targetUser = await prisma.user.findUnique({
         where: { id: targetUserId },
         select: { role: true }
@@ -4518,8 +4519,9 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     const isBDM = hasRole(req.user, 'BDM');
     const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isOps = hasRole(req.user, 'OPS_TEAM');
 
-    if (!isBDM && !isBDMCP && !isAdmin && !isTL) {
+    if (!isBDM && !isBDMCP && !isAdmin && !isTL && !isOps) {
       return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader or Admin can access this endpoint.' });
     }
 
@@ -4532,7 +4534,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     //     empty pipeline.
     //   - Admin/TL with a specific userId: that BDM (or TL team)
     const queryUserId = req.query.userId;
-    const wantsAllBdms = (isAdmin || isTL) && (queryUserId === 'all' || (isAdmin && !queryUserId));
+    const wantsAllBdms = (isAdmin || isTL || isOps) && (queryUserId === 'all' || ((isAdmin || isOps) && !queryUserId));
 
     let userIds;
     if (wantsAllBdms) {
@@ -4545,11 +4547,11 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       });
       userIds = allBdms.map(u => u.id);
     } else {
-      const targetUserId = (isAdmin || isTL) && queryUserId ? queryUserId : req.user.id;
+      const targetUserId = (isAdmin || isTL || isOps) && queryUserId ? queryUserId : req.user.id;
       userIds = [targetUserId];
 
-      // Verify target user is BDM/BDM_CP/BDM_TEAM_LEADER if admin/TL is viewing
-      if ((isAdmin || isTL) && queryUserId) {
+      // Verify target user is BDM/BDM_CP/BDM_TEAM_LEADER if admin/TL/OPS is viewing
+      if ((isAdmin || isTL || isOps) && queryUserId) {
         const targetUser = await prisma.user.findUnique({
           where: { id: targetUserId },
           select: { role: true }
@@ -11987,7 +11989,7 @@ export const setupDeliveryVendor = asyncHandler(async function setupDeliveryVend
 // not "in someone's bucket".
 export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req, res) {
     const role = req.user.role;
-    const allowed = isAdminOrTestUser(req.user) || role === 'SALES_DIRECTOR';
+    const allowed = isAdminOrTestUser(req.user) || role === 'SALES_DIRECTOR' || role === 'OPS_TEAM';
     if (!allowed) {
       return res.status(403).json({ message: 'Access denied.' });
     }

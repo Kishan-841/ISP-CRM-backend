@@ -3845,9 +3845,10 @@ export const getISRPipelineFunnel = asyncHandler(async function getISRPipelineFu
     const isISR = req.user.role === 'ISR';
 
     const isTL = req.user.role === 'BDM_TEAM_LEADER';
+    const isOps = req.user.role === 'OPS_TEAM';
 
-    // Allow admin, TL to see any ISR's funnel, or ISR to see their own
-    if (!isAdmin && !isISR && !isTL) {
+    // Allow admin, TL, OPS (read-only) to see any ISR's funnel, or ISR to see their own
+    if (!isAdmin && !isISR && !isTL && !isOps) {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
@@ -4003,7 +4004,8 @@ export const getISRPipelineFunnel = asyncHandler(async function getISRPipelineFu
 export const getISRPipelineComparison = asyncHandler(async function getISRPipelineComparison(req, res) {
     const isAdmin = isAdminOrTestUser(req.user);
     const isTL = req.user.role === 'BDM_TEAM_LEADER';
-    if (!isAdmin && !isTL) {
+    const isOps = req.user.role === 'OPS_TEAM';
+    if (!isAdmin && !isTL && !isOps) {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
