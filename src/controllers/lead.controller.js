@@ -186,6 +186,7 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       superAdmin2RejectedReason: lead.superAdmin2RejectedReason,
       superAdmin2ApprovalNotes: lead.superAdmin2ApprovalNotes,
       loginCompletedAt: lead.loginCompletedAt,
+      hasGst: lead.hasGst,
       documents: lead.documents || [],
       docsVerifiedAt: lead.docsVerifiedAt,
       docsVerifiedById: lead.docsVerifiedById,
@@ -5646,7 +5647,11 @@ export const markLoginComplete = asyncHandler(async function markLoginComplete(r
 export const pushToDocsVerificationTyped = asyncHandler(async function pushToDocsVerificationTyped(req, res) {
     const { id } = req.params;
     const userId = req.user.id;
-    const { notes, testMode, arcAmount, otcAmount, advanceAmount, paymentTerms } = req.body;
+    // `hasGst` — BDM's declared GST applicability. When false, GST_DETAILS
+    // upload is skipped here and downstream Accounts verification stops
+    // requiring a GST number / legal name. When omitted from the payload we
+    // fall back to the lead's existing flag (or true if never set).
+    const { notes, testMode, arcAmount, otcAmount, advanceAmount, paymentTerms, hasGst } = req.body;
 
     // Check if user is BDM, BDM_CP, Team Leader, or Admin/TestUser
     if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_CP') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
@@ -5678,9 +5683,13 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    // Validate documents
+    // Validate documents — honour the BDM's GST applicability choice. The
+    // payload's hasGst wins when explicitly provided; otherwise fall back to
+    // whatever's already stored on the lead (legacy rows default to true via
+    // schema default).
     const documents = lead.documents || {};
-    const validation = validateDocuments(documents, isTestMode);
+    const effectiveHasGst = typeof hasGst === 'boolean' ? hasGst : (lead.hasGst !== false);
+    const validation = validateDocuments(documents, isTestMode, { hasGst: effectiveHasGst });
 
     if (!validation.valid) {
       return res.status(400).json({
@@ -5755,6 +5764,12 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
     }
     if (paymentTerms !== undefined && paymentTerms !== null && paymentTerms !== '') {
       updateData.paymentTerms = paymentTerms;
+    }
+
+    // Persist the BDM's GST-applicability choice so downstream Accounts
+    // verification can adjust its required-fields gate.
+    if (typeof hasGst === 'boolean') {
+      updateData.hasGst = hasGst;
     }
 
     const updatedLead = await prisma.lead.update({
@@ -5898,6 +5913,7 @@ export const getAccountsTeamQueue = asyncHandler(async function getAccountsTeamQ
           interestLevel: true,
           feasibilityNotes: true,
           feasibilityReviewedAt: true,
+          hasGst: true,
           customerGstNo: true,
           customerLegalName: true,
           gstVerifiedAt: true,
@@ -6042,6 +6058,7 @@ export const getAccountsTeamQueue = asyncHandler(async function getAccountsTeamQ
       feasibilityNotes: lead.feasibilityNotes,
       feasibilityReviewedAt: lead.feasibilityReviewedAt,
       // GST details
+      hasGst: lead.hasGst,
       customerGstNo: lead.customerGstNo,
       customerLegalName: lead.customerLegalName,
       gstVerifiedAt: lead.gstVerifiedAt,
@@ -6288,6 +6305,26 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
       }
     }
 
+    // Lead must exist before we can apply per-lead conditional rules
+    // (specifically the GST gate which depends on lead.hasGst).
+    const lead = await prisma.lead.findUnique({
+      where: { id },
+      include: {
+        campaignData: {
+          include: {
+            campaign: { select: { id: true, code: true, name: true } }
+          }
+        },
+        assignedTo: {
+          select: { id: true, name: true, email: true }
+        }
+      }
+    });
+
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
     // APPROVED requires all mandatory fields
     if (decision === 'APPROVED') {
       if (!arcAmount || isNaN(parseFloat(arcAmount))) {
@@ -6296,11 +6333,16 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
       if (!otcAmount || isNaN(parseFloat(otcAmount))) {
         return res.status(400).json({ message: 'Valid OTC amount is required for approval.' });
       }
-      if (!customerGstNo || customerGstNo.trim().length !== 15) {
-        return res.status(400).json({ message: 'Valid 15-character GST number is required for approval.' });
-      }
-      if (!customerLegalName || customerLegalName.trim().length === 0) {
-        return res.status(400).json({ message: 'Legal name (as per GST) is required for approval.' });
+      // GST and legal-name only required when the BDM declared this customer
+      // is GST-registered. lead.hasGst defaults to true (legacy behaviour),
+      // so the only way to skip these is an explicit `false` on the lead.
+      if (lead.hasGst !== false) {
+        if (!customerGstNo || customerGstNo.trim().length !== 15) {
+          return res.status(400).json({ message: 'Valid 15-character GST number is required for approval.' });
+        }
+        if (!customerLegalName || customerLegalName.trim().length === 0) {
+          return res.status(400).json({ message: 'Legal name (as per GST) is required for approval.' });
+        }
       }
       // New mandatory field validations
       if (!panCardNo || panCardNo.trim().length !== 10) {
@@ -6324,24 +6366,6 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
       if (!poNumber || poNumber.trim().length === 0) {
         return res.status(400).json({ message: 'PO number is required for approval.' });
       }
-    }
-
-    const lead = await prisma.lead.findUnique({
-      where: { id },
-      include: {
-        campaignData: {
-          include: {
-            campaign: { select: { id: true, code: true, name: true } }
-          }
-        },
-        assignedTo: {
-          select: { id: true, name: true, email: true }
-        }
-      }
-    });
-
-    if (!lead) {
-      return res.status(404).json({ message: 'Lead not found.' });
     }
 
     // Verify this lead has docs approved

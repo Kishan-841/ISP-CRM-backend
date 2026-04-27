@@ -161,10 +161,15 @@ export const getDocumentTypesForCompanyType = (companyType = 'default') => {
  * Validate documents against required types
  * @param {Object} documents - Object with document type keys
  * @param {boolean} testMode - If true, bypass validation (0 documents required)
+ * @param {Object} [opts]
+ * @param {boolean} [opts.hasGst=true] - When false, GST_DETAILS is not required
+ *   (BDM declared this customer is not GST-registered).
  * @returns {Object} - { valid: boolean, missing: string[], uploadedCount: number, requiredCount: number }
  */
-export const validateDocuments = (documents, testMode = false) => {
-  const requiredTypes = getRequiredDocumentTypes();
+export const validateDocuments = (documents, testMode = false, opts = {}) => {
+  const { hasGst = true } = opts;
+  const requiredTypes = getRequiredDocumentTypes()
+    .filter((doc) => hasGst || doc.id !== 'GST_DETAILS');
   const requiredCount = testMode ? 0 : requiredTypes.length;
   const uploadedCount = Object.keys(documents || {}).length;
 

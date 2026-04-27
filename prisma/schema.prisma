@@ -281,6 +281,13 @@ model Lead {
   accountsVerifiedAt        DateTime?
   accountsVerifiedById      String?
   accountsStatus            AccountsStatus?
+  // GST applicability — captured by BDM at docs-upload time. When false the
+  // BDM can skip the GST_DETAILS document upload, and the Accounts team is
+  // not asked to record a GST number / legal name during their verification.
+  // Defaults to true so leads created before this flag existed continue to
+  // require GST (preserves prior behaviour for in-flight pipeline rows).
+  hasGst                    Boolean           @default(true)
+
   // GST Verification fields
   customerGstNo             String?           // GST Number entered by accounts team
   customerLegalName         String?           // Legal name as per GST certificate
