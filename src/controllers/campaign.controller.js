@@ -893,6 +893,188 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
     });
 });
 
+// ─── Self-leads endpoints (BDM /dashboard/self-leads) ────────────────────────
+//
+// The Self Leads page used to fetch every BDM Self campaign's data with
+// limit=500 in parallel and bucket the result client-side. With multiple
+// data-sets that meant N×500 rows over the wire on every refresh and a
+// growing chunk of work in the browser. These endpoints push the bucketing
+// + pagination server-side so the page only loads what it's about to render.
+
+// Resolve the set of "BDM Self" campaign IDs the caller can see.
+//   - campaignId = '<id>' → that campaign only, but only if the caller is
+//     either the assignee or the creator (mirrors getCampaignData's gate).
+//   - campaignId = 'all' / omitted → every assigned campaign whose name
+//     starts with "[BDM Self]" or whose type is SELF.
+// Returns [] when access is denied so callers can short-circuit to empty
+// results without leaking a different status code.
+async function resolveSelfCampaignIds(user, campaignId) {
+  const userId = user.id;
+
+  if (campaignId && campaignId !== 'all') {
+    const [assignment, campaign] = await Promise.all([
+      prisma.campaignAssignment.findUnique({
+        where: { userId_campaignId: { userId, campaignId } }
+      }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
+        select: { createdById: true }
+      })
+    ]);
+    if (!assignment && campaign?.createdById !== userId) return [];
+    return [campaignId];
+  }
+
+  const assignments = await prisma.campaignAssignment.findMany({
+    where: {
+      userId,
+      campaign: {
+        OR: [
+          { name: { startsWith: '[BDM Self]' } },
+          { type: 'SELF' }
+        ]
+      }
+    },
+    select: { campaignId: true }
+  });
+  return assignments.map((a) => a.campaignId);
+}
+
+// GET /campaigns/self-leads/stats?campaignId=<id|all>
+// Stat-card counts plus a per-status map for the Called tab filter chips.
+// One groupBy + one count is cheaper than 6+ parallel COUNTs and lets the
+// frontend look up any status by key without a server round-trip per chip.
+export const getSelfLeadsStats = asyncHandler(async function getSelfLeadsStats(req, res) {
+  const campaignIds = await resolveSelfCampaignIds(req.user, req.query.campaignId);
+
+  if (campaignIds.length === 0) {
+    return res.json({
+      stats: { total: 0, pending: 0, called: 0, interested: 0, notInterested: 0, leadsGenerated: 0, byStatus: {} },
+      campaignIds: [],
+    });
+  }
+
+  const baseWhere = {
+    campaignId: { in: campaignIds },
+    assignedToId: req.user.id,
+  };
+
+  const [statusGroups, leadsGenerated] = await Promise.all([
+    prisma.campaignData.groupBy({
+      by: ['status'],
+      where: baseWhere,
+      _count: { _all: true },
+    }),
+    prisma.campaignData.count({ where: { ...baseWhere, lead: { isNot: null } } }),
+  ]);
+
+  const byStatus = {};
+  let total = 0;
+  for (const row of statusGroups) {
+    const n = row._count._all;
+    byStatus[row.status] = n;
+    total += n;
+  }
+  const pending = byStatus.NEW || 0;
+  const called = total - pending;
+
+  res.json({
+    stats: {
+      total,
+      pending,
+      called,
+      interested: byStatus.INTERESTED || 0,
+      notInterested: byStatus.NOT_INTERESTED || 0,
+      leadsGenerated,
+      byStatus,
+    },
+    campaignIds,
+  });
+});
+
+// GET /campaigns/self-leads/queue?campaignId=<id|all>&tab=pending|called&status=&page=&limit=&search=
+// Paginated rows for the Pending / Called tabs. `tab=pending` returns
+// status=NEW, `tab=called` returns status≠NEW (further narrowable via the
+// optional `status` query param for the called-tab filter).
+export const getSelfLeadsQueue = asyncHandler(async function getSelfLeadsQueue(req, res) {
+  const campaignIds = await resolveSelfCampaignIds(req.user, req.query.campaignId);
+
+  if (campaignIds.length === 0) {
+    return res.json({
+      data: [],
+      pagination: { page: 1, limit: 25, total: 0, totalPages: 0 },
+    });
+  }
+
+  const { page, limit, skip } = parsePagination(req.query, 25);
+  const tab = req.query.tab === 'called' ? 'called' : 'pending';
+  const explicitStatus = req.query.status && req.query.status !== 'all' ? req.query.status : null;
+  const searchTerm = (req.query.search || '').trim();
+
+  // Tab → status filter. An explicit `status` (e.g. "INTERESTED") is only
+  // honoured for the called tab; pending is locked to NEW.
+  let statusFilter;
+  if (tab === 'pending') {
+    statusFilter = { status: 'NEW' };
+  } else if (explicitStatus) {
+    statusFilter = { status: explicitStatus };
+  } else {
+    statusFilter = { status: { not: 'NEW' } };
+  }
+
+  const searchFilter = searchTerm
+    ? {
+        OR: [
+          { company: { contains: searchTerm, mode: 'insensitive' } },
+          { name: { contains: searchTerm, mode: 'insensitive' } },
+          { firstName: { contains: searchTerm, mode: 'insensitive' } },
+          { lastName: { contains: searchTerm, mode: 'insensitive' } },
+          { phone: { contains: searchTerm } },
+          { email: { contains: searchTerm, mode: 'insensitive' } },
+        ],
+      }
+    : {};
+
+  const where = {
+    campaignId: { in: campaignIds },
+    assignedToId: req.user.id,
+    ...statusFilter,
+    ...searchFilter,
+  };
+
+  const [data, total] = await Promise.all([
+    prisma.campaignData.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        callLogs: { orderBy: { createdAt: 'desc' }, take: 1 },
+        lead: { select: { id: true, status: true, createdAt: true } },
+        campaign: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.campaignData.count({ where }),
+  ]);
+
+  // Same shape getCampaignData produces — keeps the page's row helpers
+  // (lastCall, isConverted, leadInfo) interchangeable.
+  const items = data.map((item) => ({
+    ...item,
+    lastCall: item.callLogs[0] || null,
+    isConverted: !!item.lead,
+    leadInfo: item.lead || null,
+  }));
+
+  res.json(paginatedResponse({
+    data: items,
+    total,
+    page,
+    limit,
+    dataKey: 'data',
+  }));
+});
+
 // Get campaign data for ISR (with phone masking)
 export const getCampaignData = asyncHandler(async function getCampaignData(req, res) {
     const { id } = req.params;

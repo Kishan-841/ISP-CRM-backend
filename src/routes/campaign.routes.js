@@ -36,6 +36,8 @@ import {
   getMyCampaignPerformance,
   getAllCampaignData,
   getAllMyCampaignData,
+  getSelfLeadsStats,
+  getSelfLeadsQueue,
   getISRPipelineFunnel,
   getISRPipelineComparison,
   exportCampaignData,
@@ -60,6 +62,11 @@ router.get('/all-data', getAllCampaignData);
 
 // Data across all campaigns the current user has access to (for "All Campaigns" filter)
 router.get('/my-data/all', getAllMyCampaignData);
+
+// Self Leads page (BDM /dashboard/self-leads) — stats + paginated queue
+// for either a single BDM Self campaign or aggregated across all of them.
+router.get('/self-leads/stats', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getSelfLeadsStats);
+router.get('/self-leads/queue', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getSelfLeadsQueue);
 
 // ISR routes
 router.get('/my-campaigns', getMyAssignedCampaigns);
