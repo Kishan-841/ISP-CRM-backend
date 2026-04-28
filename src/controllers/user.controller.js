@@ -382,12 +382,33 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
     campaignId: { in: campaignIds }
   };
 
-  // Total stats
+  // Total stats. For ISR users, "Working" and "Converted" used to be
+  // measured off the row's `status` field, but a CampaignData row's status
+  // is whatever the latest disposer set it to — including dispositions
+  // made by a previous owner before reassignment. That meant a row could
+  // appear as Called / Interested on this ISR's dashboard even though
+  // they had never placed a single call on it.
+  //
+  // Anchor those two stats to evidence of actual work by THIS user:
+  //   - "Working" = at least one CallLog by this user (they actually
+  //     placed a call on the assigned row).
+  //   - "Converted to Lead" = the assigned row has been turned into a
+  //     Lead (lead relation present), not just status=INTERESTED.
+  // Pending stays as `status=NEW` and Total stays at the full assignment
+  // count, since those two have no inheritance ambiguity.
+  const isISRTarget = targetUser.role === 'ISR';
+  const workingWhere = isISRTarget
+    ? { ...whereClause, callLogs: { some: { userId } } }
+    : { ...whereClause, status: { not: 'NEW' } };
+  const convertedWhere = isISRTarget
+    ? { ...whereClause, lead: { isNot: null } }
+    : { ...whereClause, status: 'INTERESTED' };
+
   const [totalAssigned, workingData, pendingData, convertedToLead] = await Promise.all([
     prisma.campaignData.count({ where: whereClause }),
-    prisma.campaignData.count({ where: { ...whereClause, status: { not: 'NEW' } } }),
+    prisma.campaignData.count({ where: workingWhere }),
     prisma.campaignData.count({ where: { ...whereClause, status: 'NEW' } }),
-    prisma.campaignData.count({ where: { ...whereClause, status: 'INTERESTED' } })
+    prisma.campaignData.count({ where: convertedWhere })
   ]);
 
   // Today's call stats with outcomes
@@ -431,9 +452,14 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
     count: s._count.status
   }));
 
-  // Recent activity
+  // Recent activity — same accuracy concern as workingData: for an ISR
+  // we want rows the ISR actually touched, not whatever the row's
+  // current status happens to be.
+  const recentActivityWhere = isISRTarget
+    ? { ...whereClause, callLogs: { some: { userId } } }
+    : { ...whereClause, status: { not: 'NEW' } };
   const recentActivity = await prisma.campaignData.findMany({
-    where: { ...whereClause, status: { not: 'NEW' } },
+    where: recentActivityWhere,
     orderBy: { updatedAt: 'desc' },
     take: 10,
     select: {
@@ -477,10 +503,19 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
         updatedAt: { gte: monthStart, lt: monthEnd }
       };
 
+      // Mirror the totals' definitions: ISR working/converted is gated on
+      // actual user activity (CallLog / Lead relation), not just the
+      // CampaignData status field.
+      const periodWorkingWhere = isISRTarget
+        ? { ...periodWhere, callLogs: { some: { userId } } }
+        : { ...periodWhere, status: { not: 'NEW' } };
+      const periodConvertedWhere = isISRTarget
+        ? { ...periodWhere, lead: { isNot: null } }
+        : { ...periodWhere, status: 'INTERESTED' };
       const [total, working, converted] = await Promise.all([
         prisma.campaignData.count({ where: periodWhere }),
-        prisma.campaignData.count({ where: { ...periodWhere, status: { not: 'NEW' } } }),
-        prisma.campaignData.count({ where: { ...periodWhere, status: 'INTERESTED' } })
+        prisma.campaignData.count({ where: periodWorkingWhere }),
+        prisma.campaignData.count({ where: periodConvertedWhere })
       ]);
 
       const monthLabel = `${monthStart.toLocaleDateString('en-US', { month: 'short' })}-${monthStart.getFullYear()}`;
@@ -507,10 +542,19 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
         updatedAt: { gte: weekStart, lt: weekEnd }
       };
 
+      // Mirror the totals' definitions: ISR working/converted is gated on
+      // actual user activity (CallLog / Lead relation), not just the
+      // CampaignData status field.
+      const periodWorkingWhere = isISRTarget
+        ? { ...periodWhere, callLogs: { some: { userId } } }
+        : { ...periodWhere, status: { not: 'NEW' } };
+      const periodConvertedWhere = isISRTarget
+        ? { ...periodWhere, lead: { isNot: null } }
+        : { ...periodWhere, status: 'INTERESTED' };
       const [total, working, converted] = await Promise.all([
         prisma.campaignData.count({ where: periodWhere }),
-        prisma.campaignData.count({ where: { ...periodWhere, status: { not: 'NEW' } } }),
-        prisma.campaignData.count({ where: { ...periodWhere, status: 'INTERESTED' } })
+        prisma.campaignData.count({ where: periodWorkingWhere }),
+        prisma.campaignData.count({ where: periodConvertedWhere })
       ]);
 
       progressData.push({
@@ -534,10 +578,19 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
         updatedAt: { gte: date, lt: nextDate }
       };
 
+      // Mirror the totals' definitions: ISR working/converted is gated on
+      // actual user activity (CallLog / Lead relation), not just the
+      // CampaignData status field.
+      const periodWorkingWhere = isISRTarget
+        ? { ...periodWhere, callLogs: { some: { userId } } }
+        : { ...periodWhere, status: { not: 'NEW' } };
+      const periodConvertedWhere = isISRTarget
+        ? { ...periodWhere, lead: { isNot: null } }
+        : { ...periodWhere, status: 'INTERESTED' };
       const [total, working, converted] = await Promise.all([
         prisma.campaignData.count({ where: periodWhere }),
-        prisma.campaignData.count({ where: { ...periodWhere, status: { not: 'NEW' } } }),
-        prisma.campaignData.count({ where: { ...periodWhere, status: 'INTERESTED' } })
+        prisma.campaignData.count({ where: periodWorkingWhere }),
+        prisma.campaignData.count({ where: periodConvertedWhere })
       ]);
 
       progressData.push({
