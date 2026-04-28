@@ -4,6 +4,7 @@ import { uploadToCloudinary, uploadTypedDocument } from '../config/cloudinary.js
 import {
   getLeads,
   getLeadsByBucket,
+  getOpportunityPipelineStats,
   getLead,
   convertToLead,
   createDirectLead,
@@ -525,6 +526,10 @@ router.get('/', getLeads);
 // inside the controller. MUST stay above '/:id' so the bucket path doesn't
 // get swallowed as an id.
 router.get('/buckets', getLeadsByBucket);
+
+// Opportunity Pipeline tab badges (per-stage counts) — see
+// OPPORTUNITY_STAGE_FILTERS in lead.controller.js for stage definitions.
+router.get('/opportunity-pipeline/stats', getOpportunityPipelineStats);
 
 // Get single lead
 router.get('/:id', getLead);

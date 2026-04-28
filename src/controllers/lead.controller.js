@@ -13,6 +13,121 @@ import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, pagi
 import { deriveCurrentStage, bucketFromLead, BUCKETS, VISIBLE_BUCKETS } from '../utils/leadStageDeriver.js';
 import { logStatusChange } from '../services/statusChangeLog.service.js';
 
+// ─── Opportunity Pipeline (BDM /dashboard/quotation-mgmt) stage filters ───
+//
+// The 8 stages match the tabs the BDM sees on the Opportunity Pipeline page.
+// Each value is a Prisma `where` clause that bucketed leads should match.
+// Until this lived server-side the page fetched all FEASIBLE leads (limit
+// 500) and bucketed them in memory — that scaled poorly past ~100 leads in
+// any one stage and put avoidable load on the DB. Routing this through the
+// existing `pipelineStage` query lets us paginate per stage.
+//
+// Status is pinned to FEASIBLE on every entry because the page itself is
+// scoped to feasible leads; the route still permits a separate top-level
+// `status` filter for callers that want to override.
+const OPPORTUNITY_STAGE_FILTERS = {
+  // Create Quote — quote not yet drafted, OPS hasn't seen it.
+  create_quote: { status: 'FEASIBLE', opsApprovalStatus: null },
+
+  // Approval — OPS pending/rejected, OR OPS-approved + SA2 pending/rejected.
+  approval: {
+    status: 'FEASIBLE',
+    OR: [
+      { opsApprovalStatus: { in: ['PENDING', 'REJECTED'] } },
+      { opsApprovalStatus: 'APPROVED', superAdmin2ApprovalStatus: { in: ['PENDING', 'REJECTED'] } },
+    ],
+  },
+
+  // Share with Customer — fully approved (or SA2 not required) and not yet
+  // shared with the customer over email or whatsapp.
+  share_customer: {
+    status: 'FEASIBLE',
+    opsApprovalStatus: 'APPROVED',
+    AND: [
+      { OR: [{ superAdmin2ApprovalStatus: 'APPROVED' }, { superAdmin2ApprovalStatus: null }] },
+      { NOT: { OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }] } },
+    ],
+  },
+
+  // Login — quote shared with customer, login not completed yet, docs flow
+  // hasn't been kicked off.
+  login: {
+    status: 'FEASIBLE',
+    OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }],
+    loginCompletedAt: null,
+    NOT: { sharedVia: { contains: 'docs_verification' } },
+  },
+
+  // Docs Upload — login complete, BDM/customer can upload documents but
+  // hasn't pushed them to verification yet.
+  docs_upload: {
+    status: 'FEASIBLE',
+    OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }],
+    loginCompletedAt: { not: null },
+    NOT: { sharedVia: { contains: 'docs_verification' } },
+  },
+
+  // Docs Review — pushed to docs verification, either pending or rejected.
+  docs_review: {
+    status: 'FEASIBLE',
+    sharedVia: { contains: 'docs_verification' },
+    OR: [{ docsVerifiedAt: null }, { docsRejectedReason: { not: null } }],
+  },
+
+  // Accounts Review — docs approved, accounts hasn't decided yet.
+  accounts_review: {
+    status: 'FEASIBLE',
+    docsVerifiedAt: { not: null },
+    docsRejectedReason: null,
+    accountsVerifiedAt: null,
+  },
+
+  // Installation — accounts approved, ready for delivery handoff.
+  installation: {
+    status: 'FEASIBLE',
+    docsVerifiedAt: { not: null },
+    docsRejectedReason: null,
+    accountsVerifiedAt: { not: null },
+    accountsRejectedReason: null,
+  },
+};
+
+// Build the role-scoped lead `where` for a given user. Mirrors the role
+// filter that getLeads applies, so the opportunity-pipeline stats endpoint
+// returns counts that match what the user is actually allowed to see.
+const buildOpportunityRoleWhere = (user) => {
+  const where = { isColdLead: false };
+  const isAdmin = isAdminOrTestUser(user);
+  const isBDM = hasRole(user, 'BDM');
+  const isTL = hasRole(user, 'BDM_TEAM_LEADER');
+  const isFeasibilityTeam = hasRole(user, 'FEASIBILITY_TEAM');
+  if (isAdmin || isTL || isFeasibilityTeam) return where;
+  if (isBDM) {
+    where.OR = [{ assignedToId: user.id }, { createdById: user.id }];
+    return where;
+  }
+  where.createdById = user.id;
+  return where;
+};
+
+// GET /leads/opportunity-pipeline/stats
+// Returns one count per opportunity-pipeline stage, scoped to the caller's
+// role-based visibility. The page hits this once on load (and on socket
+// refreshes) to populate the tab badges, then fetches each stage's leads
+// page-by-page via the regular `getLeads` endpoint with `pipelineStage`.
+export const getOpportunityPipelineStats = asyncHandler(async function getOpportunityPipelineStats(req, res) {
+  const baseWhere = buildOpportunityRoleWhere(req.user);
+  const stageKeys = Object.keys(OPPORTUNITY_STAGE_FILTERS);
+  const counts = await Promise.all(
+    stageKeys.map((key) =>
+      prisma.lead.count({ where: { ...baseWhere, ...OPPORTUNITY_STAGE_FILTERS[key] } })
+    )
+  );
+  const stats = {};
+  stageKeys.forEach((key, i) => { stats[key] = counts[i]; });
+  res.json({ stats });
+});
+
 // Get all leads
 export const getLeads = asyncHandler(async function getLeads(req, res) {
     const userId = req.user.id;
@@ -81,6 +196,11 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
         installed: { OR: [{ installationCompletedAt: { not: null } }, { customerAcceptanceAt: { not: null } }], actualPlanIsActive: false },
         live: { actualPlanIsActive: true },
         dropped: { OR: [{ status: 'DROPPED' }, { status: 'NOT_FEASIBLE' }, { opsApprovalStatus: 'REJECTED' }, { accountsStatus: 'ACCOUNTS_REJECTED' }] },
+        // ---- Opportunity Pipeline (BDM "/dashboard/quotation-mgmt") stages ----
+        // These mirror the client-side bucketing the page used to do in
+        // memory; moving them server-side lets us paginate per stage instead
+        // of fetching all FEASIBLE leads.
+        ...OPPORTUNITY_STAGE_FILTERS,
       };
       const filter = stageFilters[pipelineStage];
       if (filter) {
