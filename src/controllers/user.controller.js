@@ -368,14 +368,16 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
     });
   }
 
-  // For ISR users, only show data assigned to them or unassigned
-  // For BDM users, show leads assigned to them
+  // For ISR users, only count data the ISR actually owns. The previous
+  // version OR'd `assignedToId: null` in too, which made an ISR's
+  // dashboard reflect every unassigned row across their campaigns —
+  // looked like "the whole system's data" to anyone viewing it (most
+  // visibly the master / admin-dashboard view). Restrict strictly to
+  // assignedToId = userId so the totals match what the ISR will see in
+  // their own calling queue.
   const whereClause = targetUser.role === 'ISR' ? {
     campaignId: { in: campaignIds },
-    OR: [
-      { assignedToId: null },
-      { assignedToId: userId }
-    ]
+    assignedToId: userId
   } : {
     campaignId: { in: campaignIds }
   };
