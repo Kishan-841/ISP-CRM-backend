@@ -5096,6 +5096,28 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       allFtbPayments.forEach(p => ftbMap.set(p.leadId, { amount: p.amount || 0, paymentDate: p.paymentDate }));
     }
 
+    // Funnel view — every lead with a tentativePrice contributes to the
+    // Funnel Value KPI. Surfacing the underlying rows lets the dashboard's
+    // Funnel Value card drill into a list with company / BDM / amount /
+    // status / origin so users can audit how that aggregate is built.
+    const funnelLeads = allLeads
+      .filter(lead => (lead.tentativePrice || 0) > 0)
+      .map(lead => ({
+        id: lead.id,
+        company: lead.campaignData?.company || '-',
+        contactName: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim() || '-',
+        phone: lead.campaignData?.phone || '-',
+        email: lead.campaignData?.email || null,
+        industry: lead.campaignData?.industry || null,
+        city: lead.campaignData?.city || null,
+        funnelAmount: lead.tentativePrice || 0,
+        arcAmount: lead.arcAmount || 0,
+        status: lead.status,
+        createdAt: lead.createdAt,
+        assignedToId: lead.assignedToId || null,
+        assignedToName: lead.assignedTo?.name || null,
+      }));
+
     // Build full pipeline view per lead (all milestones for each lead)
     const pipelineLeads = allLeads
       .filter(lead => lead.loginCompletedAt || lead.accountsVerifiedAt || lead.installationCompletedAt || lead.customerAcceptanceAt)
@@ -5140,6 +5162,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         totalLeads: allLeads.length,
         meetingsDone,
         totalFunnelValue,
+        funnelLeads,
         quotationCount,
         totalQuotationAmount,
         // Pipeline stat cards
