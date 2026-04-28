@@ -1,6 +1,6 @@
 import prisma from '../config/db.js';
 import { notifyDataAssigned } from '../services/notification.service.js';
-import { isAdminOrTestUser, hasRole } from '../utils/roleHelper.js';
+import { isAdminOrTestUser, hasRole, hasAnyRole } from '../utils/roleHelper.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
 
@@ -1987,9 +1987,18 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
 
 // Get ISR Dashboard Stats
 export const getISRDashboardStats = asyncHandler(async function getISRDashboardStats(req, res) {
-    const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const { period = 'last7days', fromDate, toDate } = req.query;
+    const { period = 'last7days', fromDate, toDate, userId: queryUserId } = req.query;
+    // Master / admin / sales-director / BDM Team Leader / OPS Team can pass
+    // ?userId=<isr> to view that ISR's dashboard exactly as the ISR sees
+    // it (matches the team-dashboard page's own access list). Anyone else
+    // falls back to their own id, so an ISR can't peek at a peer by
+    // tampering with the query string.
+    const canTargetOthers = isAdmin || hasAnyRole(req.user, ['BDM_TEAM_LEADER', 'OPS_TEAM']);
+    const userId = canTargetOthers && queryUserId ? queryUserId : req.user.id;
+    // When the requester is targeting a specific ISR, scope the response
+    // to that ISR's data instead of the global admin "see everything" view.
+    const targetingSpecificUser = canTargetOthers && !!queryUserId;
 
     // Get start of today
     const today = new Date();
@@ -2036,14 +2045,21 @@ export const getISRDashboardStats = asyncHandler(async function getISRDashboardS
 
     const dateRange = getDateRange();
 
-    // Get all campaigns (admin sees all, ISR sees only assigned)
-    const assignmentWhere = isAdmin ? {} : { userId };
+    // Scope choice:
+    //   - admin browsing the global ISR-style dashboard for themselves →
+    //     see every campaign / every row.
+    //   - admin targeting a specific ISR (?userId=…) → behave exactly as
+    //     that ISR would see their own login: only their assigned
+    //     campaigns and only data assigned to them.
+    //   - any other user → their own assigned campaigns + own data.
+    const useGlobalAdminView = isAdmin && !targetingSpecificUser;
+    const assignmentWhere = useGlobalAdminView ? {} : { userId };
     const assignments = await prisma.campaignAssignment.findMany({
       where: assignmentWhere,
       select: { campaignId: true }
     });
 
-    const campaignIds = isAdmin
+    const campaignIds = useGlobalAdminView
       ? (await prisma.campaign.findMany({ select: { id: true } })).map(c => c.id)
       : assignments.map(a => a.campaignId);
 
@@ -2081,10 +2097,12 @@ export const getISRDashboardStats = asyncHandler(async function getISRDashboardS
       });
     }
 
-    // Get all data for assigned campaigns (admin sees all, ISR sees only data assigned to them)
+    // Get all data for assigned campaigns. Admin's global view sees all
+    // rows; everything else (including admin targeting a specific ISR) is
+    // scoped to that user's assigned data.
     const whereClause = {
       campaignId: { in: campaignIds },
-      ...(isAdmin ? {} : { assignedToId: userId })
+      ...(useGlobalAdminView ? {} : { assignedToId: userId })
     };
 
     // Period-filtered where clause for stats (alltime = no date filter)
@@ -2101,9 +2119,10 @@ export const getISRDashboardStats = asyncHandler(async function getISRDashboardS
       prisma.campaignData.count({ where: { ...periodWhereClause, status: 'INTERESTED' } })
     ]);
 
-    // Call activity stats (filtered by period)
+    // Call activity stats (filtered by period). Same scoping rule — global
+    // admin view = all callers, otherwise filter to this specific user.
     const callLogWhere = {
-      ...(isAdmin ? {} : { userId }),
+      ...(useGlobalAdminView ? {} : { userId }),
       campaignData: { campaignId: { in: campaignIds } }
     };
     if (!isAllTime) callLogWhere.createdAt = { gte: dateRange.start };
