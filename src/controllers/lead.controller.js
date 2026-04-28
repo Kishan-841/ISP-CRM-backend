@@ -4826,7 +4826,10 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
           include: {
             product: { select: { id: true, title: true } }
           }
-        }
+        },
+        // Surface the assigned BDM so the Pipeline ARC table can show
+        // who owns each row when the view aggregates across BDMs.
+        assignedTo: { select: { id: true, name: true } }
       },
       orderBy: { updatedAt: 'desc' }
     });
@@ -5112,6 +5115,10 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
           actualPlanIsActive: lead.actualPlanIsActive || false,
           ftbAmount: ftb?.amount || 0,
           ftbDate: ftb?.paymentDate || null,
+          // Owning BDM — used by the Pipeline ARC table to show who owns
+          // each row when admin/master is viewing All BDMs.
+          assignedToId: lead.assignedToId || null,
+          assignedToName: lead.assignedTo?.name || null,
         };
       });
 
