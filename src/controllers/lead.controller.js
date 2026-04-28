@@ -92,22 +92,21 @@ const OPPORTUNITY_STAGE_FILTERS = {
   },
 };
 
-// Build the role-scoped lead `where` for a given user. Mirrors the role
-// filter that getLeads applies, so the opportunity-pipeline stats endpoint
-// returns counts that match what the user is actually allowed to see.
-const buildOpportunityRoleWhere = (user) => {
-  const where = { isColdLead: false };
+// Build the role-scope clause for the opportunity-pipeline endpoints.
+// Returned as a Prisma sub-clause meant to live inside an `AND` array —
+// merging it via spread with another filter object (the stage filter,
+// which carries its own OR for stages like `approval`) would silently
+// overwrite this OR and let a BDM see every other BDM's leads.
+const buildOpportunityRoleClause = (user) => {
   const isAdmin = isAdminOrTestUser(user);
   const isBDM = hasRole(user, 'BDM');
   const isTL = hasRole(user, 'BDM_TEAM_LEADER');
   const isFeasibilityTeam = hasRole(user, 'FEASIBILITY_TEAM');
-  if (isAdmin || isTL || isFeasibilityTeam) return where;
+  if (isAdmin || isTL || isFeasibilityTeam) return null;
   if (isBDM) {
-    where.OR = [{ assignedToId: user.id }, { createdById: user.id }];
-    return where;
+    return { OR: [{ assignedToId: user.id }, { createdById: user.id }] };
   }
-  where.createdById = user.id;
-  return where;
+  return { createdById: user.id };
 };
 
 // GET /leads/opportunity-pipeline/stats
@@ -116,12 +115,16 @@ const buildOpportunityRoleWhere = (user) => {
 // refreshes) to populate the tab badges, then fetches each stage's leads
 // page-by-page via the regular `getLeads` endpoint with `pipelineStage`.
 export const getOpportunityPipelineStats = asyncHandler(async function getOpportunityPipelineStats(req, res) {
-  const baseWhere = buildOpportunityRoleWhere(req.user);
+  const roleClause = buildOpportunityRoleClause(req.user);
   const stageKeys = Object.keys(OPPORTUNITY_STAGE_FILTERS);
   const counts = await Promise.all(
-    stageKeys.map((key) =>
-      prisma.lead.count({ where: { ...baseWhere, ...OPPORTUNITY_STAGE_FILTERS[key] } })
-    )
+    stageKeys.map((key) => {
+      const conditions = [OPPORTUNITY_STAGE_FILTERS[key]];
+      if (roleClause) conditions.push(roleClause);
+      return prisma.lead.count({
+        where: { isColdLead: false, AND: conditions },
+      });
+    })
   );
   const stats = {};
   stageKeys.forEach((key, i) => { stats[key] = counts[i]; });
@@ -139,42 +142,51 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
     const { page, limit, skip } = parsePagination(req.query, 25);
     const { search, campaignId, status, pipelineStage } = req.query;
 
-    // Build where clause based on role
-    // Cold leads live in their own Lead Pipeline tab and are excluded here.
-    let whereClause = { isColdLead: false };
+    // Build the where clause as a list of independent conditions joined
+    // with AND. Building it as a flat object historically caused two
+    // data-leak bugs because the role-scope OR (BDM = assigned-to-me OR
+    // created-by-me) shared a key with both the search OR and any stage
+    // filter that carries its own OR (approval, share_customer, login,
+    // docs_upload, docs_review etc.). A later `Object.assign` or direct
+    // assignment would silently overwrite the role scope and the BDM
+    // would suddenly see every other BDM's leads in that tab. AND-of-OR
+    // composition keeps each constraint intact.
+    //
+    // Cold leads live in their own Lead Pipeline tab and are excluded
+    // from the regular leads listing.
+    const conditions = [];
+
     if (isAdmin || isTL || isFeasibilityTeam) {
-      // unchanged, just the cold filter above
+      // No extra role scope; admin/TL/Feasibility see everything.
     } else if (isBDM) {
-      // BDM users only see leads assigned to them or created by them
-      whereClause.OR = [{ assignedToId: userId }, { createdById: userId }];
+      conditions.push({ OR: [{ assignedToId: userId }, { createdById: userId }] });
     } else {
-      whereClause.createdById = userId;
+      conditions.push({ createdById: userId });
     }
 
-    // Server-side search across lead number and campaign data fields
+    // Server-side search across lead number and campaign data fields.
     if (search) {
-      whereClause.OR = buildSearchFilter(search, [
-        'leadNumber',
-        'campaignData.company',
-        'campaignData.name',
-        'campaignData.firstName',
-        'campaignData.lastName',
-        'campaignData.email',
-        { field: 'campaignData.phone' },
-      ]);
+      conditions.push({
+        OR: buildSearchFilter(search, [
+          'leadNumber',
+          'campaignData.company',
+          'campaignData.name',
+          'campaignData.firstName',
+          'campaignData.lastName',
+          'campaignData.email',
+          { field: 'campaignData.phone' },
+        ]),
+      });
     }
 
     // Server-side campaign filter
     if (campaignId) {
-      whereClause.campaignData = {
-        ...whereClause.campaignData,
-        campaignId
-      };
+      conditions.push({ campaignData: { campaignId } });
     }
 
     // Server-side status filter
     if (status) {
-      whereClause.status = status;
+      conditions.push({ status });
     }
 
     // Server-side pipeline stage filter
@@ -204,9 +216,14 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       };
       const filter = stageFilters[pipelineStage];
       if (filter) {
-        Object.assign(whereClause, filter);
+        conditions.push(filter);
       }
     }
+
+    const whereClause = {
+      isColdLead: false,
+      ...(conditions.length ? { AND: conditions } : {}),
+    };
 
     const includeClause = {
       campaignData: {
@@ -374,6 +391,31 @@ export const getLead = asyncHandler(async function getLead(req, res) {
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    // Ownership gate. Mirrors the role-scope getLeads applies, so a BDM
+    // who'd never see a lead in their list also can't open it by guessing
+    // its id. Other roles (admin / TL / Feasibility / Docs / Accounts /
+    // OPS / Delivery / NOC / SAM / Support / Store / Area Head / SA2) all
+    // have legitimate cross-BDM visibility on leads in their workflow, so
+    // they pass through. BDM/BDM_CP must own the lead; ISR must have
+    // created it.
+    const isBdm = hasAnyRole(req.user, ['BDM', 'BDM_CP']);
+    const isTl = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isAdmin = isAdminOrTestUser(req.user);
+    const isISR = hasRole(req.user, 'ISR');
+
+    if (isBdm && !isTl && !isAdmin) {
+      if (lead.assignedToId !== req.user.id && lead.createdById !== req.user.id) {
+        return res.status(403).json({ message: 'You do not have access to this lead.' });
+      }
+    } else if (isISR && !isAdmin) {
+      // ISR can only open leads they originally created (via campaign-data
+      // conversion). Their own UI doesn't normally surface leads owned by
+      // other ISRs, but block direct id lookups all the same.
+      if (lead.createdById !== req.user.id) {
+        return res.status(403).json({ message: 'You do not have access to this lead.' });
+      }
     }
 
     res.json({ lead });
@@ -2191,6 +2233,22 @@ export const addMOM = asyncHandler(async function addMOM(req, res) {
 // Get MOMs for a lead
 export const getLeadMOMs = asyncHandler(async function getLeadMOMs(req, res) {
     const { id } = req.params;
+
+    // Ownership gate — same shape as getLead. Other roles still get to
+    // read MOMs for leads they handle through their workflow.
+    const isBdm = hasAnyRole(req.user, ['BDM', 'BDM_CP']);
+    const isTl = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isAdmin = isAdminOrTestUser(req.user);
+    if (isBdm && !isTl && !isAdmin) {
+      const lead = await prisma.lead.findUnique({
+        where: { id },
+        select: { assignedToId: true, createdById: true },
+      });
+      if (!lead) return res.status(404).json({ message: 'Lead not found.' });
+      if (lead.assignedToId !== req.user.id && lead.createdById !== req.user.id) {
+        return res.status(403).json({ message: 'You do not have access to this lead.' });
+      }
+    }
 
     const moms = await prisma.mOM.findMany({
       where: { leadId: id },
@@ -5699,6 +5757,8 @@ export const getLeadDocuments = asyncHandler(async function getLeadDocuments(req
       where: { id },
       select: {
         id: true,
+        assignedToId: true,
+        createdById: true,
         documents: true,
         docsVerifiedAt: true,
         docsVerifiedById: true,
@@ -5708,6 +5768,18 @@ export const getLeadDocuments = asyncHandler(async function getLeadDocuments(req
 
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    // Same ownership gate as getLead — BDMs/BDM_CPs only see docs for
+    // leads they own; everyone else (admin, TL, doc/accounts/ops/etc.
+    // teams who actually need to view documents) passes through.
+    const isBdm = hasAnyRole(req.user, ['BDM', 'BDM_CP']);
+    const isTl = hasRole(req.user, 'BDM_TEAM_LEADER');
+    const isAdmin = isAdminOrTestUser(req.user);
+    if (isBdm && !isTl && !isAdmin) {
+      if (lead.assignedToId !== req.user.id && lead.createdById !== req.user.id) {
+        return res.status(403).json({ message: 'You do not have access to this lead.' });
+      }
     }
 
     const documents = lead.documents || {};
