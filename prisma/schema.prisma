@@ -11,6 +11,7 @@ model User {
   id                                 String                @id @default(uuid())
   email                              String                @unique
   password                           String
+  passwordIsHashed                   Boolean               @default(false)
   name                               String
   mobile                             String?
   role                               Role                  @default(ISR)
