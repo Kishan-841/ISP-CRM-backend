@@ -3,6 +3,14 @@ import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
 import { asyncHandler } from '../utils/controllerHelper.js';
 
+// Detect bcrypt format from the stored value itself rather than relying on
+// the passwordIsHashed flag — protects against flag drift (e.g. backfill
+// SQL not run on a given environment) so a missing migration can't lock
+// users out.
+const isBcryptHash = (value) =>
+  typeof value === 'string' &&
+  (value.startsWith('$2a$') || value.startsWith('$2b$') || value.startsWith('$2y$'));
+
 export const login = asyncHandler(async function login(req, res) {
   const { email, password } = req.body;
 
@@ -23,7 +31,7 @@ export const login = asyncHandler(async function login(req, res) {
   }
 
   let isMatch = false;
-  if (user.passwordIsHashed) {
+  if (isBcryptHash(user.password)) {
     isMatch = await bcrypt.compare(password, user.password);
     if (isMatch) {
       // Transparent migration: store plaintext so admin/master can view it from now on.
@@ -78,7 +86,7 @@ export const resetPassword = asyncHandler(async function resetPassword(req, res)
   }
 
   let oldMatches = false;
-  if (user.passwordIsHashed) {
+  if (isBcryptHash(user.password)) {
     oldMatches = await bcrypt.compare(oldPassword, user.password);
   } else {
     oldMatches = oldPassword === user.password;
