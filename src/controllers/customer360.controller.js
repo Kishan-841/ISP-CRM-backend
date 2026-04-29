@@ -1005,14 +1005,20 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         details: 'Quotation approved — BDM can now share it with the customer and request documents.',
       });
     }
-    // Quote-shared milestone is derived, not an audit event — always render.
-    timeline.push({
-      stage: 'QUOTE_SHARED',
-      label: 'Quote Shared with Customer',
-      timestamp: new Date(new Date(lead.superAdmin2ApprovedAt).getTime() + 60 * 1000),
-      user: lead.assignedTo,
-      details: 'BDM shared the approved quotation with the customer (offline/email). Customer document collection begins next.',
-    });
+    // Quote-shared milestone is derived from `sharedVia`. Only render once
+    // the BDM has actually marked the quote as shared (email/whatsapp);
+    // otherwise the timeline misleads everyone into thinking sharing has
+    // happened when the lead is still parked at the share_customer gate.
+    const actuallyShared = /(^|,)\s*(email|whatsapp)\b/i.test(lead.sharedVia || '');
+    if (actuallyShared) {
+      timeline.push({
+        stage: 'QUOTE_SHARED',
+        label: 'Quote Shared with Customer',
+        timestamp: new Date(new Date(lead.superAdmin2ApprovedAt).getTime() + 60 * 1000),
+        user: lead.assignedTo,
+        details: 'BDM shared the approved quotation with the customer (offline/email). Customer document collection begins next.',
+      });
+    }
   } else if (lead.superAdmin2ApprovalStatus === 'REJECTED' && lead.superAdmin2ApprovedAt && !sa2InAudit) {
     timeline.push({
       stage: 'SALES_DIRECTOR_REJECTED',

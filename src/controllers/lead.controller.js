@@ -40,12 +40,23 @@ const OPPORTUNITY_STAGE_FILTERS = {
 
   // Share with Customer — fully approved (or SA2 not required) and not yet
   // shared with the customer over email or whatsapp.
+  // NOTE: top-level Prisma `NOT` does not auto-handle NULL — `NULL LIKE '%x%'`
+  // returns NULL, `NOT NULL` is NULL, and the row is excluded from the query.
+  // We admit NULL/empty `sharedVia` explicitly so newly approved leads (which
+  // have never had a sharedVia written) actually show up here.
   share_customer: {
     status: 'FEASIBLE',
     opsApprovalStatus: 'APPROVED',
     AND: [
       { OR: [{ superAdmin2ApprovalStatus: 'APPROVED' }, { superAdmin2ApprovalStatus: null }] },
-      { NOT: { OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }] } },
+      { OR: [
+        { sharedVia: null },
+        { sharedVia: '' },
+        { AND: [
+          { NOT: { sharedVia: { contains: 'email' } } },
+          { NOT: { sharedVia: { contains: 'whatsapp' } } },
+        ]},
+      ]},
     ],
   },
 
