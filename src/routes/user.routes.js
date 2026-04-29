@@ -9,7 +9,8 @@ import {
   getUsersByRole,
   getUserDashboardStats,
   getSidebarCounts,
-  getISRUsersForAssignment
+  getISRUsersForAssignment,
+  getUserPassword
 } from '../controllers/user.controller.js';
 
 const router = Router();
@@ -32,6 +33,9 @@ router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 
 // `:userId/dashboard` segment isn't swallowed by `:id`.
 router.get('/:userId/dashboard', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserDashboardStats);
 router.get('/:id', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserById);
+
+// Password reveal — restricted to SUPER_ADMIN and MASTER. Audit-logged on each call.
+router.get('/:id/password', requireRole('SUPER_ADMIN', 'MASTER'), getUserPassword);
 
 // Routes below require SUPER_ADMIN or BDM_TEAM_LEADER role
 router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'));

@@ -22,7 +22,19 @@ export const login = asyncHandler(async function login(req, res) {
     return res.status(401).json({ message: 'Account is deactivated.' });
   }
 
-  const isMatch = await bcrypt.compare(password, user.password);
+  let isMatch = false;
+  if (user.passwordIsHashed) {
+    isMatch = await bcrypt.compare(password, user.password);
+    if (isMatch) {
+      // Transparent migration: store plaintext so admin/master can view it from now on.
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { password, passwordIsHashed: false }
+      });
+    }
+  } else {
+    isMatch = password === user.password;
+  }
 
   if (!isMatch) {
     return res.status(401).json({ message: 'Invalid email or password.' });
@@ -65,16 +77,20 @@ export const resetPassword = asyncHandler(async function resetPassword(req, res)
     return res.status(401).json({ message: 'Invalid email or password.' });
   }
 
-  const isMatch = await bcrypt.compare(oldPassword, user.password);
-  if (!isMatch) {
+  let oldMatches = false;
+  if (user.passwordIsHashed) {
+    oldMatches = await bcrypt.compare(oldPassword, user.password);
+  } else {
+    oldMatches = oldPassword === user.password;
+  }
+
+  if (!oldMatches) {
     return res.status(401).json({ message: 'Old password is incorrect.' });
   }
 
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
-
   await prisma.user.update({
     where: { id: user.id },
-    data: { password: hashedPassword }
+    data: { password: newPassword, passwordIsHashed: false }
   });
 
   res.json({ message: 'Password reset successfully. Please login with your new password.' });

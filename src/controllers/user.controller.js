@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import prisma from '../config/db.js';
 import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
+import { logStatusChange } from '../services/statusChangeLog.service.js';
 
 export const getUsers = asyncHandler(async function getUsers(req, res) {
   const isTL = req.user.role === 'BDM_TEAM_LEADER';
@@ -128,12 +129,11 @@ export const createUser = asyncHandler(async function createUser(req, res) {
     }
   }
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-
   const user = await prisma.user.create({
     data: {
       email: email.toLowerCase(),
-      password: hashedPassword,
+      password,
+      passwordIsHashed: false,
       name,
       mobile: mobile?.trim() || null,
       role: isTL ? 'BDM' : (role || 'ISR'),
@@ -203,7 +203,10 @@ export const updateUser = asyncHandler(async function updateUser(req, res) {
   if (mobile !== undefined) updateData.mobile = mobile?.trim() || null;
   if (role && !isTL) updateData.role = role;
   if (typeof isActive === 'boolean') updateData.isActive = isActive;
-  if (password) updateData.password = await bcrypt.hash(password, 10);
+  if (password) {
+    updateData.password = password;
+    updateData.passwordIsHashed = false;
+  }
   if (teamLeaderId !== undefined && !isTL) updateData.teamLeaderId = teamLeaderId || null;
 
   const user = await prisma.user.update({
@@ -1309,4 +1312,41 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
   }
 
   res.json(counts);
+});
+
+
+export const getUserPassword = asyncHandler(async function getUserPassword(req, res) {
+  const { id } = req.params;
+
+  const targetUser = await prisma.user.findUnique({
+    where: { id },
+    select: { id: true, email: true, name: true, password: true, passwordIsHashed: true }
+  });
+
+  if (!targetUser) {
+    return res.status(404).json({ message: 'User not found.' });
+  }
+
+  if (targetUser.passwordIsHashed) {
+    return res.json({
+      migrated: false,
+      message: "Password viewable after user's next login."
+    });
+  }
+
+  // Audit: record the reveal before returning the plaintext.
+  await logStatusChange({
+    entityType: 'USER',
+    entityId: targetUser.id,
+    field: 'PASSWORD_VIEWED',
+    oldValue: null,
+    newValue: 'viewed',
+    changedById: req.user.id,
+    reason: null
+  });
+
+  res.json({
+    migrated: true,
+    password: targetUser.password
+  });
 });
