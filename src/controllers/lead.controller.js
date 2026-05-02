@@ -6566,9 +6566,11 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
       if (!otcAmount || isNaN(parseFloat(otcAmount))) {
         return res.status(400).json({ message: 'Valid OTC amount is required for approval.' });
       }
-      // GST and legal-name only required when the BDM declared this customer
-      // is GST-registered. lead.hasGst defaults to true (legacy behaviour),
-      // so the only way to skip these is an explicit `false` on the lead.
+      // GST, legal-name, and PAN are only required when the BDM declared this
+      // customer is GST-registered. lead.hasGst defaults to true (legacy
+      // behaviour), so the only way to skip these is an explicit `false` on
+      // the lead. Non-GST customers (small/individual) often don't have a PAN
+      // available at this stage either, so it follows the same gate.
       if (lead.hasGst !== false) {
         if (!customerGstNo || customerGstNo.trim().length !== 15) {
           return res.status(400).json({ message: 'Valid 15-character GST number is required for approval.' });
@@ -6576,10 +6578,9 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
         if (!customerLegalName || customerLegalName.trim().length === 0) {
           return res.status(400).json({ message: 'Legal name (as per GST) is required for approval.' });
         }
-      }
-      // New mandatory field validations
-      if (!panCardNo || panCardNo.trim().length !== 10) {
-        return res.status(400).json({ message: 'Valid 10-character PAN card number is required for approval.' });
+        if (!panCardNo || panCardNo.trim().length !== 10) {
+          return res.status(400).json({ message: 'Valid 10-character PAN card number is required for approval.' });
+        }
       }
       if (!tanNumber || tanNumber.trim().length === 0) {
         return res.status(400).json({ message: 'TAN number is required for approval.' });
