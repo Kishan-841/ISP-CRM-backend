@@ -1118,20 +1118,43 @@ export const getBDMUsers = asyncHandler(async function getBDMUsers(req, res) {
 
 // Get BDM Team Leaders for assignment dropdown (ISR uses this)
 export const getTeamLeaders = asyncHandler(async function getTeamLeaders(req, res) {
-    const teamLeaders = await prisma.user.findMany({
+    // Surface BDM Team Leaders AND standalone BDMs (BDMs not under any TL) so
+    // ISR/SAM flows can assign data to them directly. Without this, BDMs who
+    // sit outside any team are unreachable from the assignment dropdown.
+    const users = await prisma.user.findMany({
       where: {
-        role: 'BDM_TEAM_LEADER',
-        isActive: true
+        isActive: true,
+        OR: [
+          { role: 'BDM_TEAM_LEADER' },
+          { role: 'BDM', teamLeaderId: null },
+        ],
       },
       select: {
         id: true,
         name: true,
-        email: true
+        email: true,
+        role: true,
       },
-      orderBy: { name: 'asc' }
+      orderBy: [
+        { role: 'asc' },   // BDM before BDM_TEAM_LEADER alphabetically — TLs first feels right but role names alphabetize the other way; we resort below.
+        { name: 'asc' },
+      ],
     });
 
-    res.json({ users: teamLeaders });
+    // Sort TLs first, then standalone BDMs, each group alphabetised.
+    users.sort((a, b) => {
+      if (a.role !== b.role) return a.role === 'BDM_TEAM_LEADER' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const formatted = users.map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      kind: u.role === 'BDM_TEAM_LEADER' ? 'TL' : 'BDM',
+    }));
+
+    res.json({ users: formatted });
 });
 
 // Check if campaign data is already converted
