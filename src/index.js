@@ -34,6 +34,7 @@ import customerImportRoutes from './routes/customerImport.routes.js';
 import popLocationRoutes from './routes/popLocation.routes.js';
 import proxyRoutes from './routes/proxy.routes.js';
 import { nexusRouter, customerNexusRouter } from './routes/nexus.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 import { auth } from './middleware/auth.js';
 import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
@@ -45,6 +46,7 @@ import { startFollowUpPopupJob } from './jobs/followUpPopupReminder.js';
 import { startSamVisitReminderJob } from './jobs/samVisitReminder.js';
 import { startComplaintTatReminderJob } from './jobs/complaintTatReminder.js';
 import { startInvoiceDueReminderJob } from './jobs/invoiceDueReminder.js';
+import { startSamWebhookRetryJob } from './jobs/samWebhookRetry.js';
 
 // Fail fast on missing critical env vars — much better than silent runtime
 // auth failures hours later. DATABASE_URL is validated by Prisma on first
@@ -167,6 +169,7 @@ app.use('/api/pop-locations', popLocationRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/api/nexus', nexusRouter);
 app.use('/api/customer/nexus', customerNexusRouter);
+app.use('/api/admin', adminRoutes);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);
@@ -222,4 +225,5 @@ httpServer.listen(PORT, () => {
   startSamVisitReminderJob();
   startComplaintTatReminderJob();
   startInvoiceDueReminderJob();
+  startSamWebhookRetryJob();
 });

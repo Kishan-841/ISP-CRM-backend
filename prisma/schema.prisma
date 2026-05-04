@@ -2273,3 +2273,39 @@ model LeadDeletionAudit {
   @@index([deletedById])
   @@index([leadId])
 }
+
+// ============================================================
+// SAM webhook outbox — durable record of every customer.activated
+// notification we send to the downstream SAM platform. Inserted in
+// the same transaction as the activation, so an activation rollback
+// rolls the log row back too. The first delivery attempt fires in
+// the background after commit; the retry cron sweeps PENDING rows
+// whose nextAttemptAt has elapsed. The payload is frozen at insert
+// time — retries replay the original event so SAM's idempotency
+// check (keyed on eventId) short-circuits to DUPLICATE rather than
+// upserting stale data.
+// ============================================================
+
+enum SamWebhookStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model SamWebhookLog {
+  id                 String           @id @default(uuid())
+  eventId            String           @unique
+  leadId             String           // orphaned reference — survives lead deletion
+  payload            Json             // frozen at insert; signed and sent on every attempt
+  status             SamWebhookStatus @default(PENDING)
+  attemptCount       Int              @default(0)
+  nextAttemptAt      DateTime         @default(now())
+  lastResponseStatus Int?
+  lastResponseBody   String?          @db.Text
+  lastAttemptedAt    DateTime?
+  createdAt          DateTime         @default(now())
+
+  @@index([status, nextAttemptAt])
+  @@index([leadId])
+  @@index([createdAt])
+}

@@ -12,6 +12,7 @@ import { sendEmail } from '../services/email.service.js';
 import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, paginatedResponse } from '../utils/controllerHelper.js';
 import { deriveCurrentStage, bucketFromLead, BUCKETS, VISIBLE_BUCKETS } from '../utils/leadStageDeriver.js';
 import { logStatusChange } from '../services/statusChangeLog.service.js';
+import { enqueueActivationWebhook, attemptDeliveryInBackground } from '../services/samWebhook.service.js';
 
 // ─── Opportunity Pipeline (BDM /dashboard/quotation-mgmt) stage filters ───
 //
@@ -9858,35 +9859,63 @@ export const createActualPlan = asyncHandler(async function createActualPlan(req
     const planStartDate = startDate ? new Date(startDate) : new Date();
     const planEndDate = calculateEndDate(planStartDate, validityDays, billingType, billingCycle);
 
-    const updated = await prisma.lead.update({
-      where: { id },
-      data: {
-        actualPlanName: planName,
-        actualPlanBandwidth: parseInt(bandwidth),
-        actualPlanUploadBandwidth: uploadBandwidth ? parseInt(uploadBandwidth) : null,
-        actualPlanDataLimit: dataLimit ? parseInt(dataLimit) : null,
-        actualPlanValidityDays: validityDays ? parseInt(validityDays) : null,
-        actualPlanBillingType: billingType || 'DAY_TO_DAY',
-        actualPlanBillingCycle: billingCycle || 'MONTHLY',
-        actualPlanPrice: price ? parseFloat(price) : null,
-        actualPlanIsActive: isActive ?? true,
-        actualPlanStartDate: planStartDate,
-        actualPlanEndDate: planEndDate,
-        actualPlanCreatedAt: new Date(),
-        actualPlanCreatedById: userId,
-        actualPlanNotes: notes || null,
-        poNumber: poNumber || undefined,
-        poExpiryDate: poExpiryDate ? new Date(poExpiryDate) : undefined,
-        // Deactivate demo plan when actual plan is created
-        demoPlanIsActive: false
-      },
-      include: {
-        campaignData: {
-          select: { company: true, name: true }
+    // First-activation detection: only fire the SAM webhook the first time
+    // a lead's actualPlanIsActive flips false → true. Re-running this
+    // endpoint (or creating with isActive=false) must not re-notify SAM.
+    const willBeActive = (isActive ?? true) === true;
+    const isFirstActivation = !lead.actualPlanIsActive && willBeActive;
+
+    // Wrap the lead update + webhook outbox insert in one transaction so a
+    // failure in either rolls both back. Otherwise we could end up with a
+    // PENDING webhook row pointing at a customer that never actually
+    // activated.
+    let webhookLogId = null;
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.lead.update({
+        where: { id },
+        data: {
+          actualPlanName: planName,
+          actualPlanBandwidth: parseInt(bandwidth),
+          actualPlanUploadBandwidth: uploadBandwidth ? parseInt(uploadBandwidth) : null,
+          actualPlanDataLimit: dataLimit ? parseInt(dataLimit) : null,
+          actualPlanValidityDays: validityDays ? parseInt(validityDays) : null,
+          actualPlanBillingType: billingType || 'DAY_TO_DAY',
+          actualPlanBillingCycle: billingCycle || 'MONTHLY',
+          actualPlanPrice: price ? parseFloat(price) : null,
+          actualPlanIsActive: willBeActive,
+          actualPlanStartDate: planStartDate,
+          actualPlanEndDate: planEndDate,
+          actualPlanCreatedAt: new Date(),
+          actualPlanCreatedById: userId,
+          actualPlanNotes: notes || null,
+          poNumber: poNumber || undefined,
+          poExpiryDate: poExpiryDate ? new Date(poExpiryDate) : undefined,
+          // Deactivate demo plan when actual plan is created
+          demoPlanIsActive: false
         },
-        actualPlanCreatedBy: { select: { id: true, name: true } }
+        include: {
+          campaignData: {
+            select: { company: true, name: true, email: true, phone: true }
+          },
+          actualPlanCreatedBy: { select: { id: true, name: true } }
+        }
+      });
+
+      if (isFirstActivation) {
+        const log = await enqueueActivationWebhook(tx, result);
+        if (log) webhookLogId = log.id;
       }
+
+      return result;
     });
+
+    // Fire the first webhook attempt now (after the transaction has
+    // committed). Don't await — a slow or down SAM must not delay the
+    // user's response. If this attempt fails, the row stays PENDING and
+    // the retry cron picks it up.
+    if (webhookLogId) {
+      attemptDeliveryInBackground(webhookLogId);
+    }
 
     // Trigger immediate invoice generation for this lead if billing period has started
     try {
