@@ -262,6 +262,13 @@ export const generateOTCInvoice = asyncHandler(async function generateOTCInvoice
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
+    // Belt-and-braces: BDM marked this customer as no-OTC at quote creation,
+    // so no invoice should ever be generated. The button shouldn't be visible
+    // either, but guard server-side in case the route is hit directly.
+    if (lead.hasOtc === false) {
+      return res.status(400).json({ message: 'OTC is not applicable for this customer.' });
+    }
+
     // Use body amount if provided, otherwise fall back to lead's otcAmount
     const amount = req.body?.amount || lead.otcAmount;
     const description = req.body?.description;
@@ -1162,6 +1169,7 @@ export const getCustomersWithPendingInvoices = asyncHandler(async function getCu
         actualPlanPrice: true,
         actualPlanIsActive: true,
         otcAmount: true,
+        hasOtc: true,
         otcInvoiceId: true,
         customerGstNo: true,
         campaignData: {
@@ -1350,6 +1358,7 @@ export const getCustomerInvoiceDetail = asyncHandler(async function getCustomerI
         actualPlanEndDate: true,
         actualPlanIsActive: true,
         otcAmount: true,
+        hasOtc: true,
         otcInvoiceId: true,
         arcAmount: true,
         advanceAmount: true,

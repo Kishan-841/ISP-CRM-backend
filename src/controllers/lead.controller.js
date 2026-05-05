@@ -336,6 +336,7 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       superAdmin2ApprovalNotes: lead.superAdmin2ApprovalNotes,
       loginCompletedAt: lead.loginCompletedAt,
       hasGst: lead.hasGst,
+      hasOtc: lead.hasOtc,
       documents: lead.documents || [],
       docsVerifiedAt: lead.docsVerifiedAt,
       docsVerifiedById: lead.docsVerifiedById,
@@ -346,6 +347,7 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       tentativePrice: lead.tentativePrice,
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       pushedToInstallationAt: lead.pushedToInstallationAt,
@@ -839,6 +841,7 @@ const formatLeadResponse = (lead) => ({
   accountsRejectedReason: lead.accountsRejectedReason,
   arcAmount: lead.arcAmount,
   otcAmount: lead.otcAmount,
+  hasOtc: lead.hasOtc,
   advanceAmount: lead.advanceAmount,
   paymentTerms: lead.paymentTerms,
   // Installation fields
@@ -861,7 +864,7 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
       // Contact details (CampaignData fields)
       company, name, firstName, lastName, title, email, phone, whatsapp, industry, city,
       // Quotation fields
-      bandwidthRequirement, arcAmount, otcAmount, quotationAttachments,
+      bandwidthRequirement, arcAmount, otcAmount, quotationAttachments, hasOtc,
       // OPS approval fields
       opsApprovalStatus
     } = req.body;
@@ -922,7 +925,18 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
         updateData.originalArcAmount = parseFloat(arcAmount) || 0;
       }
     }
-    if (otcAmount !== undefined) updateData.otcAmount = parseFloat(otcAmount) || 0;
+    // OTC applicability — locked at quote creation. When BDM picks "No", we
+    // also force the OTC amount to null so downstream displays/invoices stay
+    // consistent. When picking "Yes", the otcAmount field below applies.
+    if (typeof hasOtc === 'boolean') {
+      updateData.hasOtc = hasOtc;
+      if (hasOtc === false) {
+        updateData.otcAmount = null;
+        updateData.advanceAmount = null;
+      }
+    }
+    const otcApplicable = typeof hasOtc === 'boolean' ? hasOtc : (existing.hasOtc !== false);
+    if (otcAmount !== undefined && otcApplicable) updateData.otcAmount = parseFloat(otcAmount) || 0;
     if (quotationAttachments !== undefined) updateData.quotationAttachments = quotationAttachments;
     // Quotation approval — goes directly to Sales Director (SA2), OPS step removed
     if (opsApprovalStatus !== undefined && opsApprovalStatus === 'PENDING') {
@@ -2494,6 +2508,7 @@ export const getBDMDeliveryCompleted = asyncHandler(async function getBDMDeliver
       deliveryAssignedTo: lead.deliveryAssignedTo,
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       bandwidthRequirement: lead.bandwidthRequirement,
       numberOfIPs: lead.numberOfIPs,
       createdAt: lead.createdAt,
@@ -3055,6 +3070,7 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
           opsRejectedReason: true,
           arcAmount: true,
           otcAmount: true,
+          hasOtc: true,
           advanceAmount: true,
           paymentTerms: true,
           quotationAttachments: true,
@@ -3141,6 +3157,7 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
       // Financial details
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       quotationAttachments: lead.quotationAttachments,
@@ -3266,6 +3283,7 @@ export const getOpsTeamReviewHistory = asyncHandler(async function getOpsTeamRev
       // Financial details
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       // Campaign data
@@ -3550,6 +3568,7 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
           superAdmin2ApprovalNotes: true,
           arcAmount: true,
           otcAmount: true,
+          hasOtc: true,
           advanceAmount: true,
           paymentTerms: true,
           quotationAttachments: true,
@@ -3634,6 +3653,7 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
       superAdmin2ApprovalNotes: lead.superAdmin2ApprovalNotes,
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       quotationAttachments: lead.quotationAttachments,
@@ -3708,6 +3728,7 @@ export const getSuperAdmin2History = asyncHandler(async function getSuperAdmin2H
           superAdmin2ApprovalNotes: true,
           arcAmount: true,
           otcAmount: true,
+          hasOtc: true,
           advanceAmount: true,
           paymentTerms: true,
           quotationAttachments: true,
@@ -3753,6 +3774,7 @@ export const getSuperAdmin2History = asyncHandler(async function getSuperAdmin2H
       superAdmin2ApprovalNotes: lead.superAdmin2ApprovalNotes,
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       quotationAttachments: lead.quotationAttachments,
@@ -3979,6 +4001,7 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       accountsVerifiedAt: true,
       arcAmount: true,
       otcAmount: true,
+      hasOtc: true,
       // Optional approval notes from OPS + Sales Director — the Docs team
       // is the next-step user; surfacing these here lets them see any
       // handoff context before verifying documents.
@@ -4144,6 +4167,7 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       // Financial details
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       // Contact details
       company: lead.campaignData.company,
       name: lead.campaignData.name || `${lead.campaignData.firstName || ''} ${lead.campaignData.lastName || ''}`.trim(),
@@ -5112,6 +5136,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       phone: lead.campaignData?.phone || '-',
       arcAmount: lead.arcAmount || 0,
       otcAmount: lead.otcAmount || 0,
+      hasOtc: lead.hasOtc,
     });
 
     // Build FTB map: leadId -> { amount, paymentDate }
@@ -5165,6 +5190,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
           phone: lead.campaignData?.phone || '-',
           arcAmount: lead.arcAmount || 0,
           otcAmount: lead.otcAmount || 0,
+          hasOtc: lead.hasOtc,
           loginCompletedAt: lead.loginCompletedAt,
           accountsVerifiedAt: lead.accountsVerifiedAt,
           installationCompletedAt: lead.installationCompletedAt,
@@ -5940,13 +5966,15 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    // Validate documents — honour the BDM's GST applicability choice. The
-    // payload's hasGst wins when explicitly provided; otherwise fall back to
+    // Validate documents — honour the BDM's GST and OTC applicability choices.
+    // The payload's flag wins when explicitly provided; otherwise fall back to
     // whatever's already stored on the lead (legacy rows default to true via
-    // schema default).
+    // schema default). hasOtc is only set at quote creation, never re-supplied
+    // here, so we always read it off the lead.
     const documents = lead.documents || {};
     const effectiveHasGst = typeof hasGst === 'boolean' ? hasGst : (lead.hasGst !== false);
-    const validation = validateDocuments(documents, isTestMode, { hasGst: effectiveHasGst });
+    const effectiveHasOtc = lead.hasOtc !== false;
+    const validation = validateDocuments(documents, isTestMode, { hasGst: effectiveHasGst, hasOtc: effectiveHasOtc });
 
     if (!validation.valid) {
       return res.status(400).json({
@@ -6009,11 +6037,13 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
         : `[${isTestMode ? 'TEST MODE - Bypassed to Docs Team' : `Submitted for OPS Approval (Attempt #${(lead.verificationAttempts || 0) + 1})`} on ${new Date().toLocaleString()}]${notes ? `\nNotes: ${notes}` : ''}${Object.keys(documents).length > 0 ? `\nDocuments: ${Object.keys(documents).join(', ')}` : ''}`
     };
 
-    // Add financial details if provided
+    // Add financial details if provided. Respect the lead's hasOtc flag —
+    // even if the form sends an OTC amount, we ignore it for non-OTC
+    // customers so a stale field can't reintroduce the OTC trail downstream.
     if (arcAmount !== undefined && arcAmount !== null && arcAmount !== '') {
       updateData.arcAmount = parseFloat(arcAmount);
     }
-    if (otcAmount !== undefined && otcAmount !== null && otcAmount !== '') {
+    if (otcAmount !== undefined && otcAmount !== null && otcAmount !== '' && lead.hasOtc !== false) {
       updateData.otcAmount = parseFloat(otcAmount);
     }
     if (advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== '') {
@@ -6161,6 +6191,7 @@ export const getAccountsTeamQueue = asyncHandler(async function getAccountsTeamQ
           verificationAttempts: true,
           arcAmount: true,
           otcAmount: true,
+          hasOtc: true,
           advanceAmount: true,
           paymentTerms: true,
           accountsNotes: true,
@@ -6285,6 +6316,7 @@ export const getAccountsTeamQueue = asyncHandler(async function getAccountsTeamQ
       // Financial details
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       accountsNotes: lead.accountsNotes,
@@ -6587,8 +6619,13 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
       if (!arcAmount || isNaN(parseFloat(arcAmount))) {
         return res.status(400).json({ message: 'Valid ARC amount is required for approval.' });
       }
-      if (!otcAmount || isNaN(parseFloat(otcAmount))) {
-        return res.status(400).json({ message: 'Valid OTC amount is required for approval.' });
+      // OTC is only required when BDM declared this customer owes one at quote
+      // creation. Non-OTC customers (lead.hasOtc === false) skip this check
+      // entirely — accounts can approve with no OTC / advance amount.
+      if (lead.hasOtc !== false) {
+        if (!otcAmount || isNaN(parseFloat(otcAmount))) {
+          return res.status(400).json({ message: 'Valid OTC amount is required for approval.' });
+        }
       }
       // GST, legal-name, and PAN are only required when the BDM declared this
       // customer is GST-registered. lead.hasGst defaults to true (legacy
@@ -6654,9 +6691,16 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
       if (lead.originalArcAmount === null) {
         updateData.originalArcAmount = parseFloat(arcAmount);
       }
-      updateData.otcAmount = parseFloat(otcAmount);
-      if (advanceAmount) {
-        updateData.advanceAmount = parseFloat(advanceAmount);
+      // Persist OTC/Advance only when applicable; otherwise force null so the
+      // lead doesn't carry stale amounts from earlier flow attempts.
+      if (lead.hasOtc !== false) {
+        updateData.otcAmount = parseFloat(otcAmount);
+        if (advanceAmount) {
+          updateData.advanceAmount = parseFloat(advanceAmount);
+        }
+      } else {
+        updateData.otcAmount = null;
+        updateData.advanceAmount = null;
       }
       if (paymentTerms) {
         updateData.paymentTerms = paymentTerms;
@@ -6720,9 +6764,12 @@ export const accountsTeamDisposition = asyncHandler(async function accountsTeamD
 
       // Add approval note to requirements
       const gstNote = customerGstNo ? ` | GST: ${customerGstNo}` : '';
+      const otcNote = lead.hasOtc !== false
+        ? ` | OTC: ₹${otcAmount}${advanceAmount ? ` | Advance: ₹${advanceAmount}` : ''}`
+        : ' | OTC: N/A';
       updateData.requirements = lead.requirements
-        ? `${lead.requirements}\n\n[Accounts APPROVED by ${accountsUserName} on ${new Date().toLocaleString()}]\nARC: ₹${arcAmount} | OTC: ₹${otcAmount}${advanceAmount ? ` | Advance: ₹${advanceAmount}` : ''}${gstNote}`
-        : `[Accounts APPROVED by ${accountsUserName} on ${new Date().toLocaleString()}]\nARC: ₹${arcAmount} | OTC: ₹${otcAmount}${advanceAmount ? ` | Advance: ₹${advanceAmount}` : ''}${gstNote}`;
+        ? `${lead.requirements}\n\n[Accounts APPROVED by ${accountsUserName} on ${new Date().toLocaleString()}]\nARC: ₹${arcAmount}${otcNote}${gstNote}`
+        : `[Accounts APPROVED by ${accountsUserName} on ${new Date().toLocaleString()}]\nARC: ₹${arcAmount}${otcNote}${gstNote}`;
     }
 
     const updated = await prisma.lead.update({
@@ -6943,6 +6990,7 @@ export const getAccountsTeamReviewHistory = asyncHandler(async function getAccou
       // Financial details
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       accountsNotes: lead.accountsNotes,
@@ -7063,6 +7111,7 @@ export const getAccountsVerifiedLeads = asyncHandler(async function getAccountsV
       // Financial details
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
       accountsNotes: lead.accountsNotes,
@@ -7256,6 +7305,7 @@ export const getDeliveryReport = asyncHandler(async function getDeliveryReport(r
         numberOfIPs: true,
         arcAmount: true,
         otcAmount: true,
+        hasOtc: true,
         pushedToInstallationAt: true,
         installationStartedAt: true,
         installationCompletedAt: true,
@@ -7426,6 +7476,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         numberOfIPs: true,
         arcAmount: true,
         otcAmount: true,
+        hasOtc: true,
         advanceAmount: true,
         paymentTerms: true,
         tentativePrice: true,
@@ -9772,6 +9823,7 @@ export const getCompletedLeadsQueue = asyncHandler(async function getCompletedLe
       // Financial details
       arcAmount: lead.arcAmount,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
       // Demo plan details
       demoPlanName: lead.demoPlanName,
@@ -11493,6 +11545,7 @@ export const getCPLeads = asyncHandler(async function getCPLeads(req, res) {
           status: true,
           arcAmount: true,
           otcAmount: true,
+          hasOtc: true,
           vendorCommissionPercentage: true,
           deliveryStatus: true,
           opsApprovalStatus: true,
@@ -11695,6 +11748,7 @@ export const getBDMColdLeads = asyncHandler(async function getBDMColdLeads(req, 
       interestLevel: lead.interestLevel,
       tentativePrice: lead.tentativePrice,
       otcAmount: lead.otcAmount,
+      hasOtc: lead.hasOtc,
       billingAddress: lead.billingAddress,
       billingPincode: lead.billingPincode,
       expectedDeliveryDate: lead.expectedDeliveryDate,

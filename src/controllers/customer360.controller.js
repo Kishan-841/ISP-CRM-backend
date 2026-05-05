@@ -166,6 +166,7 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
       fullAddress: true,
       arcAmount: true,
       otcAmount: true,
+      hasOtc: true,
       advanceAmount: true,
       // BDM-entered requirement fields
       bandwidthRequirement: true,
@@ -373,6 +374,7 @@ export const getSummary = asyncHandler(async function getSummary(req, res) {
       // Pricing
       arcAmount: true,
       otcAmount: true,
+      hasOtc: true,
       advanceAmount: true,
       paymentTerms: true,
       // Current plan
@@ -1600,6 +1602,7 @@ export const getBilling = asyncHandler(async function getBilling(req, res) {
     select: {
       arcAmount: true,
       otcAmount: true,
+      hasOtc: true,
       advanceAmount: true,
       paymentTerms: true,
       actualPlanName: true,

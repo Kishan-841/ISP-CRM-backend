@@ -164,12 +164,15 @@ export const getDocumentTypesForCompanyType = (companyType = 'default') => {
  * @param {Object} [opts]
  * @param {boolean} [opts.hasGst=true] - When false, GST_DETAILS is not required
  *   (BDM declared this customer is not GST-registered).
+ * @param {boolean} [opts.hasOtc=true] - When false, ADVANCE_OTC is not required
+ *   (BDM declared no OTC applies for this customer at quote creation).
  * @returns {Object} - { valid: boolean, missing: string[], uploadedCount: number, requiredCount: number }
  */
 export const validateDocuments = (documents, testMode = false, opts = {}) => {
-  const { hasGst = true } = opts;
+  const { hasGst = true, hasOtc = true } = opts;
   const requiredTypes = getRequiredDocumentTypes()
-    .filter((doc) => hasGst || doc.id !== 'GST_DETAILS');
+    .filter((doc) => hasGst || doc.id !== 'GST_DETAILS')
+    .filter((doc) => hasOtc || doc.id !== 'ADVANCE_OTC');
   const requiredCount = testMode ? 0 : requiredTypes.length;
   const uploadedCount = Object.keys(documents || {}).length;
 

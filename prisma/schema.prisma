@@ -288,6 +288,14 @@ model Lead {
   // Defaults to true so leads created before this flag existed continue to
   // require GST (preserves prior behaviour for in-flight pipeline rows).
   hasGst                    Boolean           @default(true)
+  // OTC applicability — BDM picks Yes/No at quote creation. When false:
+  //   • OTC amount field is skipped/cleared on the quote
+  //   • ADVANCE_OTC document is not required at docs upload
+  //   • Accounts approval does not validate/require OTC or Advance amounts
+  //   • generateOTCInvoice rejects with 400
+  // Defaults to true so leads created before this flag existed keep the prior
+  // OTC-required behaviour. The choice is locked once made via the UI.
+  hasOtc                    Boolean           @default(true)
 
   // GST Verification fields
   customerGstNo             String?           // GST Number entered by accounts team

@@ -227,14 +227,19 @@ export const validateUploadToken = asyncHandler(async function validateUploadTok
     }
   });
 
-  // Get current documents
+  // Get current documents (lead.hasOtc is included via the full lead include above)
   const documents = uploadLink.lead.documents || {};
 
-  // Get document types info - filter by requiredDocuments if specified
+  // Get document types info - filter by requiredDocuments if specified.
+  // ADVANCE_OTC is dropped entirely when this customer has no OTC applicable
+  // (BDM picked "No" at quote creation), even if the saved link still lists
+  // it — the BDM may have generated the link before flipping the flag.
   const allDocTypes = getAllDocumentTypes();
-  const selectedDocIds = uploadLink.requiredDocuments && uploadLink.requiredDocuments.length > 0
+  const otcApplicable = uploadLink.lead.hasOtc !== false;
+  const baseDocIds = uploadLink.requiredDocuments && uploadLink.requiredDocuments.length > 0
     ? uploadLink.requiredDocuments
-    : allDocTypes.map(d => d.id); // Default to all documents if none specified
+    : allDocTypes.map(d => d.id);
+  const selectedDocIds = baseDocIds.filter(id => otcApplicable || id !== 'ADVANCE_OTC');
 
   // Filter to only show selected documents
   const filteredDocTypes = allDocTypes.filter(dt => selectedDocIds.includes(dt.id));
@@ -300,10 +305,14 @@ export const customerUploadDocument = asyncHandler(async function customerUpload
     return res.status(400).json({ message: 'Invalid document type' });
   }
 
-  // Check if this document type is in the required documents list
-  const selectedDocIds = uploadLink.requiredDocuments && uploadLink.requiredDocuments.length > 0
+  // Check if this document type is in the required documents list. Drop
+  // ADVANCE_OTC for non-OTC customers to keep behaviour aligned with the
+  // validate-token response (which already filters it out).
+  const otcApplicable = uploadLink.lead.hasOtc !== false;
+  const baseDocIds = uploadLink.requiredDocuments && uploadLink.requiredDocuments.length > 0
     ? uploadLink.requiredDocuments
     : getAllDocumentTypes().map(d => d.id);
+  const selectedDocIds = baseDocIds.filter(id => otcApplicable || id !== 'ADVANCE_OTC');
 
   if (!selectedDocIds.includes(documentType)) {
     return res.status(400).json({ message: 'This document type is not required for this upload link' });
