@@ -114,8 +114,11 @@ const buildOpportunityRoleClause = (user) => {
   const isBDM = hasRole(user, 'BDM');
   const isTL = hasRole(user, 'BDM_TEAM_LEADER');
   const isFeasibilityTeam = hasRole(user, 'FEASIBILITY_TEAM');
-  if (isAdmin || isTL || isFeasibilityTeam) return null;
-  if (isBDM) {
+  if (isAdmin || isFeasibilityTeam) return null;
+  // TLs are scoped to leads they personally own/created — they do NOT see
+  // their team members' leads here. (Their team-oversight surfaces are the
+  // BDM queue / lead pipeline, not the Opportunity Pipeline.)
+  if (isBDM || isTL) {
     return { OR: [{ assignedToId: user.id }, { createdById: user.id }] };
   }
   return { createdById: user.id };
