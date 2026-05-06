@@ -171,9 +171,13 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
     // from the regular leads listing.
     const conditions = [];
 
-    if (isAdmin || isTL || isFeasibilityTeam) {
-      // No extra role scope; admin/TL/Feasibility see everything.
-    } else if (isBDM) {
+    if (isAdmin || isFeasibilityTeam) {
+      // No extra role scope; admin/Feasibility see everything.
+    } else if (isBDM || isTL) {
+      // TLs are scoped to their own leads (assigned to them or created by
+      // them) — they don't see their team members' leads in the regular
+      // leads listing or opportunity pipeline. Team-oversight surfaces are
+      // BDM queue / lead pipeline.
       conditions.push({ OR: [{ assignedToId: userId }, { createdById: userId }] });
     } else {
       conditions.push({ createdById: userId });
@@ -254,9 +258,9 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
 
     const baseStatsWhere = {
       isColdLead: false,
-      ...(isAdmin || isTL || isFeasibilityTeam
+      ...(isAdmin || isFeasibilityTeam
         ? {}
-        : isBDM
+        : (isBDM || isTL)
           ? { OR: [{ assignedToId: userId }, { createdById: userId }] }
           : { createdById: userId })
     };
