@@ -4,6 +4,7 @@ import { generateServiceOrderNumber } from '../services/documentNumber.service.j
 import { createNotification, notifyAllAdmins } from '../services/notification.service.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
+import { enqueueActivationWebhook, attemptDeliveryInBackground } from '../services/samWebhook.service.js';
 
 /**
  * Get disconnection reason categories with sub-categories
@@ -96,11 +97,16 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
 
   const orderNumber = await generateServiceOrderNumber();
 
+  // All order types now enter the same admin-approval gate first.
+  // SUPER_ADMIN approves → DISCONNECTION jumps straight to APPROVED (NOC),
+  // commercial changes (UPGRADE/DOWNGRADE/RATE_REVISION) move to
+  // PENDING_DOCS_REVIEW for the DOCS_TEAM to handle the PO. See
+  // approveServiceOrder for the post-approval routing.
   const data = {
     orderNumber,
     customerId,
     orderType,
-    status: orderType === 'DISCONNECTION' ? 'PENDING_APPROVAL' : 'PENDING_DOCS_REVIEW',
+    status: 'PENDING_APPROVAL',
     createdById: req.user.id,
     currentPlanName: customer.actualPlanName,
     currentBandwidth: customer.actualPlanBandwidth,
@@ -172,36 +178,18 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
 
   const order = await prisma.serviceOrder.create({ data });
 
-  // Notify relevant team based on order type
+  // All new orders sit in PENDING_APPROVAL — only SUPER_ADMIN sees them
+  // until approved. DOCS_TEAM only gets notified once the admin gate
+  // releases the order (see approveServiceOrder).
   const companyName = customer.campaignData?.company || 'Customer';
-
-  if (orderType === 'DISCONNECTION') {
-    // Disconnection: notify SUPER_ADMIN (old flow)
-    await notifyAllAdmins(
-      'SAM_ASSIGNMENT',
-      'New Service Order',
-      `${orderType} request for "${companyName}" (${orderNumber}) requires approval.`,
-      { serviceOrderId: order.id, orderNumber, orderType }
-    );
-    await emitSidebarRefreshByRole('SUPER_ADMIN');
-  } else {
-    // UPGRADE/DOWNGRADE/RATE_REVISION: notify DOCS_TEAM (new flow)
-    const docsTeamUsers = await prisma.user.findMany({
-      where: { role: 'DOCS_TEAM', isActive: true },
-      select: { id: true }
-    });
-    for (const docsUser of docsTeamUsers) {
-      await createNotification(
-        docsUser.id,
-        'SERVICE_ORDER',
-        'New Order Request - PO Review',
-        `New ${orderType.replace('_', ' ').toLowerCase()} order #${order.orderNumber} requires PO review.`,
-        { serviceOrderId: order.id }
-      );
-      emitSidebarRefresh(docsUser.id);
-    }
-    await emitSidebarRefreshByRole('DOCS_TEAM');
-  }
+  const orderTypeLabel = orderType.replace('_', ' ').toLowerCase();
+  await notifyAllAdmins(
+    'SAM_ASSIGNMENT',
+    'New Service Order',
+    `${orderTypeLabel} request for "${companyName}" (${orderNumber}) requires admin approval.`,
+    { serviceOrderId: order.id, orderNumber, orderType }
+  );
+  await emitSidebarRefreshByRole('SUPER_ADMIN');
 
   res.status(201).json({ message: 'Service order created successfully.', data: order });
 });
@@ -372,10 +360,18 @@ export const approveServiceOrder = asyncHandler(async function approveServiceOrd
     return res.status(400).json({ message: 'Only pending orders can be approved.' });
   }
 
+  // Route by orderType:
+  //   DISCONNECTION   → APPROVED              (NOC executes the disconnection)
+  //   UPGRADE/DOWNGRADE/RATE_REVISION
+  //                  → PENDING_DOCS_REVIEW    (DOCS_TEAM verifies the PO,
+  //                                            then NOC, SAM, ACCOUNTS)
+  const isCommercialChange = ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'].includes(order.orderType);
+  const nextStatus = isCommercialChange ? 'PENDING_DOCS_REVIEW' : 'APPROVED';
+
   const updated = await prisma.serviceOrder.update({
     where: { id },
     data: {
-      status: 'APPROVED',
+      status: nextStatus,
       approvedById: req.user.id,
       approvedAt: new Date(),
     }
@@ -392,11 +388,27 @@ export const approveServiceOrder = asyncHandler(async function approveServiceOrd
   );
   emitSidebarRefresh(order.createdById);
 
-  // Notify relevant team
+  // Notify the team that owns the next stage
   if (order.orderType === 'DISCONNECTION') {
+    // Disconnection: NOC team executes
     await emitSidebarRefreshByRole('NOC');
   } else {
-    await emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+    // Commercial change: hand to DOCS_TEAM for PO review
+    const docsTeamUsers = await prisma.user.findMany({
+      where: { role: 'DOCS_TEAM', isActive: true },
+      select: { id: true }
+    });
+    for (const docsUser of docsTeamUsers) {
+      await createNotification(
+        docsUser.id,
+        'SERVICE_ORDER',
+        'New Order Request - PO Review',
+        `${order.orderType.replace('_', ' ').toLowerCase()} order #${order.orderNumber} approved by admin — ready for PO review.`,
+        { serviceOrderId: id }
+      );
+      emitSidebarRefresh(docsUser.id);
+    }
+    await emitSidebarRefreshByRole('DOCS_TEAM');
   }
   await emitSidebarRefreshByRole('SUPER_ADMIN');
   await emitSidebarRefreshByRole('SAM_HEAD');
@@ -906,6 +918,34 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
   const newArc = order.newArc;
   const newBandwidth = order.newBandwidth || lead.actualPlanBandwidth;
 
+  // Idempotency guard: if the lead's current plan already matches the
+  // requested state, this order is a no-op (e.g. operator processed the
+  // same change twice via direct upgrade + service order). Skip the
+  // history write and just mark the order COMPLETED so we don't pollute
+  // PlanUpgradeHistory with zero-difference rows.
+  if (
+    lead.actualPlanBandwidth === newBandwidth &&
+    Number(lead.arcAmount) === Number(newArc)
+  ) {
+    const updatedOrder = await prisma.serviceOrder.update({
+      where: { id },
+      data: {
+        status: 'COMPLETED',
+        processedById: req.user.id,
+        processedAt: new Date(),
+        processNotes: `${processNotes || ''} [no-op: lead already matches requested state]`.trim(),
+        updatedAt: new Date()
+      }
+    });
+
+    emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+    return res.json({
+      message: 'Order completed (no-op — lead already matches requested state).',
+      data: updatedOrder
+    });
+  }
+
   // Determine action type for history
   let actionType = 'UPGRADE';
   if (order.orderType === 'DOWNGRADE') actionType = 'DOWNGRADE';
@@ -920,8 +960,15 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
     bandwidthDisplay = `${newBandwidth} Mbps`;
   }
 
-  // Build plan name
-  const newPlanName = `${bandwidthDisplay} - ₹${newArc}/month`;
+  // newArc is the annual figure. actualPlanPrice is the per-billing-cycle
+  // price (monthly by default — matches what the Pricing card displays
+  // and what createActualPlan stores). Convert here so the lead row stays
+  // semantically consistent across creation and upgrade paths.
+  const newMonthlyPrice = Math.round(newArc / 12);
+
+  // Indian-format ARC for the plan-name string (e.g. ₹5,00,000)
+  const arcFormatted = Number(newArc).toLocaleString('en-IN');
+  const newPlanName = `${bandwidthDisplay} - ₹${arcFormatted}/year`;
 
   // Use transaction to update everything atomically
   const result = await prisma.$transaction(async (tx) => {
@@ -962,13 +1009,16 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
       data: {
         actualPlanName: newPlanName,
         actualPlanBandwidth: newBandwidth,
-        actualPlanPrice: newArc,
+        actualPlanPrice: newMonthlyPrice,
         arcAmount: newArc,
         actualPlanStartDate: activationDate,
         bandwidthRequirement: bandwidthDisplay,
         actualPlanNotes: lead.actualPlanNotes
           ? `${lead.actualPlanNotes}\n\n[${order.orderType} ${new Date().toISOString().split('T')[0]}] Order #${order.orderNumber} - ARC: ₹${oldArc} → ₹${newArc}. ${processNotes || ''}`
           : `[${order.orderType} ${new Date().toISOString().split('T')[0]}] Order #${order.orderNumber} - ARC: ₹${oldArc} → ₹${newArc}. ${processNotes || ''}`
+      },
+      include: {
+        campaignData: { select: { company: true, name: true, email: true, phone: true } }
       }
     });
 
@@ -984,8 +1034,23 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
       }
     });
 
-    return { history, updatedLead, updatedOrder };
+    // 4. Re-fire the SAM activation webhook with the new canonical
+    // values. Per SAM's contract: "Re-fire on canonical-field changes
+    // (rename, MRR update, plan change). SAM treats this as an
+    // idempotent upsert keyed on customer.externalId." So sending the
+    // activation event again with new ARC/bandwidth/plan upserts the
+    // SAM-side row in place rather than creating a duplicate.
+    const webhookLog = await enqueueActivationWebhook(tx, updatedLead);
+
+    return { history, updatedLead, updatedOrder, webhookLogId: webhookLog?.id || null };
   });
+
+  // Fire the first delivery attempt outside the transaction so a slow or
+  // down SAM doesn't delay this user's response. Retries are handled by
+  // the cron sweep on the SamWebhookLog row.
+  if (result.webhookLogId) {
+    attemptDeliveryInBackground(result.webhookLogId);
+  }
 
   // Notifications
   await createNotification(

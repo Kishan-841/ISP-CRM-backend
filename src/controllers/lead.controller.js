@@ -10213,7 +10213,10 @@ export const upgradeActualPlan = asyncHandler(async function upgradeActualPlan(r
           actualPlanName: planName,
           actualPlanBandwidth: bandwidthKbps,
           actualPlanUploadBandwidth: uploadBandwidth ? parseInt(uploadBandwidth) : null,
-          actualPlanPrice: newTotalArc, // NEW TOTAL ARC (old + additional)
+          // arcAmount is the annual figure; actualPlanPrice is the
+          // per-billing-cycle (monthly) figure that the Pricing card
+          // displays. Keep them in sync semantically — annual / 12.
+          actualPlanPrice: Math.round(newTotalArc / 12),
           arcAmount: newTotalArc, // NEW TOTAL ARC (old + additional)
           bandwidthRequirement: bandwidthDisplay,
           actualPlanNotes: lead.actualPlanNotes
@@ -10221,13 +10224,20 @@ export const upgradeActualPlan = asyncHandler(async function upgradeActualPlan(r
             : `[UPGRADE ${new Date().toISOString().split('T')[0]}] Additional ARC: ₹${additionalArc}, New Total ARC: ₹${newTotalArc}. ${notes || ''}`
         },
         include: {
-          campaignData: { select: { company: true, name: true } },
+          campaignData: { select: { company: true, name: true, email: true, phone: true } },
           actualPlanCreatedBy: { select: { id: true, name: true } }
         }
       });
 
-      return { upgradeHistory, updatedLead, upgradeInvoice };
+      // Re-fire SAM activation webhook with new canonical state (idempotent upsert on externalId)
+      const webhookLog = await enqueueActivationWebhook(tx, updatedLead);
+
+      return { upgradeHistory, updatedLead, upgradeInvoice, webhookLogId: webhookLog?.id || null };
     });
+
+    if (result.webhookLogId) {
+      attemptDeliveryInBackground(result.webhookLogId);
+    }
 
     // Create ledger entry for upgrade invoice
     await createInvoiceLedgerEntry(result.upgradeInvoice, userId);
@@ -10458,7 +10468,10 @@ export const degradeActualPlan = asyncHandler(async function degradeActualPlan(r
           actualPlanName: planName,
           actualPlanBandwidth: bandwidthKbps,
           actualPlanUploadBandwidth: uploadBandwidth ? parseInt(uploadBandwidth) : null,
-          actualPlanPrice: newTotalArc, // NEW TOTAL ARC (old - degrade)
+          // arcAmount is annual; actualPlanPrice is the monthly billing-
+          // cycle figure shown on the Pricing card. Keep them consistent
+          // with how createActualPlan / upgradeActualPlan store them.
+          actualPlanPrice: Math.round(newTotalArc / 12),
           arcAmount: newTotalArc, // NEW TOTAL ARC (old - degrade)
           bandwidthRequirement: bandwidthDisplay,
           actualPlanNotes: lead.actualPlanNotes
@@ -10466,13 +10479,20 @@ export const degradeActualPlan = asyncHandler(async function degradeActualPlan(r
             : `[DOWNGRADE ${new Date().toISOString().split('T')[0]}] Degrade ARC: ₹${degradeArcAmount}, New Total ARC: ₹${newTotalArc}. ${notes || ''}`
         },
         include: {
-          campaignData: { select: { company: true, name: true } },
+          campaignData: { select: { company: true, name: true, email: true, phone: true } },
           actualPlanCreatedBy: { select: { id: true, name: true } }
         }
       });
 
-      return { degradeHistory, updatedLead, creditNote, lastInvoice };
+      // Re-fire SAM activation webhook with new canonical state (idempotent upsert on externalId)
+      const webhookLog = await enqueueActivationWebhook(tx, updatedLead);
+
+      return { degradeHistory, updatedLead, creditNote, lastInvoice, webhookLogId: webhookLog?.id || null };
     });
+
+    if (result.webhookLogId) {
+      attemptDeliveryInBackground(result.webhookLogId);
+    }
 
     // Create ledger entry for credit note
     // Arguments: creditNote, invoice, customerId (leadId), userId
