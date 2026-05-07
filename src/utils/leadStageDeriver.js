@@ -114,8 +114,19 @@ export function deriveCurrentStage(lead) {
   if (lead.nocAssignedToId) {
     return { stage: 'NOC', owner: lead.nocAssignedTo?.name || 'NOC Team' };
   }
+  // Delivery has handed material off to NOC, NOC engineer not yet assigned.
+  if (lead.deliveryStatus === 'PUSHED_TO_NOC') {
+    return { stage: 'NOC', owner: 'NOC Team' };
+  }
+  // OPS has pushed to installation but NOC hasn't taken over yet — the lead
+  // is sitting with the delivery team. The very first delivery step is
+  // vendor setup; after that the lead waits for the next delivery action
+  // (material request, etc.).
   if (lead.pushedToInstallationAt) {
-    return { stage: 'Pushed to Installation', owner: 'NOC Team' };
+    if (!lead.deliveryVendorSetupDone) {
+      return { stage: 'Delivery — Vendor Setup', owner: 'Delivery Team' };
+    }
+    return { stage: 'Delivery', owner: 'Delivery Team' };
   }
 
   // Accounts / docs
@@ -216,17 +227,18 @@ const STAGE_TO_BUCKET = {
   'Demo Plan': BUCKETS.ACCOUNTS,
   'Awaiting Plan Activation': BUCKETS.ACCOUNTS,
 
-  // NOC's queue: lead has been pushed from accounts/ops to NOC (awaiting an
-  // engineer to be assigned), or an engineer is mid-config.
-  'Pushed to Installation': BUCKETS.NOC,
+  // NOC's queue: delivery has pushed material to NOC and is awaiting an
+  // engineer to be assigned, or an engineer is mid-config.
   'NOC': BUCKETS.NOC,
 
   // Store's queue: NOC handed off to Delivery, Delivery requested materials,
   // Store Manager has to allocate / dispatch stock.
   'Delivery — Assigned to Store': BUCKETS.STORE,
 
-  // Delivery team's queue: everything else in the post-NOC physical chain.
-  // NOC → Delivery means NOC is done and Delivery picks it up next.
+  // Delivery team's queue: pre-NOC vendor setup, the post-NOC physical
+  // chain, and everything in between.
+  'Delivery — Vendor Setup': BUCKETS.DELIVERY,
+  'Delivery': BUCKETS.DELIVERY,
   'NOC → Delivery': BUCKETS.DELIVERY,
   'Delivery Approval': BUCKETS.DELIVERY,
   'Delivery — Approved': BUCKETS.DELIVERY,

@@ -12448,6 +12448,7 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
         installationCompletedAt: true,
         installationStartedAt: true,
         deliveryStatus: true,
+        deliveryVendorSetupDone: true,
         nocConfiguredAt: true,
         nocAssignedToId: true,
         pushedToInstallationAt: true,
