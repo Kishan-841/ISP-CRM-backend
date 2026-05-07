@@ -4870,16 +4870,19 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     // Get start of this month
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    // Build where clause for leads
+    // Build where clause for leads. We deliberately do NOT scope this by
+    // `createdAt` — the pipeline stat cards (Login, PO Received, Installation,
+    // Cust Accept, FTB Received) filter by their own event timestamps in the
+    // selected period, so a lead created in April with a login in May must
+    // still be available for the May MTD bucket. Metrics that genuinely want
+    // creation-date scoping (Total Funnel Value, Total Quotation Amount)
+    // apply the date filter inline below.
     const whereClause = { assignedToId: assignedIn };
-    if (dateFrom) {
-      whereClause.createdAt = {
-        gte: dateFrom,
-        lte: dateTo
-      };
-    }
+    const inCreatedRange = (lead) =>
+      !dateFrom ||
+      (new Date(lead.createdAt) >= dateFrom && new Date(lead.createdAt) <= dateTo);
 
-    // Get all leads assigned to this BDM (with date filter)
+    // Get all leads assigned to this BDM (un-scoped by date)
     const allLeads = await prisma.lead.findMany({
       where: whereClause,
       include: {
@@ -4900,6 +4903,12 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       orderBy: { updatedAt: 'desc' }
     });
 
+    // periodLeads = leads created in the selected period. Used by metrics
+    // that are intentionally creation-date scoped (status counts, lead-source
+    // breakdown, recent activity, etc.) so they retain the same semantics as
+    // before the createdAt where-clause was removed.
+    const periodLeads = allLeads.filter(inCreatedRange);
+
     // Status counts
     const statusCounts = {
       NEW: 0,
@@ -4910,14 +4919,14 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       DROPPED: 0
     };
 
-    allLeads.forEach(lead => {
+    periodLeads.forEach(lead => {
       if (statusCounts.hasOwnProperty(lead.status)) {
         statusCounts[lead.status]++;
       }
     });
 
     // Count leads pushed to installation as "Qualified" (truly converted leads)
-    const pushedToInstallation = allLeads.filter(lead => lead.pushedToInstallationAt).length;
+    const pushedToInstallation = periodLeads.filter(lead => lead.pushedToInstallationAt).length;
     statusCounts.QUALIFIED = pushedToInstallation;
 
     // Leads pending with Feasibility Team (sent but not reviewed)
@@ -5019,8 +5028,8 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       return { date, day, count };
     });
 
-    // Recent activity (last 10 dispositions)
-    const recentActivity = allLeads.slice(0, 10).map(lead => ({
+    // Recent activity (last 10 dispositions in the selected period)
+    const recentActivity = periodLeads.slice(0, 10).map(lead => ({
       id: lead.id,
       company: lead.campaignData?.company || '-',
       name: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim() || '-',
@@ -5029,9 +5038,9 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       campaign: lead.campaignData?.campaign?.name
     }));
 
-    // Lead sources (by campaign)
+    // Lead sources (by campaign) — leads created in the period
     const campaignStats = {};
-    allLeads.forEach(lead => {
+    periodLeads.forEach(lead => {
       const campaignName = lead.campaignData?.campaign?.name || 'No Campaign';
       if (!campaignStats[campaignName]) {
         campaignStats[campaignName] = { total: 0, qualified: 0, feasible: 0 };
@@ -5042,27 +5051,25 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       if (lead.status === 'FEASIBLE') campaignStats[campaignName].feasible++;
     });
 
-    // Count quotations sent (leads with 'quotation' in sharedVia)
-    const quotationsSent = allLeads.filter(lead =>
+    // Count quotations sent (leads with 'quotation' in sharedVia, in period)
+    const quotationsSent = periodLeads.filter(lead =>
       lead.sharedVia && lead.sharedVia.includes('quotation')
     ).length;
 
     // ========== NEW STATS FOR BDM DASHBOARD ==========
 
     // Meetings Done (leads where a meeting was scheduled and outcome was updated)
-    const meetingsDone = allLeads.filter(lead =>
+    const meetingsDone = periodLeads.filter(lead =>
       lead.meetingDate &&
       lead.status !== 'MEETING_SCHEDULED' &&
       lead.status !== 'NEW'
     ).length;
 
-    // Total Funnel Value (sum of tentativePrice from all leads)
-    const totalFunnelValue = allLeads.reduce((sum, lead) => {
-      return sum + (lead.tentativePrice || 0);
-    }, 0);
+    // Total Funnel Value — sum of tentativePrice for leads created in period.
+    const totalFunnelValue = periodLeads.reduce((sum, lead) => sum + (lead.tentativePrice || 0), 0);
 
-    // Total Quotation Sent Amount (sum of ARC + OTC for leads that have quotations)
-    const quotationsWithAmount = allLeads.filter(lead => lead.arcAmount || lead.otcAmount);
+    // Total Quotation Sent Amount — also creation-scoped to match funnel-value.
+    const quotationsWithAmount = periodLeads.filter(lead => lead.arcAmount || lead.otcAmount);
     const totalQuotationAmount = quotationsWithAmount.reduce((sum, lead) => {
       return sum + (lead.arcAmount || 0) + (lead.otcAmount || 0);
     }, 0);
