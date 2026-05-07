@@ -49,6 +49,10 @@ function buildPayload(lead) {
     occurredAt: new Date().toISOString(),
     customer: {
       externalId: lead.id,
+      // Human-readable CRM lead number (e.g. "GLL-001"). Useful for SAM
+      // operators when cross-referencing tickets — externalId is the
+      // canonical UUID, leadNumber is the friendly label.
+      leadNumber: lead.leadNumber || null,
       companyName: cd.company || null,
       contactName: cd.name || null,
       email: cd.email || null,
@@ -56,7 +60,12 @@ function buildPayload(lead) {
       circuitId: lead.circuitId || null,
       bandwidthMbps: lead.actualPlanBandwidth ?? null,
       currentPlan: lead.actualPlanName || null,
+      // currentMrr = monthly billing-cycle price (actualPlanPrice).
+      // currentArc = annual figure. Both sent so SAM can display the ARC
+      // value as-is rather than computing currentMrr * 12 (which is
+      // ambiguous if the cycle isn't monthly).
       currentMrr: lead.actualPlanPrice ?? null,
+      currentArc: lead.arcAmount ?? null,
       onboardingDate: toIsoDate(lead.actualPlanStartDate) || toIsoDate(new Date()),
     },
   };

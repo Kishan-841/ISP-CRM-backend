@@ -31,7 +31,34 @@ export const getDisconnectionReasons = asyncHandler(async function getDisconnect
  * Roles: SAM_HEAD, SAM_EXECUTIVE, SUPER_ADMIN
  */
 export const createServiceOrder = asyncHandler(async function createServiceOrder(req, res) {
-  const { customerId, orderType, newBandwidth, newArc, disconnectionReason, disconnectionCategoryId, disconnectionSubCategoryId, notes, effectiveDate } = req.body;
+  const {
+    customerId,
+    orderType,
+    newBandwidth,
+    newArc,
+    disconnectionReason,
+    disconnectionCategoryId,
+    disconnectionSubCategoryId,
+    notes,
+    effectiveDate,
+    approvalFileUrl,   // optional — Cloudinary HTTPS URL to .pdf/.eml/.msg
+    poFileUrl,         // optional — Cloudinary HTTPS URL to .pdf/.eml/.msg
+  } = req.body;
+
+  // Light validation: if a URL is sent at all, it must be HTTPS.
+  // Cloudinary URLs always are; rejecting non-HTTPS prevents accidental
+  // injection of arbitrary links into the docs review UI.
+  const validateDocUrl = (value, label) => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || !/^https:\/\//i.test(value)) {
+      return `${label} must be an HTTPS URL.`;
+    }
+    return null;
+  };
+  const approvalErr = validateDocUrl(approvalFileUrl, 'approvalFileUrl');
+  if (approvalErr) return res.status(400).json({ message: approvalErr });
+  const poErr = validateDocUrl(poFileUrl, 'poFileUrl');
+  if (poErr) return res.status(400).json({ message: poErr });
 
   if (!customerId || !orderType) {
     return res.status(400).json({ message: 'Customer and order type are required.' });
@@ -113,6 +140,8 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     currentArc: customer.arcAmount ?? customer.actualPlanPrice,
     effectiveDate: effectiveDate ? new Date(effectiveDate) : null,
     notes: notes || null,
+    approvalFileUrl: approvalFileUrl || null,
+    poFileUrl: poFileUrl || null,
   };
 
   if (orderType === 'UPGRADE' || orderType === 'DOWNGRADE') {
@@ -269,6 +298,8 @@ export const getServiceOrders = asyncHandler(async function getServiceOrders(req
         disconnectionCategory: { select: { id: true, name: true } },
         disconnectionSubCategory: { select: { id: true, name: true } },
         attachments: true,
+        approvalFileUrl: true,
+        poFileUrl: true,
         notes: true,
         createdAt: true,
         customer: {
@@ -568,6 +599,8 @@ export const getDocsReviewQueue = asyncHandler(async function getDocsReviewQueue
         newArc: true,
         effectiveDate: true,
         attachments: true,
+        approvalFileUrl: true,
+        poFileUrl: true,
         notes: true,
         createdAt: true,
         customer: {
@@ -726,6 +759,8 @@ export const getNocServiceOrderQueue = asyncHandler(async function getNocService
         newArc: true,
         effectiveDate: true,
         attachments: true,
+        approvalFileUrl: true,
+        poFileUrl: true,
         notes: true,
         docsReviewedAt: true,
         createdAt: true,

@@ -2087,8 +2087,14 @@ model ServiceOrder {
   disconnectionCategory    DisconnectionCategory?    @relation(fields: [disconnectionCategoryId], references: [id])
   disconnectionSubCategory DisconnectionSubCategory? @relation(fields: [disconnectionSubCategoryId], references: [id])
 
-  // Attachments: Json array of { url, publicId, originalName }
+  // Attachments: Json array of { url, publicId, originalName } (legacy free-form)
   attachments           Json?
+
+  // SAM-side document URLs (Cloudinary HTTPS, .pdf/.eml/.msg). Sent as
+  // siblings on POST /service-orders by the SAM software so the docs
+  // review UI can render them as two labeled buttons.
+  approvalFileUrl       String?              // "View customer approval"
+  poFileUrl             String?              // "View Purchase Order"
 
   // Approval
   approvedById          String?
