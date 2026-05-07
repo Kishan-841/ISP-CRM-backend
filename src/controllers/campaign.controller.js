@@ -655,17 +655,22 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
     let skippedNoTitle = 0;
     const invalidRecords = []; // Track invalid records for error display
 
-    // Helper function to validate phone number - must have exactly 10 digits
+    // Helper function to validate phone number.
+    // Range covers Indian local landlines (6-8 digits), STD landlines
+    // (10-11), mobile (10), and international with country code (up to
+    // 15 — E.164 ceiling). Letters / @ / etc still rejected via the
+    // hasInvalidChars guard below.
+    const PHONE_MIN_DIGITS = 6;
+    const PHONE_MAX_DIGITS = 15;
     const validatePhone = (phone) => {
       if (!phone) return { valid: false, reason: 'empty' };
       const phoneStr = String(phone).trim();
-      // Extract only digits
       const digitsOnly = phoneStr.replace(/\D/g, '');
-      // Check if we have exactly 10 digits
-      if (digitsOnly.length !== 10) {
+      if (digitsOnly.length < PHONE_MIN_DIGITS || digitsOnly.length > PHONE_MAX_DIGITS) {
         return { valid: false, reason: 'invalid_length', digits: digitsOnly.length };
       }
-      // Check if it contains only valid characters (digits, spaces, dashes, parentheses, plus)
+      // Allow digits, spaces, dashes, parentheses, plus — typical of how
+      // landlines and mobile numbers are written.
       const hasInvalidChars = /[^\d\s\-\(\)\+]/.test(phoneStr);
       if (hasInvalidChars) {
         return { valid: false, reason: 'invalid_chars' };
@@ -704,7 +709,7 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
         skippedInvalidPhone++;
         let errorReason = 'Invalid phone number';
         if (phoneValidation.reason === 'invalid_length') {
-          errorReason = `Invalid phone: ${phoneValidation.digits} digits (need 10)`;
+          errorReason = `Invalid phone: ${phoneValidation.digits} digits (need 6-15)`;
         } else if (phoneValidation.reason === 'invalid_chars') {
           errorReason = 'Invalid phone: contains special characters';
         }
@@ -1773,12 +1778,16 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
     let duplicateCount = 0;
     const invalidRecords = [];
 
-    // Helper function to validate phone number - must have exactly 10 digits
+    // Helper function to validate phone number.
+    // Same range as addCampaignData — covers landlines and mobile, with
+    // E.164 international as the upper bound.
+    const PHONE_MIN_DIGITS = 6;
+    const PHONE_MAX_DIGITS = 15;
     const validatePhone = (phone) => {
       if (!phone) return { valid: false, reason: 'empty' };
       const phoneStr = String(phone).trim();
       const digitsOnly = phoneStr.replace(/\D/g, '');
-      if (digitsOnly.length !== 10) {
+      if (digitsOnly.length < PHONE_MIN_DIGITS || digitsOnly.length > PHONE_MAX_DIGITS) {
         return { valid: false, reason: 'invalid_length', digits: digitsOnly.length };
       }
       const hasInvalidChars = /[^\d\s\-\(\)\+]/.test(phoneStr);
@@ -1813,13 +1822,13 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
         continue;
       }
 
-      // Validate phone number (must have exactly 10 digits)
+      // Validate phone number (6-15 digits — landline-friendly)
       const phoneValidation = validatePhone(phoneStr);
       if (!phoneValidation.valid) {
         skippedInvalidPhone++;
         let errorReason = 'Invalid phone number';
         if (phoneValidation.reason === 'invalid_length') {
-          errorReason = `Invalid phone: ${phoneValidation.digits} digits (need 10)`;
+          errorReason = `Invalid phone: ${phoneValidation.digits} digits (need 6-15)`;
         } else if (phoneValidation.reason === 'invalid_chars') {
           errorReason = 'Invalid phone: contains special characters';
         }
@@ -1936,12 +1945,27 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
       createdCount = result.count;
     }
 
-    // If no records were created, delete the empty campaign and return error
+    // If no records were created, delete the empty campaign and return error.
+    // Build a specific reason string so the user (and Sentry / logs) can see
+    // exactly why every record was rejected — the previous "duplicates or
+    // invalid" lumped message hid actionable info like phone-length errors.
     if (createdCount === 0) {
       await prisma.campaignAssignment.deleteMany({ where: { campaignId: campaign.id } });
       await prisma.campaign.delete({ where: { id: campaign.id } });
+
+      const reasons = [];
+      if (duplicateCount > 0) reasons.push(`${duplicateCount} duplicate phone`);
+      if (skippedNoPhone > 0) reasons.push(`${skippedNoPhone} missing phone`);
+      if (skippedInvalidPhone > 0) reasons.push(`${skippedInvalidPhone} invalid phone (need 6-15 digits)`);
+      if (skippedNoName > 0) reasons.push(`${skippedNoName} missing name`);
+      if (skippedNoCompany > 0) reasons.push(`${skippedNoCompany} missing company`);
+      if (skippedNoEmail > 0) reasons.push(`${skippedNoEmail} missing email`);
+      if (skippedNoTitle > 0) reasons.push(`${skippedNoTitle} missing title`);
+
       return res.status(400).json({
-        message: `No new records added. All ${data.length} record(s) were duplicates or invalid.`,
+        message: reasons.length
+          ? `No new records added. Skipped: ${reasons.join(', ')}.`
+          : `No new records added. All ${data.length} record(s) skipped.`,
         duplicateCount,
         skippedNoPhone,
         skippedInvalidPhone,
