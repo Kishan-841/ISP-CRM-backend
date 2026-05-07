@@ -5192,11 +5192,25 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         assignedToName: lead.assignedTo?.name || null,
       }));
 
-    // Build full pipeline view per lead (all milestones for each lead)
+    // Build full pipeline view per lead (all milestones for each lead).
+    // Each milestone date is nulled out when it falls outside the selected
+    // period — the frontend Pipeline ARC page (frontend/app/dashboard/
+    // pipeline-arc/page.js) computes its per-card sums via
+    //   `if (lead.loginCompletedAt) acc.login += lead.arcAmount`
+    // so nulling out-of-range milestones makes those sums date-correct
+    // automatically, and rows whose every milestone is outside the period
+    // drop from the table.
+    const inRange = (date) =>
+      !!date && (!dateFrom || (new Date(date) >= dateFrom && new Date(date) <= dateTo));
     const pipelineLeads = allLeads
-      .filter(lead => lead.loginCompletedAt || lead.accountsVerifiedAt || lead.installationCompletedAt || lead.customerAcceptanceAt)
       .map(lead => {
         const ftb = ftbMap.get(lead.id);
+        const login   = inRange(lead.loginCompletedAt) ? lead.loginCompletedAt : null;
+        const po      = inRange(lead.accountsVerifiedAt) ? lead.accountsVerifiedAt : null;
+        const install = inRange(lead.installationCompletedAt) ? lead.installationCompletedAt : null;
+        const accept  = inRange(lead.customerAcceptanceAt) ? lead.customerAcceptanceAt : null;
+        const ftbInRange = inRange(ftb?.paymentDate);
+        if (!login && !po && !install && !accept && !ftbInRange) return null;
         return {
           id: lead.id,
           company: lead.campaignData?.company || '-',
@@ -5205,19 +5219,20 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
           arcAmount: lead.arcAmount || 0,
           otcAmount: lead.otcAmount || 0,
           hasOtc: lead.hasOtc,
-          loginCompletedAt: lead.loginCompletedAt,
-          accountsVerifiedAt: lead.accountsVerifiedAt,
-          installationCompletedAt: lead.installationCompletedAt,
-          customerAcceptanceAt: lead.customerAcceptanceAt,
+          loginCompletedAt: login,
+          accountsVerifiedAt: po,
+          installationCompletedAt: install,
+          customerAcceptanceAt: accept,
           actualPlanIsActive: lead.actualPlanIsActive || false,
-          ftbAmount: ftb?.amount || 0,
-          ftbDate: ftb?.paymentDate || null,
+          ftbAmount: ftbInRange ? (ftb?.amount || 0) : 0,
+          ftbDate: ftbInRange ? ftb?.paymentDate : null,
           // Owning BDM — used by the Pipeline ARC table to show who owns
           // each row when admin/master is viewing All BDMs.
           assignedToId: lead.assignedToId || null,
           assignedToName: lead.assignedTo?.name || null,
         };
-      });
+      })
+      .filter(Boolean);
 
     res.json({
       summary: {
