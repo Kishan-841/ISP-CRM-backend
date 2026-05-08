@@ -185,15 +185,18 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     const currentArc = customer.arcAmount ?? customer.actualPlanPrice;
     const currentBandwidth = customer.actualPlanBandwidth;
 
-    // RATE_REVISION = customer gets MORE bandwidth at the SAME or LOWER ARC.
-    // Different from UPGRADE (where ARC also goes up) and DOWNGRADE (where
-    // both bandwidth and ARC go down). Used when we're giving the customer
-    // a courtesy bump or honoring a renegotiated price.
+    // RATE_REVISION = customer gets MORE bandwidth at the SAME ARC.
+    // (Price drops are covered by DOWNGRADE; price hikes by UPGRADE.) The
+    // newArc field is still required so SAM has to confirm it knows the
+    // current ARC — if its snapshot is stale and it sends a different
+    // value, we reject rather than silently skipping the change.
     if (currentBandwidth && parsedBandwidth <= currentBandwidth) {
       return res.status(400).json({ message: 'Rate revision requires higher bandwidth than current.' });
     }
-    if (currentArc != null && parsedArc > currentArc) {
-      return res.status(400).json({ message: 'Rate revision ARC must be the same as or lower than current ARC.' });
+    if (currentArc != null && parsedArc !== currentArc) {
+      return res.status(400).json({
+        message: `Rate revision ARC must equal current ARC (${currentArc}). Use UPGRADE or DOWNGRADE to change the price.`
+      });
     }
 
     data.newArc = parsedArc;
