@@ -5068,6 +5068,11 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     // Total Funnel Value — sum of tentativePrice for leads created in period.
     const totalFunnelValue = periodLeads.reduce((sum, lead) => sum + (lead.tentativePrice || 0), 0);
 
+    // Total OTC — sum of otcAmount across the same period-scoped lead set.
+    // Surfaced as its own dashboard card so the admin/TL/BDM can see one-
+    // time-charge volume separately from ARC (which is recurring).
+    const totalOtcAmount = periodLeads.reduce((sum, lead) => sum + (lead.otcAmount || 0), 0);
+
     // Total Quotation Sent Amount — also creation-scoped to match funnel-value.
     const quotationsWithAmount = periodLeads.filter(lead => lead.arcAmount || lead.otcAmount);
     const totalQuotationAmount = quotationsWithAmount.reduce((sum, lead) => {
@@ -5192,6 +5197,29 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         assignedToName: lead.assignedTo?.name || null,
       }));
 
+    // OTC view — parallel to funnelLeads. Drives the Total OTC card's
+    // drill-down: every lead with a positive otcAmount, period-scoped via
+    // periodLeads (matches the totalOtcAmount aggregate). One-time charge
+    // is independent of the funnel/milestone pipeline, so it gets its own
+    // slice rather than being multiplexed onto pipelineLeads.
+    const otcLeads = periodLeads
+      .filter(lead => (lead.otcAmount || 0) > 0)
+      .map(lead => ({
+        id: lead.id,
+        company: lead.campaignData?.company || '-',
+        contactName: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim() || '-',
+        phone: lead.campaignData?.phone || '-',
+        email: lead.campaignData?.email || null,
+        industry: lead.campaignData?.industry || null,
+        city: lead.campaignData?.city || null,
+        otcAmount: lead.otcAmount || 0,
+        arcAmount: lead.arcAmount || 0,
+        status: lead.status,
+        createdAt: lead.createdAt,
+        assignedToId: lead.assignedToId || null,
+        assignedToName: lead.assignedTo?.name || null,
+      }));
+
     // Build full pipeline view per lead (all milestones for each lead).
     // Each milestone date is nulled out when it falls outside the selected
     // period — the frontend Pipeline ARC page (frontend/app/dashboard/
@@ -5252,7 +5280,9 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         totalLeads: allLeads.length,
         meetingsDone,
         totalFunnelValue,
+        totalOtcAmount,
         funnelLeads,
+        otcLeads,
         quotationCount,
         totalQuotationAmount,
         // Pipeline stat cards
