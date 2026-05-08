@@ -73,8 +73,8 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     return res.status(400).json({ message: 'New bandwidth and ARC are required for upgrade/downgrade.' });
   }
 
-  if (orderType === 'RATE_REVISION' && !newArc) {
-    return res.status(400).json({ message: 'New ARC is required for rate revision.' });
+  if (orderType === 'RATE_REVISION' && (!newBandwidth || newArc === undefined || newArc === null || newArc === '')) {
+    return res.status(400).json({ message: 'New bandwidth and ARC are required for rate revision.' });
   }
 
   if (orderType === 'DISCONNECTION') {
@@ -181,21 +181,23 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
 
   if (orderType === 'RATE_REVISION') {
     const parsedArc = parseFloat(newArc);
+    const parsedBandwidth = parseInt(newBandwidth);
     const currentArc = customer.arcAmount ?? customer.actualPlanPrice;
     const currentBandwidth = customer.actualPlanBandwidth;
 
-    // ARC must decrease for rate revision
-    if (currentArc && parsedArc >= currentArc) {
-      return res.status(400).json({ message: 'Rate revision requires lower ARC than current.' });
+    // RATE_REVISION = customer gets MORE bandwidth at the SAME or LOWER ARC.
+    // Different from UPGRADE (where ARC also goes up) and DOWNGRADE (where
+    // both bandwidth and ARC go down). Used when we're giving the customer
+    // a courtesy bump or honoring a renegotiated price.
+    if (currentBandwidth && parsedBandwidth <= currentBandwidth) {
+      return res.status(400).json({ message: 'Rate revision requires higher bandwidth than current.' });
     }
-
-    // Bandwidth can stay same or increase, but not decrease
-    if (newBandwidth && currentBandwidth && parseInt(newBandwidth) < currentBandwidth) {
-      return res.status(400).json({ message: 'Rate revision cannot reduce bandwidth.' });
+    if (currentArc != null && parsedArc > currentArc) {
+      return res.status(400).json({ message: 'Rate revision ARC must be the same as or lower than current ARC.' });
     }
 
     data.newArc = parsedArc;
-    data.newBandwidth = newBandwidth ? parseInt(newBandwidth) : null;
+    data.newBandwidth = parsedBandwidth;
   }
 
   if (orderType === 'DISCONNECTION') {
