@@ -5097,6 +5097,11 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     );
     const loginCount = loginLeads.length;
     const loginAmount = loginLeads.reduce((sum, lead) => sum + (lead.arcAmount || 0), 0);
+    // Stage-specific OTC: sum the otcAmount for leads that hit Login in
+    // the period. Different from totalOtcAmount (which is period-scoped
+    // by createdAt across all leads) — this is "of the leads at Login,
+    // how much OTC do they carry".
+    const loginOtcAmount = loginLeads.reduce((sum, lead) => sum + (lead.otcAmount || 0), 0);
 
     // 2. PO Received (accounts verified)
     const poLeads = allLeads.filter(lead =>
@@ -5105,6 +5110,8 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     );
     const poReceivedCount = poLeads.length;
     const poReceivedAmount = poLeads.reduce((sum, lead) => sum + (lead.arcAmount || 0), 0);
+    // Stage-specific OTC for PO Received — same idea as loginOtcAmount.
+    const poReceivedOtcAmount = poLeads.reduce((sum, lead) => sum + (lead.otcAmount || 0), 0);
 
     // 3. Installation Done
     const installDoneLeads = allLeads.filter(lead =>
@@ -5244,6 +5251,11 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
           company: lead.campaignData?.company || '-',
           contactName: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim() || '-',
           phone: lead.campaignData?.phone || '-',
+          // City surfaced for the login-otc / po-otc focused views, which
+          // display a City column. funnelLeads / otcLeads already carry
+          // it; pipelineLeads needs it here for the same column to
+          // populate.
+          city: lead.campaignData?.city || null,
           arcAmount: lead.arcAmount || 0,
           otcAmount: lead.otcAmount || 0,
           hasOtc: lead.hasOtc,
@@ -5288,9 +5300,11 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         // Pipeline stat cards
         loginCount,
         loginAmount,
+        loginOtcAmount,
         loginLeads: loginLeads.map(formatPipelineLead),
         poReceivedCount,
         poReceivedAmount,
+        poReceivedOtcAmount,
         poReceivedLeads: poLeads.map(formatPipelineLead),
         installDoneCount,
         installDoneAmount,
