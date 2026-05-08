@@ -12,7 +12,12 @@ const isBcryptHash = (value) =>
   (value.startsWith('$2a$') || value.startsWith('$2b$') || value.startsWith('$2y$'));
 
 export const login = asyncHandler(async function login(req, res) {
-  const { email, password } = req.body;
+  // `|| {}` so probes / malformed requests with no Content-Type return a
+  // clean 400 instead of crashing on destructure. express.json() leaves
+  // req.body undefined (not {}) when the request isn't JSON — usually a
+  // health-check probe, a CORS preflight that slipped through, or an
+  // upstream proxy that stripped the body.
+  const { email, password } = req.body || {};
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required.' });
@@ -67,7 +72,7 @@ export const login = asyncHandler(async function login(req, res) {
 });
 
 export const resetPassword = asyncHandler(async function resetPassword(req, res) {
-  const { email, oldPassword, newPassword } = req.body;
+  const { email, oldPassword, newPassword } = req.body || {};
 
   if (!email || !oldPassword || !newPassword) {
     return res.status(400).json({ message: 'Email, old password, and new password are required.' });
@@ -109,7 +114,7 @@ export const me = asyncHandler(async function me(req, res) {
 });
 
 export const customerLogin = asyncHandler(async function customerLogin(req, res) {
-  const { username, password } = req.body;
+  const { username, password } = req.body || {};
 
   if (!username || !password) {
     return res.status(400).json({ message: 'Username and password are required.' });
