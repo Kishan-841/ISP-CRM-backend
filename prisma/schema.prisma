@@ -2323,3 +2323,49 @@ model SamWebhookLog {
   @@index([leadId])
   @@index([createdAt])
 }
+
+// ============================================================
+// Unified audit log — captures every meaningful CREATE / UPDATE / DELETE
+// on the lead-pipeline entities. Replaces ad-hoc tables like
+// LeadDeletionAudit (which only fired from the "Delete Lead Entirely"
+// admin tool) and surfaces a single timeline the admin UI can query.
+//
+// Shape:
+//   - changes  → for UPDATE, { field: { from, to } } — only changed fields
+//   - snapshot → for CREATE  (the new row) and DELETE (the wiped row)
+//   - context  → free-form JSON for "why" / "where" (e.g. cascade source,
+//                 controller name, request id, reason)
+// ============================================================
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+enum AuditEntityType {
+  LEAD
+  CAMPAIGN
+  CAMPAIGN_DATA
+}
+
+model AuditLog {
+  id          String          @id @default(uuid())
+  entityType  AuditEntityType
+  entityId    String
+  action      AuditAction
+  changes     Json?           // { fieldName: { from, to } } for UPDATE
+  snapshot    Json?           // full row for CREATE / DELETE
+  context     Json?           // { reason, cascadedFrom, endpoint, ... }
+  userId      String?
+  userRole    String?
+  userName    String?
+  userEmail   String?
+  createdAt   DateTime        @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@index([entityType, createdAt])
+}

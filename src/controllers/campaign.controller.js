@@ -1,6 +1,7 @@
 import prisma from '../config/db.js';
 import { notifyDataAssigned } from '../services/notification.service.js';
 import { isAdminOrTestUser, hasRole, hasAnyRole } from '../utils/roleHelper.js';
+import { logAudit, logDelete, logCampaignDataUpdate } from '../services/auditLog.service.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
 
@@ -317,6 +318,15 @@ export const deleteCampaign = asyncHandler(async function deleteCampaign(req, re
       }
     }
 
+    // Snapshot the cascade tree BEFORE deletion so the audit log
+    // captures every wiped lead + campaignData by id and content.
+    const cascadingData = dataIds.length
+      ? await prisma.campaignData.findMany({
+          where: { campaignId: id },
+          include: { lead: true },
+        })
+      : [];
+
     // Delete in order: call logs → leads → campaign data → assignments → campaign
     await prisma.$transaction(async (tx) => {
       // Delete call logs for campaign data
@@ -342,6 +352,38 @@ export const deleteCampaign = asyncHandler(async function deleteCampaign(req, re
       // Delete campaign
       await tx.campaign.delete({ where: { id } });
     });
+
+    const cascadeContext = {
+      endpoint: 'deleteCampaign',
+      cascadedFromCampaign: id,
+      cascadedFromCampaignName: existing?.name || null,
+    };
+    await logDelete({
+      entityType: 'CAMPAIGN',
+      entityId: id,
+      snapshot: existing,
+      user: req.user,
+      context: { endpoint: 'deleteCampaign', cascadedDataCount: cascadingData.length },
+    });
+    for (const cd of cascadingData) {
+      if (cd.lead) {
+        await logDelete({
+          entityType: 'LEAD',
+          entityId: cd.lead.id,
+          snapshot: cd.lead,
+          user: req.user,
+          context: cascadeContext,
+        });
+      }
+      const { lead: _lead, ...cdRow } = cd;
+      await logDelete({
+        entityType: 'CAMPAIGN_DATA',
+        entityId: cd.id,
+        snapshot: cdRow,
+        user: req.user,
+        context: cascadeContext,
+      });
+    }
 
     res.json({ message: 'Campaign deleted successfully.' });
 });
@@ -1620,6 +1662,11 @@ export const editCampaignData = asyncHandler(async function editCampaignData(req
       return res.status(404).json({ message: 'Data not found.' });
     }
 
+    // Snapshot the pre-edit row so we can compute the field diff after
+    // the update lands. Strip the `campaign` include — we only audit
+    // the CampaignData's own columns.
+    const { campaign: _campaign, ...beforeSnapshot } = campaignData;
+
     // Permission: campaign creator, assigned ISR, or admin can edit
     const isAssignedISR = campaignData.assignedToId === userId;
     if (!isAdmin && campaignData.campaign.createdById !== userId && !isAssignedISR) {
@@ -1653,6 +1700,18 @@ export const editCampaignData = asyncHandler(async function editCampaignData(req
       include: {
         lastEditedBy: { select: { id: true, name: true, role: true } }
       }
+    });
+
+    // Diff the before/after and log only changed fields. lastEditedBy
+    // is excluded by default (it's noise; the audit row already
+    // carries userId + userName).
+    const { lastEditedBy: _lastEditedBy, ...afterSnapshot } = updatedData;
+    await logCampaignDataUpdate({
+      campaignDataId: dataId,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      user: req.user,
+      context: { endpoint: 'editCampaignData' },
     });
 
     res.json({ data: updatedData, message: 'Data updated successfully.' });
@@ -2393,6 +2452,18 @@ export const deleteSelfCampaign = asyncHandler(async function deleteSelfCampaign
       }
     }
 
+    // Snapshot everything we're about to wipe BEFORE we touch it. The
+    // cascade-delete on Campaign → CampaignData → Lead loses the lead
+    // rows silently otherwise; this is exactly the gap that lost the
+    // Beck & Pollitzer + ZEAL leads on 22 Apr 2026. We write one audit
+    // row per deleted entity (campaign + every cascaded lead + every
+    // campaignData) so the admin can reconstruct what vanished.
+    const fullCampaign = await prisma.campaign.findUnique({ where: { id } });
+    const cascadingData = await prisma.campaignData.findMany({
+      where: { campaignId: id },
+      include: { lead: true },
+    });
+
     // Delete in order: leads → call logs → campaign data → assignments → campaign
     await prisma.$transaction(async (tx) => {
       // Delete leads that reference this campaign's data
@@ -2411,6 +2482,41 @@ export const deleteSelfCampaign = asyncHandler(async function deleteSelfCampaign
       await tx.campaignAssignment.deleteMany({ where: { campaignId: id } });
       await tx.campaign.delete({ where: { id } });
     });
+
+    // Log the campaign + every cascaded child. context links each child
+    // back to the parent campaign so the admin UI can group them.
+    const cascadeContext = {
+      endpoint: 'deleteSelfCampaign',
+      cascadedFromCampaign: id,
+      cascadedFromCampaignName: fullCampaign?.name || null,
+    };
+    await logDelete({
+      entityType: 'CAMPAIGN',
+      entityId: id,
+      snapshot: fullCampaign,
+      user: req.user,
+      context: { endpoint: 'deleteSelfCampaign', cascadedDataCount: cascadingData.length },
+    });
+    for (const cd of cascadingData) {
+      if (cd.lead) {
+        await logDelete({
+          entityType: 'LEAD',
+          entityId: cd.lead.id,
+          snapshot: cd.lead,
+          user: req.user,
+          context: cascadeContext,
+        });
+      }
+      // Strip the included lead before snapshotting CampaignData itself
+      const { lead: _lead, ...cdRow } = cd;
+      await logDelete({
+        entityType: 'CAMPAIGN_DATA',
+        entityId: cd.id,
+        snapshot: cdRow,
+        user: req.user,
+        context: cascadeContext,
+      });
+    }
 
     res.json({ message: 'Campaign deleted successfully.' });
 });
@@ -2453,8 +2559,38 @@ export const deleteCampaignData = asyncHandler(async function deleteCampaignData
       }
     }
 
+    // Also wipes any Lead that references this campaignData (Lead.campaignDataId
+    // FK has onDelete: Cascade). Snapshot both before the delete fires.
+    const cascadedLead = await prisma.lead.findUnique({
+      where: { campaignDataId: dataId },
+    });
+
     // Delete the campaign data
     await prisma.campaignData.delete({ where: { id: dataId } });
+
+    const ctx = {
+      endpoint: 'deleteCampaignData',
+      cascadedFromCampaign: campaignData.campaign?.id || null,
+      cascadedFromCampaignName: campaignData.campaign?.name || null,
+    };
+    if (cascadedLead) {
+      await logDelete({
+        entityType: 'LEAD',
+        entityId: cascadedLead.id,
+        snapshot: cascadedLead,
+        user: req.user,
+        context: ctx,
+      });
+    }
+    // Snapshot only the CampaignData row itself, not the included campaign
+    const { campaign: _campaign, ...cdRow } = campaignData;
+    await logDelete({
+      entityType: 'CAMPAIGN_DATA',
+      entityId: dataId,
+      snapshot: cdRow,
+      user: req.user,
+      context: ctx,
+    });
 
     res.json({ message: 'Data deleted successfully.' });
 });

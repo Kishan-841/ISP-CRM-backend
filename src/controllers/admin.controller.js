@@ -44,3 +44,82 @@ export const listSamWebhooks = async (req, res) => {
   });
   res.json({ items: rows });
 };
+
+// Audit log viewer for admin / master / sales-director. Paginated and
+// filterable on entity type / action / user / date range / entity id.
+// Search hits userName / userEmail substrings — enough for "show me
+// every change Fahim made" without indexing free text.
+export const listAuditLog = async (req, res) => {
+  const {
+    entityType,
+    entityId,
+    action,
+    userId,
+    fromDate,
+    toDate,
+    search,
+    page: pageRaw = '1',
+    limit: limitRaw = '50',
+  } = req.query;
+
+  const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(limitRaw, 10) || 50));
+  const skip = (page - 1) * limit;
+
+  const where = {};
+  if (entityType) where.entityType = entityType;
+  if (entityId) where.entityId = entityId;
+  if (action) where.action = action;
+  if (userId) where.userId = userId;
+  if (fromDate || toDate) {
+    where.createdAt = {};
+    if (fromDate) where.createdAt.gte = new Date(fromDate);
+    if (toDate) {
+      const end = new Date(toDate);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt.lte = end;
+    }
+  }
+  if (search && search.trim()) {
+    const term = search.trim();
+    where.OR = [
+      { userName: { contains: term, mode: 'insensitive' } },
+      { userEmail: { contains: term, mode: 'insensitive' } },
+      { entityId: { contains: term, mode: 'insensitive' } },
+    ];
+  }
+
+  const [items, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.auditLog.count({ where }),
+  ]);
+
+  res.json({
+    items,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+};
+
+// List of distinct user names that appear in the audit log, sorted —
+// powers the "Who" filter dropdown without loading a separate users
+// API. Cheap because of the userId index.
+export const listAuditLogActors = async (req, res) => {
+  const rows = await prisma.auditLog.findMany({
+    where: { userId: { not: null } },
+    distinct: ['userId'],
+    select: { userId: true, userName: true, userEmail: true, userRole: true },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  res.json({ items: rows.filter(r => r.userId) });
+};

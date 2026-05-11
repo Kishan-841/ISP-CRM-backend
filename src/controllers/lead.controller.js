@@ -13,6 +13,7 @@ import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, pagi
 import { deriveCurrentStage, bucketFromLead, BUCKETS, VISIBLE_BUCKETS } from '../utils/leadStageDeriver.js';
 import { logStatusChange } from '../services/statusChangeLog.service.js';
 import { enqueueActivationWebhook, attemptDeliveryInBackground } from '../services/samWebhook.service.js';
+import { logAudit, logDelete, logLeadUpdate } from '../services/auditLog.service.js';
 
 // ─── Opportunity Pipeline (BDM /dashboard/quotation-mgmt) stage filters ───
 //
@@ -1104,6 +1105,14 @@ export const deleteLead = asyncHandler(async function deleteLead(req, res) {
 
     await prisma.lead.delete({ where: { id } });
 
+    await logDelete({
+      entityType: 'LEAD',
+      entityId: id,
+      snapshot: existing,
+      user: req.user,
+      context: { endpoint: 'deleteLead' },
+    });
+
     res.json({ message: 'Lead deleted successfully.' });
 });
 
@@ -2158,6 +2167,19 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
           select: { id: true, name: true, email: true }
         }
       }
+    });
+
+    // Audit the field diff. Strip relations from both sides so the diff
+    // is purely scalar columns — relation objects would dominate the JSON
+    // and aren't meaningful for a "what changed?" view.
+    const { campaignData: _cd1, products: _p1, ...beforeScalars } = lead;
+    const { campaignData: _cd2, products: _p2, feasibilityAssignedTo: _fa, ...afterScalars } = updated;
+    await logLeadUpdate({
+      leadId: id,
+      before: beforeScalars,
+      after: afterScalars,
+      user: req.user,
+      context: { endpoint: 'bdmDisposition', disposition },
     });
 
     // Journey audit — capture DROPPED and cold-lead parking as explicit events.
@@ -9435,6 +9457,17 @@ export const customerAcceptance = asyncHandler(async function customerAcceptance
       }
     });
 
+    {
+      const { campaignData: _cd, deliveryAssignedTo: _d, customerAcceptanceBy: _ca, speedTestUploadedBy: _st, ...afterScalars } = updated;
+      await logLeadUpdate({
+        leadId: id,
+        before: lead,
+        after: afterScalars,
+        user: req.user,
+        context: { endpoint: 'customerAcceptance', status },
+      });
+    }
+
     // Audit: rejection path captured in the journey as its own row
     // (acceptance is already rendered from customerAcceptanceAt on the lead).
     if (status === 'REJECTED') {
@@ -10040,6 +10073,19 @@ export const createActualPlan = asyncHandler(async function createActualPlan(req
     // the retry cron picks it up.
     if (webhookLogId) {
       attemptDeliveryInBackground(webhookLogId);
+    }
+
+    // Audit plan activation — high-value event, captures every plan
+    // field change. Strip relations before diffing.
+    {
+      const { campaignData: _cd, actualPlanCreatedBy: _apc, ...afterScalars } = updated;
+      await logLeadUpdate({
+        leadId: id,
+        before: lead,
+        after: afterScalars,
+        user: req.user,
+        context: { endpoint: 'createActualPlan', isFirstActivation },
+      });
     }
 
     // Trigger immediate invoice generation for this lead if billing period has started
