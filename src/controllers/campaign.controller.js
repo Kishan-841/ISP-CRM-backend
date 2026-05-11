@@ -2358,6 +2358,18 @@ export const deleteSelfCampaign = asyncHandler(async function deleteSelfCampaign
       return res.status(403).json({ message: 'You can only delete self-created campaigns.' });
     }
 
+    // Hardened after the 22 Apr 2026 incident: BDM-tier roles can no longer
+    // delete their own self-campaigns. The cascade chain (Campaign →
+    // CampaignData → Lead, all `onDelete: Cascade`) silently wiped two
+    // in-progress leads (Beck & Pollitzer Pvt. Ltd, ZEAL Education Society)
+    // with no audit row. Only admin-tier roles can do this now; BDMs who
+    // need a campaign removed must ask a SUPER_ADMIN.
+    if (!isAdmin && hasAnyRole(req.user, ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'])) {
+      return res.status(403).json({
+        message: 'Campaign deletion is restricted to admins. Ask a SUPER_ADMIN to remove this campaign.'
+      });
+    }
+
     // Admin can delete any SELF campaign, others can only delete their own
     if (!isAdmin && campaign.assignments.length === 0) {
       return res.status(403).json({ message: 'You are not authorized to delete this campaign.' });
