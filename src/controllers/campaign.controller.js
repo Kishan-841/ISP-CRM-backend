@@ -4193,9 +4193,18 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
       }
     }
 
-    // Search by campaign name
+    // Search matches campaign name, the user who created the campaign,
+    // and the users it's currently assigned to. Lets an ISR find a row
+    // by typing "Riya" or "BDM Pravin" without remembering the campaign
+    // name itself.
     if (search) {
-      conditions.push({ name: { contains: search, mode: 'insensitive' } });
+      conditions.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { createdBy: { name: { contains: search, mode: 'insensitive' } } },
+          { assignments: { some: { user: { name: { contains: search, mode: 'insensitive' } } } } },
+        ],
+      });
     }
 
     const where = conditions.length > 0 ? { AND: conditions } : {};
