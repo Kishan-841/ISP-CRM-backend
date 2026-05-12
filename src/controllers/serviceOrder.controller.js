@@ -16,10 +16,11 @@ export const getDisconnectionReasons = asyncHandler(async function getDisconnect
     select: {
       id: true,
       name: true,
+      isActive: true,
       subCategories: {
         where: { isActive: true },
         orderBy: { sortOrder: 'asc' },
-        select: { id: true, name: true }
+        select: { id: true, name: true, isActive: true }
       }
     }
   });
@@ -81,9 +82,16 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     if (!disconnectionCategoryId || !disconnectionSubCategoryId) {
       return res.status(400).json({ message: 'Disconnection category and sub-category are required.' });
     }
-    // Validate category and subcategory exist
+    // Validate: sub-category exists & active, parent category active, parent
+    // matches what the caller supplied. SAM's bridge sends slug IDs from
+    // docs/INTEGRATION_CRM.md verbatim — this gate is what 400s a typo.
     const subCategory = await prisma.disconnectionSubCategory.findFirst({
-      where: { id: disconnectionSubCategoryId, categoryId: disconnectionCategoryId, isActive: true }
+      where: {
+        id: disconnectionSubCategoryId,
+        categoryId: disconnectionCategoryId,
+        isActive: true,
+        category: { isActive: true },
+      },
     });
     if (!subCategory) {
       return res.status(400).json({ message: 'Invalid disconnection category or sub-category.' });
@@ -734,17 +742,31 @@ export const getNocServiceOrderQueue = asyncHandler(async function getNocService
   const skip = (page - 1) * limit;
   const search = req.query.search || '';
 
-  const where = {
-    status: 'PENDING_NOC',
-    orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] }
+  // NOC owns two distinct piles:
+  //  - Commercial changes (UPGRADE/DOWNGRADE/RATE_REVISION) at PENDING_NOC
+  //    after docs review — NOC uploads the speed test.
+  //  - Disconnections at APPROVED — admin approval lands here directly
+  //    (no docs/accounts/SAM-activation hop). NOC just confirms.
+  const baseWhere = {
+    OR: [
+      { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } },
+      { status: 'APPROVED', orderType: 'DISCONNECTION' },
+    ],
   };
 
-  if (search) {
-    where.OR = [
-      { orderNumber: { contains: search, mode: 'insensitive' } },
-      { customer: { campaignData: { company: { contains: search, mode: 'insensitive' } } } }
-    ];
-  }
+  const where = search
+    ? {
+        AND: [
+          baseWhere,
+          {
+            OR: [
+              { orderNumber: { contains: search, mode: 'insensitive' } },
+              { customer: { campaignData: { company: { contains: search, mode: 'insensitive' } } } },
+            ],
+          },
+        ],
+      }
+    : baseWhere;
 
   const [orders, total] = await Promise.all([
     prisma.serviceOrder.findMany({
@@ -769,6 +791,10 @@ export const getNocServiceOrderQueue = asyncHandler(async function getNocService
         notes: true,
         docsReviewedAt: true,
         createdAt: true,
+        disconnectionDate: true,
+        disconnectionReason: true,
+        disconnectionCategory: { select: { id: true, name: true } },
+        disconnectionSubCategory: { select: { id: true, name: true } },
         customer: {
           select: {
             id: true,
@@ -811,6 +837,51 @@ export const nocProcessServiceOrder = asyncHandler(async function nocProcessServ
   });
 
   if (!order) return res.status(404).json({ message: 'Service order not found.' });
+
+  // DISCONNECTION: NOC just confirms — no speed test, no SAM activation hop,
+  // jumps straight to COMPLETED and flips the customer's plan to inactive.
+  // (Commercial changes still flow through PENDING_SAM_ACTIVATION → PENDING_ACCOUNTS.)
+  if (order.orderType === 'DISCONNECTION') {
+    if (order.status !== 'APPROVED') {
+      return res.status(400).json({ message: 'Disconnection order is not in APPROVED state.' });
+    }
+
+    const [updated] = await prisma.$transaction([
+      prisma.serviceOrder.update({
+        where: { id },
+        data: {
+          status: 'COMPLETED',
+          nocProcessedById: req.user.id,
+          nocProcessedAt: new Date(),
+          processedById: req.user.id,
+          processedAt: new Date(),
+          nocNotes: nocNotes || null,
+          updatedAt: new Date(),
+        },
+      }),
+      prisma.lead.update({
+        where: { id: order.customerId },
+        data: { actualPlanIsActive: false },
+      }),
+    ]);
+
+    await createNotification(
+      order.createdBy.id,
+      'SERVICE_ORDER',
+      'Disconnection Completed',
+      `Order #${order.orderNumber} disconnected — customer plan deactivated.`,
+      { serviceOrderId: id }
+    );
+    emitSidebarRefresh(order.createdBy.id);
+    emitSidebarRefreshByRole('NOC');
+    emitSidebarRefreshByRole('SAM_HEAD');
+    emitSidebarRefreshByRole('SAM_EXECUTIVE');
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+
+    return res.json({ message: 'Disconnection completed. Customer plan deactivated.', data: updated });
+  }
+
+  // Commercial change branch
   if (order.status !== 'PENDING_NOC') {
     return res.status(400).json({ message: 'Order is not pending NOC processing.' });
   }

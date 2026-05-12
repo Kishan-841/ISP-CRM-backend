@@ -1096,9 +1096,15 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       counts.nocPending = nocPending;
     }
 
-    // Add service order NOC queue count
+    // Add service order NOC queue count. Mirrors getNocServiceOrderQueue —
+    // commercial changes waiting on speed test + disconnections waiting on NOC confirm.
     const nocOrdersPending = await prisma.serviceOrder.count({
-      where: { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+      where: {
+        OR: [
+          { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } },
+          { status: 'APPROVED', orderType: 'DISCONNECTION' },
+        ],
+      },
     });
     counts.nocOrdersPending = nocOrdersPending;
 
@@ -1289,7 +1295,12 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
         where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
       }),
       prisma.serviceOrder.count({
-        where: { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+        where: {
+          OR: [
+            { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } },
+            { status: 'APPROVED', orderType: 'DISCONNECTION' },
+          ],
+        },
       }),
       prisma.serviceOrder.count({
         where: { status: 'PENDING_ACCOUNTS', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
