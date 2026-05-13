@@ -65,9 +65,19 @@ export const hasAnyRole = (user, roles) => {
   return roles.includes(user?.role);
 };
 
+/**
+ * Audit log access — single source of truth. Widen later by editing this one
+ * function (e.g. add 'ADMIN' or an 'AUDITOR' role). All audit routes, sidebar
+ * entries, and page guards reference this.
+ */
+export function canViewAuditLog(user) {
+  return user?.role === 'SUPER_ADMIN' || user?.isMaster === true;
+}
+
 export default {
   isAdmin,
   isAdminOrTestUser,
   hasRole,
-  hasAnyRole
+  hasAnyRole,
+  canViewAuditLog
 };
