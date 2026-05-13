@@ -126,6 +126,11 @@ const generalLimiter = rateLimit({
   },
 });
 
+// Trust the first proxy (nginx in production Docker) so req.ip resolves
+// to the real client IP via X-Forwarded-For rather than the container IP.
+// Required for the audit log to capture meaningful IPs.
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(helmet({
   // Allow cross-origin iframes to embed our responses (needed for the file
