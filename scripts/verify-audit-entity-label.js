@@ -10,6 +10,9 @@ const cases = [
   ['CampaignData',           { id: 'cd2', phone: '8888' }, '8888'],
   ['ComplaintAttachment',    { id: 'a1', fileName: 'screenshot.png' }, 'screenshot.png'],
   ['ComplaintAttachment',    { id: 'a2' }, 'a2'],
+  ['Campaign',  { id: 'c1', code: 'CMP-1', name: 'Spring Outbound' }, 'CMP-1 · Spring Outbound'],
+  ['Campaign',  { id: 'c2', name: 'No-code campaign' }, 'No-code campaign'],
+  ['Campaign',  { id: 'c3' }, 'c3'],
   ['UnknownModel',   { id: 'x1' }, 'x1'],
 ];
 
@@ -22,7 +25,7 @@ for (const [model, record, want] of cases) {
 }
 
 console.log('AUDITED_MODELS size:', AUDITED_MODELS.size, AUDITED_MODELS.has('Lead') ? '(Lead present)' : '(missing Lead!)');
-const sizeOk = AUDITED_MODELS.size === 17;
-console.log(sizeOk ? '✅ model set has 17 entries' : '❌ wrong size');
+const sizeOk = AUDITED_MODELS.size === 18;
+console.log(sizeOk ? '✅ model set has 18 entries' : '❌ wrong size');
 
 process.exit(ok && sizeOk ? 0 : 1);

@@ -1,4 +1,4 @@
-// The 17 models the Prisma extension audits. Adding a model is a one-line
+// The 18 models the Prisma extension audits. Adding a model is a one-line
 // change. Removing one is reversible — historical rows stay, only future
 // writes stop being audited.
 export const AUDITED_MODELS = new Set([
@@ -12,6 +12,7 @@ export const AUDITED_MODELS = new Set([
   // captured via the parent's update audit row.
   'CampaignData',
   'ComplaintAttachment',
+  'Campaign',
 ]);
 
 // Snapshot the human-readable label at write time so the audit row stays
@@ -46,6 +47,10 @@ export function entityLabelFor(model, record) {
     case 'ComplaintAttachment': {
       // ComplaintAttachment uses `fileName` (not `originalName`).
       return record.fileName || record.id;
+    }
+    case 'Campaign': {
+      if (record.code && record.name) return `${record.code} · ${record.name}`;
+      return record.code || record.name || record.id;
     }
     default:                     return record.id || null;
   }
