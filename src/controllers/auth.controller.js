@@ -129,6 +129,20 @@ export const me = asyncHandler(async function me(req, res) {
   res.json({ user: req.user });
 });
 
+export const logout = asyncHandler(async function logout(req, res) {
+  // The JWT model is stateless — the client just drops the token.
+  // This endpoint exists so we can record the LOGOUT event for the audit log.
+  // It runs AFTER the auth middleware, so the ALS context is already
+  // populated — no need to wrap in auditContext.run.
+  await logAuthEvent({
+    action: 'LOGOUT',
+    userId: req.user.id,
+    userName: req.user.name,
+    userRole: req.user.role,
+  });
+  res.json({ message: 'Logged out.' });
+});
+
 export const customerLogin = asyncHandler(async function customerLogin(req, res) {
   const { username, password } = req.body || {};
 
