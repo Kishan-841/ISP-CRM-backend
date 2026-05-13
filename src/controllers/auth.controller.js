@@ -30,6 +30,24 @@ export const login = asyncHandler(async function login(req, res) {
   });
 
   if (!user) {
+    await auditContext.run({
+      actorId:    null,
+      actorName:  null,
+      actorRole:  null,
+      actorType:  'SYSTEM',
+      ipAddress:  req.ip || null,
+      userAgent:  req.get('user-agent') ?? null,
+      requestId:  req.get('x-request-id') ?? null,
+      routePath:  '/api/auth/login',
+      httpMethod: 'POST',
+    }, async () => {
+      await logAuthEvent({
+        action:         'LOGIN',
+        status:         'FAILURE',
+        errorMessage:   'Invalid credentials',
+        attemptedEmail: email,
+      });
+    });
     return res.status(401).json({ message: 'Invalid email or password.' });
   }
 
@@ -52,6 +70,24 @@ export const login = asyncHandler(async function login(req, res) {
   }
 
   if (!isMatch) {
+    await auditContext.run({
+      actorId:    null,
+      actorName:  null,
+      actorRole:  null,
+      actorType:  'SYSTEM',
+      ipAddress:  req.ip || null,
+      userAgent:  req.get('user-agent') ?? null,
+      requestId:  req.get('x-request-id') ?? null,
+      routePath:  '/api/auth/login',
+      httpMethod: 'POST',
+    }, async () => {
+      await logAuthEvent({
+        action:         'LOGIN',
+        status:         'FAILURE',
+        errorMessage:   'Invalid credentials',
+        attemptedEmail: email,
+      });
+    });
     return res.status(401).json({ message: 'Invalid email or password.' });
   }
 
@@ -172,6 +208,24 @@ export const customerLogin = asyncHandler(async function customerLogin(req, res)
   });
 
   if (!lead) {
+    await auditContext.run({
+      actorId:    null,
+      actorName:  null,
+      actorRole:  null,
+      actorType:  'SYSTEM',
+      ipAddress:  req.ip || null,
+      userAgent:  req.get('user-agent') ?? null,
+      requestId:  req.get('x-request-id') ?? null,
+      routePath:  '/api/auth/customer-login',
+      httpMethod: 'POST',
+    }, async () => {
+      await logAuthEvent({
+        action:         'LOGIN',
+        status:         'FAILURE',
+        errorMessage:   'Invalid credentials',
+        attemptedEmail: username,
+      });
+    });
     return res.status(401).json({ message: 'Invalid username or password.' });
   }
 
@@ -192,6 +246,24 @@ export const customerLogin = asyncHandler(async function customerLogin(req, res)
   }
 
   if (!passwordValid) {
+    await auditContext.run({
+      actorId:    null,
+      actorName:  null,
+      actorRole:  null,
+      actorType:  'SYSTEM',
+      ipAddress:  req.ip || null,
+      userAgent:  req.get('user-agent') ?? null,
+      requestId:  req.get('x-request-id') ?? null,
+      routePath:  '/api/auth/customer-login',
+      httpMethod: 'POST',
+    }, async () => {
+      await logAuthEvent({
+        action:         'LOGIN',
+        status:         'FAILURE',
+        errorMessage:   'Invalid credentials',
+        attemptedEmail: username,
+      });
+    });
     return res.status(401).json({ message: 'Invalid username or password.' });
   }
 
