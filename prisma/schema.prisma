@@ -1908,6 +1908,8 @@ model AuditEvent {
   status          AuditEventStatus    @default(SUCCESS)
   errorMessage    String?
 
+  snapshot        Json?
+
   schemaVersion   Int                 @default(1)
   createdAt       DateTime            @default(now())
 

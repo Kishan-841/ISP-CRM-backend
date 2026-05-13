@@ -59,6 +59,13 @@ export async function writeAuditEvent(payload) {
     description:   payload.description || null,
     reason:        payload.reason      || null,
 
+    // NEW: full record state at the moment of action.
+    // CREATE: snapshot = after.
+    // DELETE: snapshot = before.
+    // UPDATE: snapshot stays null — the diff already says what changed, and
+    //   the current state is in the live record.
+    snapshot:      snapshotFor(action, payload.before, payload.after),
+
     ipAddress:     ctx.ipAddress  ?? null,
     userAgent:     ctx.userAgent  ?? null,
     requestId:     ctx.requestId  ?? null,
@@ -76,4 +83,31 @@ export async function writeAuditEvent(payload) {
     console.error('[AUDIT] intended payload:', JSON.stringify(row));
     return null;
   }
+}
+
+function snapshotFor(action, before, after) {
+  if (action === 'CREATE') return scrub(after);
+  if (action === 'DELETE') return scrub(before);
+  return null;
+}
+
+// Drop fields that aren't useful in a snapshot and may be huge / sensitive.
+// We keep most fields — the goal is forensic completeness. If specific
+// fields become problematic (e.g., a base64 blob), add them here.
+const SNAPSHOT_DROP_FIELDS = new Set([
+  'password', 'passwordHash',
+]);
+
+function scrub(record) {
+  if (!record || typeof record !== 'object') return null;
+  const out = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (SNAPSHOT_DROP_FIELDS.has(k)) continue;
+    // Skip relation objects — they'd be expanded by Prisma's include, but we
+    // don't want them in the snapshot (they belong to other audit rows).
+    // Heuristic: skip if value is an object that has its own `id`.
+    if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date) && 'id' in v) continue;
+    out[k] = v instanceof Date ? v.toISOString() : v;
+  }
+  return out;
 }
