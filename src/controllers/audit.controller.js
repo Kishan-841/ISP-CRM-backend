@@ -101,3 +101,70 @@ function toListShape(r) {
     createdAt: r.createdAt,
   };
 }
+
+// GET /api/audit/events/:id
+export const getEvent = asyncHandler(async function getEvent(req, res) {
+  if (!canViewAuditLog(req.user)) return res.status(403).json({ message: 'Access denied.' });
+
+  const row = await prisma.auditEvent.findUnique({ where: { id: req.params.id } });
+  if (!row) return res.status(404).json({ message: 'Event not found.' });
+  res.json({ data: row });
+});
+
+// GET /api/audit/events/filters — dropdown data for the audit log UI.
+// 60s in-memory cache to absorb the natural bursty load (every page open hits this).
+let FILTERS_CACHE = null;
+let FILTERS_CACHED_AT = 0;
+const FILTER_TTL_MS = 60_000;
+
+export const getFilters = asyncHandler(async function getFilters(req, res) {
+  if (!canViewAuditLog(req.user)) return res.status(403).json({ message: 'Access denied.' });
+
+  if (FILTERS_CACHE && Date.now() - FILTERS_CACHED_AT < FILTER_TTL_MS) {
+    return res.json({ data: FILTERS_CACHE });
+  }
+
+  const [actors, entityTypes, eventTypes] = await Promise.all([
+    prisma.auditEvent.findMany({
+      where: { actorId: { not: null } },
+      distinct: ['actorId'],
+      select: { actorId: true, actorName: true, actorRole: true },
+      take: 500,
+    }),
+    prisma.auditEvent.findMany({
+      where: { entityType: { not: null } },
+      distinct: ['entityType'],
+      select: { entityType: true },
+      take: 100,
+    }),
+    prisma.auditEvent.findMany({
+      distinct: ['eventType'],
+      select: { eventType: true },
+      take: 200,
+    }),
+  ]);
+
+  FILTERS_CACHE = {
+    actors:      actors.map(a => ({ id: a.actorId, name: a.actorName, role: a.actorRole })),
+    entityTypes: entityTypes.map(e => e.entityType),
+    eventTypes:  eventTypes.map(e => e.eventType),
+  };
+  FILTERS_CACHED_AT = Date.now();
+  res.json({ data: FILTERS_CACHE });
+});
+
+// GET /api/audit/entity/:type/:id — timeline for one entity, desc order, capped.
+export const getEntityTimeline = asyncHandler(async function getEntityTimeline(req, res) {
+  if (!canViewAuditLog(req.user)) return res.status(403).json({ message: 'Access denied.' });
+
+  const { type, id } = req.params;
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+
+  const items = await prisma.auditEvent.findMany({
+    where: { entityType: type, entityId: id },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+
+  res.json({ data: items });
+});
