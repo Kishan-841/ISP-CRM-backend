@@ -1861,11 +1861,30 @@ model StatusChangeLog {
   @@map("status_change_logs")
 }
 
+enum AuditEventAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+}
+
+enum AuditEventActorType {
+  STAFF
+  CUSTOMER
+  SYSTEM
+}
+
+enum AuditEventStatus {
+  SUCCESS
+  FAILURE
+}
+
 model AuditEvent {
-  id              String           @id @default(uuid())
+  id              String              @id @default(uuid())
 
   eventType       String
-  action          AuditAction
+  action          AuditEventAction
 
   entityType      String?
   entityId        String?
@@ -1874,7 +1893,7 @@ model AuditEvent {
   actorId         String?
   actorName       String?
   actorRole       String?
-  actorType       AuditActorType
+  actorType       AuditEventActorType
 
   changes         Json?
   description     String?
@@ -1886,13 +1905,13 @@ model AuditEvent {
   routePath       String?
   httpMethod      String?
 
-  status          AuditStatus      @default(SUCCESS)
+  status          AuditEventStatus    @default(SUCCESS)
   errorMessage    String?
 
-  schemaVersion   Int              @default(1)
-  createdAt       DateTime         @default(now())
+  schemaVersion   Int                 @default(1)
+  createdAt       DateTime            @default(now())
 
-  actor           User?            @relation("AuditEvents", fields: [actorId], references: [id], onDelete: SetNull)
+  actor           User?               @relation("AuditEvents", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([createdAt(sort: Desc)])
   @@index([actorId, createdAt])
@@ -2384,25 +2403,12 @@ enum AuditAction {
   CREATE
   UPDATE
   DELETE
-  LOGIN
-  LOGOUT
 }
 
 enum AuditEntityType {
   LEAD
   CAMPAIGN
   CAMPAIGN_DATA
-}
-
-enum AuditActorType {
-  STAFF
-  CUSTOMER
-  SYSTEM
-}
-
-enum AuditStatus {
-  SUCCESS
-  FAILURE
 }
 
 model AuditLog {
