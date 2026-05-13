@@ -19,8 +19,14 @@ export const listEvents = asyncHandler(async function listEvents(req, res) {
 
   const where = {};
 
-  // v1 default: STAFF only. Override by passing actorType explicitly.
-  where.actorType = actorType || 'STAFF';
+  // Default view: include human-driven events (staff + customer-portal). System
+  // events (cron jobs, automated maintenance) are hidden by default to keep the
+  // log focused on what people did — flip the filter to see them.
+  if (actorType) {
+    where.actorType = actorType;
+  } else {
+    where.actorType = { in: ['STAFF', 'CUSTOMER'] };
+  }
 
   if (dateFrom || dateTo) {
     where.createdAt = {};
