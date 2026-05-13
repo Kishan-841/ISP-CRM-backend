@@ -6,6 +6,10 @@ const cases = [
   ['Invoice',        { id: 'in1', invoiceNumber: 'INV/13/05/26-0042' }, 'INV/13/05/26-0042'],
   ['User',           { id: 'u1',  name: 'Bob Sales' }, 'Bob Sales'],
   ['ServiceOrder',   { id: 'so1', orderNumber: 'SO/13/05/26-0019' }, 'SO/13/05/26-0019'],
+  ['CampaignData',           { id: 'cd1', company: 'Acme Inc', name: 'John Doe', phone: '9999' }, 'Acme Inc'],
+  ['CampaignData',           { id: 'cd2', phone: '8888' }, '8888'],
+  ['ComplaintAttachment',    { id: 'a1', fileName: 'screenshot.png' }, 'screenshot.png'],
+  ['ComplaintAttachment',    { id: 'a2' }, 'a2'],
   ['UnknownModel',   { id: 'x1' }, 'x1'],
 ];
 
@@ -18,7 +22,7 @@ for (const [model, record, want] of cases) {
 }
 
 console.log('AUDITED_MODELS size:', AUDITED_MODELS.size, AUDITED_MODELS.has('Lead') ? '(Lead present)' : '(missing Lead!)');
-const sizeOk = AUDITED_MODELS.size === 15;
-console.log(sizeOk ? '✅ model set has 15 entries' : '❌ wrong size');
+const sizeOk = AUDITED_MODELS.size === 17;
+console.log(sizeOk ? '✅ model set has 17 entries' : '❌ wrong size');
 
 process.exit(ok && sizeOk ? 0 : 1);

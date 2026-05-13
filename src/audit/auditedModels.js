@@ -1,4 +1,4 @@
-// The 15 models the Prisma extension audits. Adding a model is a one-line
+// The 17 models the Prisma extension audits. Adding a model is a one-line
 // change. Removing one is reversible — historical rows stay, only future
 // writes stop being audited.
 export const AUDITED_MODELS = new Set([
@@ -6,6 +6,12 @@ export const AUDITED_MODELS = new Set([
   'LedgerEntry', 'Complaint', 'ServiceOrder', 'DeliveryRequest',
   'StorePurchaseOrder', 'VendorPurchaseOrder', 'Vendor', 'User',
   'SAMAssignment', 'CustomerEnquiry',
+  // New: bulk-import source (CampaignData) + complaint file attachments.
+  // LeadDocument and ServiceOrderAttachment don't exist as separate models —
+  // they're JSON columns on Lead / ServiceOrder so their changes are already
+  // captured via the parent's update audit row.
+  'CampaignData',
+  'ComplaintAttachment',
 ]);
 
 // Snapshot the human-readable label at write time so the audit row stays
@@ -34,6 +40,13 @@ export function entityLabelFor(model, record) {
     case 'User':                 return record.name           || record.email || record.id;
     case 'SAMAssignment':        return `SAM ${record.id}`;
     case 'CustomerEnquiry':      return record.enquiryNumber  || record.id;
+    case 'CampaignData': {
+      return record.company || record.name || record.phone || record.id;
+    }
+    case 'ComplaintAttachment': {
+      // ComplaintAttachment uses `fileName` (not `originalName`).
+      return record.fileName || record.id;
+    }
     default:                     return record.id || null;
   }
 }
