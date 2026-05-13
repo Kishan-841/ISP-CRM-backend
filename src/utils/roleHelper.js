@@ -71,7 +71,7 @@ export const hasAnyRole = (user, roles) => {
  * entries, and page guards reference this.
  */
 export function canViewAuditLog(user) {
-  return user?.role === 'SUPER_ADMIN' || user?.isMaster === true;
+  return user?.role === 'SUPER_ADMIN' || user?.role === 'MASTER';
 }
 
 export default {
