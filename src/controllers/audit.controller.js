@@ -1,0 +1,103 @@
+import prisma from '../config/db.js';
+import { asyncHandler } from '../utils/controllerHelper.js';
+import { canViewAuditLog } from '../utils/roleHelper.js';
+
+// When a date range is ≤ this many days OR a specific actor/entity is
+// filtered, we compute the exact COUNT(*). Otherwise we skip it (returning
+// null) because COUNT on a forever-retained table grows unboundedly.
+const NARROW_FILTER_THRESHOLD_DAYS = 30;
+
+// GET /api/audit/events
+export const listEvents = asyncHandler(async function listEvents(req, res) {
+  if (!canViewAuditLog(req.user)) return res.status(403).json({ message: 'Access denied.' });
+
+  const {
+    dateFrom, dateTo, actorId, actorType, entityType, entityId, eventType,
+    action, ipAddress, status, search, cursor,
+  } = req.query;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+
+  const where = {};
+
+  // v1 default: STAFF only. Override by passing actorType explicitly.
+  where.actorType = actorType || 'STAFF';
+
+  if (dateFrom || dateTo) {
+    where.createdAt = {};
+    if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+    if (dateTo)   where.createdAt.lte = new Date(dateTo);
+  }
+  if (actorId)    where.actorId    = actorId;
+  if (entityType) where.entityType = entityType;
+  if (entityId)   where.entityId   = entityId;
+  if (eventType)  where.eventType  = eventType;
+  if (action)     where.action     = action;
+  if (ipAddress)  where.ipAddress  = ipAddress;
+  if (status)     where.status     = status;
+  if (search && search.length >= 2) {
+    where.OR = [
+      { actorName:   { contains: search, mode: 'insensitive' } },
+      { entityLabel: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+  if (cursor) {
+    where.createdAt = where.createdAt || {};
+    const cursorRow = await prisma.auditEvent.findUnique({
+      where: { id: cursor }, select: { createdAt: true },
+    });
+    if (cursorRow) where.createdAt.lt = cursorRow.createdAt;
+  }
+
+  // Approximate total: compute exact only when filters narrow the result.
+  const isNarrow =
+    !!actorId || !!entityId ||
+    (dateFrom && dateTo && daysBetween(dateFrom, dateTo) <= NARROW_FILTER_THRESHOLD_DAYS);
+
+  const [items, total] = await Promise.all([
+    prisma.auditEvent.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      select: {
+        id: true, eventType: true, action: true,
+        entityType: true, entityId: true, entityLabel: true,
+        actorId: true, actorName: true, actorRole: true, actorType: true,
+        changes: true, ipAddress: true, status: true, createdAt: true,
+      },
+    }),
+    isNarrow ? prisma.auditEvent.count({ where }) : Promise.resolve(null),
+  ]);
+
+  const hasMore = items.length > limit;
+  const trimmed = hasMore ? items.slice(0, limit) : items;
+  const nextCursor = hasMore ? items[limit - 1].id : null;
+
+  res.json({
+    items: trimmed.map(toListShape),
+    nextCursor,
+    total,
+  });
+});
+
+function daysBetween(a, b) {
+  return Math.abs((new Date(b) - new Date(a)) / 86400000);
+}
+
+function toListShape(r) {
+  return {
+    id: r.id,
+    eventType: r.eventType,
+    action: r.action,
+    entityType: r.entityType,
+    entityId: r.entityId,
+    entityLabel: r.entityLabel,
+    actor: r.actorId ? {
+      id: r.actorId, name: r.actorName, role: r.actorRole, type: r.actorType,
+    } : null,
+    changeCount: Array.isArray(r.changes) ? r.changes.length : 0,
+    ipAddress: r.ipAddress,
+    status: r.status,
+    createdAt: r.createdAt,
+  };
+}

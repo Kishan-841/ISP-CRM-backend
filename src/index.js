@@ -35,6 +35,7 @@ import popLocationRoutes from './routes/popLocation.routes.js';
 import proxyRoutes from './routes/proxy.routes.js';
 import { nexusRouter, customerNexusRouter } from './routes/nexus.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import auditRoutes from './routes/audit.routes.js';
 import { auth } from './middleware/auth.js';
 import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
@@ -175,6 +176,7 @@ app.use('/api/proxy', proxyRoutes);
 app.use('/api/nexus', nexusRouter);
 app.use('/api/customer/nexus', customerNexusRouter);
 app.use('/api/admin', adminRoutes);
+app.use('/api/audit', auditRoutes);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);
