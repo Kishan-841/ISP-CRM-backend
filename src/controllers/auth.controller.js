@@ -201,6 +201,28 @@ export const customerLogin = asyncHandler(async function customerLogin(req, res)
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
 
+  // Audit log: record customer-portal LOGIN. Like staff login, this runs
+  // before any auth middleware has populated ALS scope, so we wrap the
+  // log call in auditContext.run with actorType='CUSTOMER'.
+  await auditContext.run({
+    actorId:    lead.customerUserId || null,
+    actorName:  lead.campaignData?.name || null,
+    actorRole:  null,   // customers don't have a role
+    actorType:  'CUSTOMER',
+    ipAddress:  req.ip || null,
+    userAgent:  req.get('user-agent') ?? null,
+    requestId:  req.get('x-request-id') ?? null,
+    routePath:  '/api/auth/customer-login',
+    httpMethod: 'POST',
+  }, async () => {
+    await logAuthEvent({
+      action:    'LOGIN',
+      userId:    lead.customerUserId || null,
+      userName:  lead.campaignData?.name || 'Customer',
+      userRole:  null,
+    });
+  });
+
   res.json({
     message: 'Login successful',
     token,
