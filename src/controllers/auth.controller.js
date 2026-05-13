@@ -2,6 +2,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
 import { asyncHandler } from '../utils/controllerHelper.js';
+import { auditContext } from '../audit/context.js';
+import { logAuthEvent } from '../audit/logAuthEvent.js';
 
 // Detect bcrypt format from the stored value itself rather than relying on
 // the passwordIsHashed flag — protects against flag drift (e.g. backfill
@@ -58,6 +60,20 @@ export const login = asyncHandler(async function login(req, res) {
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
+
+  // Audit log: capture WHO logged in, from WHERE. We wrap in auditContext.run
+  // because /api/auth/login runs before any auth middleware has populated
+  // the ALS scope, so writer would otherwise see SYSTEM/null actor.
+  await auditContext.run({
+    actorId: user.id, actorName: user.name, actorRole: user.role,
+    actorType: 'STAFF',
+    ipAddress: req.ip || null,
+    userAgent: req.get('user-agent') ?? null,
+    requestId: req.get('x-request-id') ?? null,
+    routePath: '/api/auth/login', httpMethod: 'POST',
+  }, async () => {
+    await logAuthEvent({ action: 'LOGIN', userId: user.id, userName: user.name, userRole: user.role });
+  });
 
   res.json({
     message: 'Login successful',
