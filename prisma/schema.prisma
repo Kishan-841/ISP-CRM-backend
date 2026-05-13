@@ -91,6 +91,7 @@ model User {
   vendorPOsRejected                  VendorPurchaseOrder[] @relation("VendorPOsRejected")
   // Status change audit trail
   statusChangeLogs                   StatusChangeLog[]     @relation("StatusChangeLogs")
+  auditEvents                        AuditEvent[]          @relation("AuditEvents")
   // Complaint relations
   complaintsCreated                  Complaint[]           @relation("ComplaintsCreatedBy")
   complaintAssignments               ComplaintAssignment[] @relation("ComplaintAssignments")
@@ -1860,6 +1861,48 @@ model StatusChangeLog {
   @@map("status_change_logs")
 }
 
+model AuditEvent {
+  id              String           @id @default(uuid())
+
+  eventType       String
+  action          AuditAction
+
+  entityType      String?
+  entityId        String?
+  entityLabel     String?
+
+  actorId         String?
+  actorName       String?
+  actorRole       String?
+  actorType       AuditActorType
+
+  changes         Json?
+  description     String?
+  reason          String?
+
+  ipAddress       String?
+  userAgent       String?
+  requestId       String?
+  routePath       String?
+  httpMethod      String?
+
+  status          AuditStatus      @default(SUCCESS)
+  errorMessage    String?
+
+  schemaVersion   Int              @default(1)
+  createdAt       DateTime         @default(now())
+
+  actor           User?            @relation("AuditEvents", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([ipAddress, createdAt])
+
+  @@map("audit_events")
+}
+
 model ComplaintCloseOption {
   id        String                    @id @default(uuid())
   type      ComplaintCloseOptionType
@@ -2341,12 +2384,25 @@ enum AuditAction {
   CREATE
   UPDATE
   DELETE
+  LOGIN
+  LOGOUT
 }
 
 enum AuditEntityType {
   LEAD
   CAMPAIGN
   CAMPAIGN_DATA
+}
+
+enum AuditActorType {
+  STAFF
+  CUSTOMER
+  SYSTEM
+}
+
+enum AuditStatus {
+  SUCCESS
+  FAILURE
 }
 
 model AuditLog {
