@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db.js';
+import { attachAuditContext } from './auditContext.js';
 
 export const auth = async (req, res, next) => {
   try {
@@ -32,7 +33,7 @@ export const auth = async (req, res, next) => {
     }
 
     req.user = user;
-    next();
+    return attachAuditContext(req, res, next);
   } catch (error) {
     return res.status(401).json({ message: 'Invalid token.' });
   }
