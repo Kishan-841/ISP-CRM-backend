@@ -957,6 +957,152 @@ export const setActivationDate = asyncHandler(async function setActivationDate(r
 });
 
 /**
+ * Internal helper: run the full completion pipeline for a service order.
+ *
+ *   - DISCONNECTION: deactivate the customer's plan + mark COMPLETED.
+ *   - UPGRADE/DOWNGRADE/RATE_REVISION: write PlanUpgradeHistory, update
+ *     the lead's plan fields, mark COMPLETED, fire the SAM activation
+ *     webhook with the new canonical values.
+ *
+ * Used by:
+ *   - accountsProcessServiceOrder (no-date-change path)
+ *   - approveDateChange           (admin approves accounts-proposed date)
+ *
+ * The activationDate passed in becomes the order's effectiveDate AND the
+ * planStartDate / upgradeDate stamp on the lead and history. For the
+ * approve-date-change path this is the user-proposed date; for the
+ * straight-through path it's order.effectiveDate (or "now" as fallback).
+ *
+ * Returns the updated service order. Notifies + emits sidebar refresh.
+ */
+async function completeServiceOrder({ order, lead, activationDate, processNotes, userId }) {
+  // ── DISCONNECTION ────────────────────────────────────────────────
+  if (order.orderType === 'DISCONNECTION') {
+    const [updatedOrder] = await prisma.$transaction([
+      prisma.serviceOrder.update({
+        where: { id: order.id },
+        data: {
+          status: 'COMPLETED',
+          effectiveDate: activationDate,
+          processedById: userId,
+          processedAt: new Date(),
+          processNotes: processNotes ?? order.processNotes ?? null,
+          updatedAt: new Date(),
+        },
+      }),
+      prisma.lead.update({
+        where: { id: order.customerId },
+        data: { actualPlanIsActive: false },
+      }),
+    ]);
+    return updatedOrder;
+  }
+
+  // ── UPGRADE / DOWNGRADE / RATE_REVISION ─────────────────────────
+  const oldArc = lead.arcAmount || lead.actualPlanPrice || 0;
+  const newArc = order.newArc;
+  const newBandwidth = order.newBandwidth || lead.actualPlanBandwidth;
+
+  // Idempotency: lead already at the requested state → just complete, skip history
+  if (
+    lead.actualPlanBandwidth === newBandwidth &&
+    Number(lead.arcAmount) === Number(newArc)
+  ) {
+    return prisma.serviceOrder.update({
+      where: { id: order.id },
+      data: {
+        status: 'COMPLETED',
+        effectiveDate: activationDate,
+        processedById: userId,
+        processedAt: new Date(),
+        processNotes: `${processNotes || ''} [no-op: lead already matches requested state]`.trim(),
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  let actionType = 'UPGRADE';
+  if (order.orderType === 'DOWNGRADE') actionType = 'DOWNGRADE';
+  else if (order.orderType === 'RATE_REVISION') actionType = 'RATE_REVISION';
+
+  let bandwidthDisplay;
+  if (newBandwidth >= 1000) bandwidthDisplay = `${(newBandwidth / 1000).toFixed(1)} Gbps`;
+  else                       bandwidthDisplay = `${newBandwidth} Mbps`;
+
+  const newMonthlyPrice = Math.round(newArc / 12);
+  const arcFormatted = Number(newArc).toLocaleString('en-IN');
+  const newPlanName = `${bandwidthDisplay} - ₹${arcFormatted}/year`;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const history = await tx.planUpgradeHistory.create({
+      data: {
+        leadId: lead.id,
+        actionType,
+        previousPlanName: lead.actualPlanName || 'Unknown',
+        previousBandwidth: lead.actualPlanBandwidth || 0,
+        previousUploadBandwidth: lead.actualPlanUploadBandwidth,
+        previousArc: oldArc,
+        previousValidityDays: lead.actualPlanValidityDays || 30,
+        previousBillingType: lead.actualPlanBillingType || 'PREPAID',
+        previousPlanStartDate: lead.actualPlanStartDate || new Date(),
+        previousPlanEndDate: lead.actualPlanEndDate || new Date(),
+        newPlanName,
+        newBandwidth,
+        newArc,
+        additionalArc: order.orderType === 'UPGRADE' ? (newArc - oldArc) : null,
+        degradeArc: (order.orderType === 'DOWNGRADE' || order.orderType === 'RATE_REVISION') ? (oldArc - newArc) : null,
+        upgradeDate: activationDate,
+        daysOnOldPlan: 0,
+        daysOnNewPlan: 0,
+        oldPlanAmount: 0,
+        newPlanAmount: 0,
+        totalAmount: 0,
+        originalAmount: 0,
+        differenceAmount: newArc - oldArc,
+        notes: `Service Order #${order.orderNumber} - ${order.orderType}. ${processNotes || ''}`.trim(),
+        createdById: userId,
+      },
+    });
+
+    const updatedLead = await tx.lead.update({
+      where: { id: lead.id },
+      data: {
+        actualPlanName: newPlanName,
+        actualPlanBandwidth: newBandwidth,
+        actualPlanPrice: newMonthlyPrice,
+        arcAmount: newArc,
+        actualPlanStartDate: activationDate,
+        bandwidthRequirement: bandwidthDisplay,
+        actualPlanNotes: lead.actualPlanNotes
+          ? `${lead.actualPlanNotes}\n\n[${order.orderType} ${new Date().toISOString().split('T')[0]}] Order #${order.orderNumber} - ARC: ₹${oldArc} → ₹${newArc}. ${processNotes || ''}`
+          : `[${order.orderType} ${new Date().toISOString().split('T')[0]}] Order #${order.orderNumber} - ARC: ₹${oldArc} → ₹${newArc}. ${processNotes || ''}`,
+      },
+      include: { campaignData: { select: { company: true, name: true, email: true, phone: true } } },
+    });
+
+    const updatedOrder = await tx.serviceOrder.update({
+      where: { id: order.id },
+      data: {
+        status: 'COMPLETED',
+        effectiveDate: activationDate,
+        processedById: userId,
+        processedAt: new Date(),
+        processNotes: processNotes || null,
+        updatedAt: new Date(),
+      },
+    });
+
+    const webhookLog = await enqueueActivationWebhook(tx, updatedLead);
+    return { history, updatedLead, updatedOrder, webhookLogId: webhookLog?.id || null };
+  });
+
+  if (result.webhookLogId) {
+    attemptDeliveryInBackground(result.webhookLogId);
+  }
+  return result.updatedOrder;
+}
+
+/**
  * Accounts processes a service order - applies plan change and starts billing
  * This is the critical endpoint that actually changes the customer's plan
  * Roles: ACCOUNTS_TEAM, SUPER_ADMIN
@@ -1045,194 +1191,24 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
     }
   }
 
-  // DISCONNECTION: accounts is now the final stop (NOC no longer
-  // deactivates). Settle the books, deactivate the plan, mark COMPLETED.
-  if (order.orderType === 'DISCONNECTION') {
-    const [updatedOrder] = await prisma.$transaction([
-      prisma.serviceOrder.update({
-        where: { id },
-        data: {
-          status: 'COMPLETED',
-          processedById: req.user.id,
-          processedAt: new Date(),
-          processNotes: processNotes || null,
-          updatedAt: new Date(),
-        },
-      }),
-      prisma.lead.update({
-        where: { id: order.customer.id },
-        data: { actualPlanIsActive: false },
-      }),
-    ]);
-
-    await createNotification(
-      order.createdBy.id,
-      'SERVICE_ORDER',
-      'Disconnection Completed',
-      `Order #${order.orderNumber} disconnected — customer plan deactivated by accounts.`,
-      { serviceOrderId: id }
-    );
-    emitSidebarRefresh(order.createdBy.id);
-    emitSidebarRefreshByRole('ACCOUNTS_TEAM');
-    emitSidebarRefreshByRole('SAM_HEAD');
-    emitSidebarRefreshByRole('SAM_EXECUTIVE');
-    emitSidebarRefreshByRole('SUPER_ADMIN');
-
-    return res.json({
-      message: 'Disconnection completed. Customer plan deactivated.',
-      data: updatedOrder,
-    });
-  }
-
-  const lead = order.customer;
-  // SAM-set activation date is gone in the new flow. Fall back to the
-  // order's effectiveDate, or "now" if neither is set, so we still have a
-  // stamp to write into the lead/history rows.
+  // No (or unchanged) effectiveDate → run the full completion now.
   const activationDate = order.activationDate || order.effectiveDate || new Date();
-  const oldArc = lead.arcAmount || lead.actualPlanPrice || 0;
-  const newArc = order.newArc;
-  const newBandwidth = order.newBandwidth || lead.actualPlanBandwidth;
-
-  // Idempotency guard: if the lead's current plan already matches the
-  // requested state, this order is a no-op (e.g. operator processed the
-  // same change twice via direct upgrade + service order). Skip the
-  // history write and just mark the order COMPLETED so we don't pollute
-  // PlanUpgradeHistory with zero-difference rows.
-  if (
-    lead.actualPlanBandwidth === newBandwidth &&
-    Number(lead.arcAmount) === Number(newArc)
-  ) {
-    const updatedOrder = await prisma.serviceOrder.update({
-      where: { id },
-      data: {
-        status: 'COMPLETED',
-        processedById: req.user.id,
-        processedAt: new Date(),
-        processNotes: `${processNotes || ''} [no-op: lead already matches requested state]`.trim(),
-        updatedAt: new Date()
-      }
-    });
-
-    emitSidebarRefreshByRole('ACCOUNTS_TEAM');
-    emitSidebarRefreshByRole('SUPER_ADMIN');
-    return res.json({
-      message: 'Order completed (no-op — lead already matches requested state).',
-      data: updatedOrder
-    });
-  }
-
-  // Determine action type for history
-  let actionType = 'UPGRADE';
-  if (order.orderType === 'DOWNGRADE') actionType = 'DOWNGRADE';
-  else if (order.orderType === 'RATE_REVISION') actionType = 'RATE_REVISION';
-
-  // Build bandwidth display string
-  // Service orders store bandwidth in Mbps (unlike lead which stores Kbps)
-  let bandwidthDisplay;
-  if (newBandwidth >= 1000) {
-    bandwidthDisplay = `${(newBandwidth / 1000).toFixed(1)} Gbps`;
-  } else {
-    bandwidthDisplay = `${newBandwidth} Mbps`;
-  }
-
-  // newArc is the annual figure. actualPlanPrice is the per-billing-cycle
-  // price (monthly by default — matches what the Pricing card displays
-  // and what createActualPlan stores). Convert here so the lead row stays
-  // semantically consistent across creation and upgrade paths.
-  const newMonthlyPrice = Math.round(newArc / 12);
-
-  // Indian-format ARC for the plan-name string (e.g. ₹5,00,000)
-  const arcFormatted = Number(newArc).toLocaleString('en-IN');
-  const newPlanName = `${bandwidthDisplay} - ₹${arcFormatted}/year`;
-
-  // Use transaction to update everything atomically
-  const result = await prisma.$transaction(async (tx) => {
-    // 1. Create PlanUpgradeHistory
-    const history = await tx.planUpgradeHistory.create({
-      data: {
-        leadId: lead.id,
-        actionType,
-        previousPlanName: lead.actualPlanName || 'Unknown',
-        previousBandwidth: lead.actualPlanBandwidth || 0,
-        previousUploadBandwidth: lead.actualPlanUploadBandwidth,
-        previousArc: oldArc,
-        previousValidityDays: lead.actualPlanValidityDays || 30,
-        previousBillingType: lead.actualPlanBillingType || 'PREPAID',
-        previousPlanStartDate: lead.actualPlanStartDate || new Date(),
-        previousPlanEndDate: lead.actualPlanEndDate || new Date(),
-        newPlanName,
-        newBandwidth,
-        newArc,
-        additionalArc: order.orderType === 'UPGRADE' ? (newArc - oldArc) : null,
-        degradeArc: (order.orderType === 'DOWNGRADE' || order.orderType === 'RATE_REVISION') ? (oldArc - newArc) : null,
-        upgradeDate: activationDate,
-        daysOnOldPlan: 0,
-        daysOnNewPlan: 0,
-        oldPlanAmount: 0,
-        newPlanAmount: 0,
-        totalAmount: 0,
-        originalAmount: 0,
-        differenceAmount: newArc - oldArc,
-        notes: `Service Order #${order.orderNumber} - ${order.orderType}. ${processNotes || ''}`.trim(),
-        createdById: req.user.id
-      }
-    });
-
-    // 2. Update Lead's actual plan fields
-    const updatedLead = await tx.lead.update({
-      where: { id: lead.id },
-      data: {
-        actualPlanName: newPlanName,
-        actualPlanBandwidth: newBandwidth,
-        actualPlanPrice: newMonthlyPrice,
-        arcAmount: newArc,
-        actualPlanStartDate: activationDate,
-        bandwidthRequirement: bandwidthDisplay,
-        actualPlanNotes: lead.actualPlanNotes
-          ? `${lead.actualPlanNotes}\n\n[${order.orderType} ${new Date().toISOString().split('T')[0]}] Order #${order.orderNumber} - ARC: ₹${oldArc} → ₹${newArc}. ${processNotes || ''}`
-          : `[${order.orderType} ${new Date().toISOString().split('T')[0]}] Order #${order.orderNumber} - ARC: ₹${oldArc} → ₹${newArc}. ${processNotes || ''}`
-      },
-      include: {
-        campaignData: { select: { company: true, name: true, email: true, phone: true } }
-      }
-    });
-
-    // 3. Update service order to COMPLETED
-    const updatedOrder = await tx.serviceOrder.update({
-      where: { id },
-      data: {
-        status: 'COMPLETED',
-        processedById: req.user.id,
-        processedAt: new Date(),
-        processNotes: processNotes || null,
-        updatedAt: new Date()
-      }
-    });
-
-    // 4. Re-fire the SAM activation webhook with the new canonical
-    // values. Per SAM's contract: "Re-fire on canonical-field changes
-    // (rename, MRR update, plan change). SAM treats this as an
-    // idempotent upsert keyed on customer.externalId." So sending the
-    // activation event again with new ARC/bandwidth/plan upserts the
-    // SAM-side row in place rather than creating a duplicate.
-    const webhookLog = await enqueueActivationWebhook(tx, updatedLead);
-
-    return { history, updatedLead, updatedOrder, webhookLogId: webhookLog?.id || null };
+  const updatedOrder = await completeServiceOrder({
+    order,
+    lead: order.customer,
+    activationDate,
+    processNotes,
+    userId: req.user.id,
   });
 
-  // Fire the first delivery attempt outside the transaction so a slow or
-  // down SAM doesn't delay this user's response. Retries are handled by
-  // the cron sweep on the SamWebhookLog row.
-  if (result.webhookLogId) {
-    attemptDeliveryInBackground(result.webhookLogId);
-  }
-
-  // Notifications
+  // Notify creator
   await createNotification(
     order.createdBy.id,
     'SERVICE_ORDER',
-    'Order Completed - Billing Started',
-    `Order #${order.orderNumber} billing has been started from ${new Date(activationDate).toLocaleDateString('en-IN')}.`,
+    order.orderType === 'DISCONNECTION' ? 'Disconnection Completed' : 'Service Order Completed',
+    order.orderType === 'DISCONNECTION'
+      ? `Order #${order.orderNumber} disconnected — customer plan deactivated.`
+      : `Order #${order.orderNumber} (${order.orderType}) processed and completed.`,
     { serviceOrderId: id }
   );
   emitSidebarRefresh(order.createdBy.id);
@@ -1241,27 +1217,21 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
   emitSidebarRefreshByRole('SAM_EXECUTIVE');
   emitSidebarRefreshByRole('SUPER_ADMIN');
 
-  res.json({
-    message: `Order completed. Billing started from ${new Date(activationDate).toLocaleDateString('en-IN')}. ARC: ₹${oldArc} → ₹${newArc}.`,
-    data: result.updatedOrder
+  return res.json({
+    message: order.orderType === 'DISCONNECTION'
+      ? 'Disconnection completed. Customer plan deactivated.'
+      : 'Service order processed and completed.',
+    data: updatedOrder,
   });
 });
 
 /**
- * Admin approves the date change proposed by Accounts. Applies the new
- * effectiveDate, then runs the completion logic (status → COMPLETED;
- * deactivate plan if DISCONNECTION). The transaction ensures partial
- * failure can't leave the order in a half-done state.
- *
- * NOTE: For UPGRADE / DOWNGRADE / RATE_REVISION the full plan-change
- * pipeline (PlanUpgradeHistory + lead-plan update + SAM webhook) lives
- * inside accountsProcessServiceOrder. To keep that complexity in one
- * place, this approval simply records the new effectiveDate, completes
- * the order, and (for DISCONNECTION) deactivates the plan. For other
- * order types, the order completes with the new effectiveDate but the
- * plan was already swapped server-side at NOC/Activation steps — this is
- * the same behaviour the prior accounts step had: it only deactivates
- * the plan for DISCONNECTION orders.
+ * Admin approves the date change proposed by Accounts. Runs the full
+ * completion pipeline — for UPGRADE/DOWNGRADE/RATE_REVISION this writes
+ * PlanUpgradeHistory, swaps the lead's plan fields, and re-fires the SAM
+ * activation webhook with the admin-approved effective date; for
+ * DISCONNECTION it deactivates the customer's plan. The order's
+ * effectiveDate is set to the proposed date as part of completion.
  *
  * Roles: SUPER_ADMIN.
  */
@@ -1270,8 +1240,28 @@ export const approveDateChange = asyncHandler(async function approveDateChange(r
 
   const order = await prisma.serviceOrder.findUnique({
     where: { id },
-    include: { createdBy: { select: { id: true, name: true } } },
+    include: {
+      customer: {
+        select: {
+          id: true,
+          actualPlanName: true,
+          actualPlanBandwidth: true,
+          actualPlanUploadBandwidth: true,
+          actualPlanPrice: true,
+          actualPlanValidityDays: true,
+          actualPlanBillingType: true,
+          actualPlanBillingCycle: true,
+          actualPlanStartDate: true,
+          actualPlanEndDate: true,
+          actualPlanNotes: true,
+          arcAmount: true,
+          campaignData: { select: { company: true } },
+        },
+      },
+      createdBy: { select: { id: true, name: true } },
+    },
   });
+
   if (!order) return res.status(404).json({ message: 'Service order not found.' });
   if (order.status !== 'PENDING_ADMIN_DATE_APPROVAL') {
     return res.status(400).json({ message: 'Order is not pending date-change approval.' });
@@ -1280,34 +1270,30 @@ export const approveDateChange = asyncHandler(async function approveDateChange(r
     return res.status(400).json({ message: 'No proposed date found on this order.' });
   }
 
-  const ops = [
-    prisma.serviceOrder.update({
-      where: { id },
-      data: {
-        status: 'COMPLETED',
-        effectiveDate: order.proposedEffectiveDate,
-        proposedEffectiveDate: null,
-        proposedEffectiveDateById: null,
-        proposedEffectiveDateAt: null,
-      },
-    }),
-  ];
-  // For DISCONNECTION, deactivate the customer's plan as part of the same transaction
-  if (order.orderType === 'DISCONNECTION') {
-    ops.push(
-      prisma.lead.update({
-        where: { id: order.customerId },
-        data: { actualPlanIsActive: false },
-      })
-    );
-  }
-  const [updated] = await prisma.$transaction(ops);
+  // Run the full completion using the admin-approved date
+  await completeServiceOrder({
+    order,
+    lead: order.customer,
+    activationDate: order.proposedEffectiveDate,
+    processNotes: order.processNotes,
+    userId: req.user.id,
+  });
+
+  // Clear the proposed-date fields now that the date is applied
+  const finalOrder = await prisma.serviceOrder.update({
+    where: { id },
+    data: {
+      proposedEffectiveDate: null,
+      proposedEffectiveDateById: null,
+      proposedEffectiveDateAt: null,
+    },
+  });
 
   await createNotification(
     order.createdBy.id,
     'SERVICE_ORDER',
     'Order completed',
-    `Order ${order.orderNumber} approved and completed with the proposed effective date.`,
+    `Order ${order.orderNumber} (${order.orderType}) approved with the proposed effective date and completed.`,
     { serviceOrderId: id }
   );
   emitSidebarRefresh(order.createdBy.id);
@@ -1316,7 +1302,7 @@ export const approveDateChange = asyncHandler(async function approveDateChange(r
   emitSidebarRefreshByRole('SAM_HEAD');
   emitSidebarRefreshByRole('SAM_EXECUTIVE');
 
-  res.json({ message: 'Date change approved and order completed.', data: updated });
+  res.json({ message: 'Date change approved and order completed.', data: finalOrder });
 });
 
 /**
