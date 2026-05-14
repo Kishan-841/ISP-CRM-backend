@@ -238,6 +238,136 @@ export const generateInvoice = asyncHandler(async function generateInvoice(req, 
 });
 
 // ---------------------------------------------------------------------------
+// 3b. POST /generate-manual/:leadId  -  generateManualInvoice
+// Manual partial-period bill with user-specified day count + audit reason.
+// Bypasses the cron's "one invoice per billing period" guard because mid-cycle
+// manual bills are intentional (disconnections in progress, ad-hoc top-ups, etc).
+// ---------------------------------------------------------------------------
+export const generateManualInvoice = asyncHandler(async function generateManualInvoice(req, res) {
+  const { leadId } = req.params;
+  const userId = req.user.id;
+  const { days, reason } = req.body;
+
+  if (!canAccessFinancials(req.user)) {
+    return res.status(403).json({ message: 'Access denied.' });
+  }
+
+  // Input validation
+  const parsedDays = parseInt(days);
+  if (!parsedDays || parsedDays <= 0 || parsedDays > 365) {
+    return res.status(400).json({ message: 'Days must be a positive integer between 1 and 365.' });
+  }
+  if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+    return res.status(400).json({ message: 'Reason is required (minimum 5 characters).' });
+  }
+
+  // Fetch customer + last invoice for billing-period continuity
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: {
+      campaignData: {
+        select: { company: true, name: true, phone: true, email: true, city: true, state: true, address: true }
+      },
+      invoices: {
+        where: { planName: { not: 'One Time Charge (OTC)' } },
+        orderBy: { billingPeriodEnd: 'desc' },
+        take: 1
+      }
+    }
+  });
+
+  if (!lead) return res.status(404).json({ message: 'Customer not found.' });
+  if (!lead.actualPlanName || !lead.actualPlanPrice) {
+    return res.status(400).json({ message: 'Customer does not have an active plan.' });
+  }
+  if (!lead.actualPlanIsActive) {
+    return res.status(400).json({ message: 'Plan is not active for this customer.' });
+  }
+
+  // Period: day after the last invoice's billingPeriodEnd, OR today if no prior invoice.
+  // End = start + days - 1 (inclusive).
+  const lastInvoice = lead.invoices[0];
+  const billingPeriodStart = lastInvoice
+    ? new Date(new Date(lastInvoice.billingPeriodEnd).getTime() + 24 * 60 * 60 * 1000)
+    : new Date();
+  // Normalize to UTC midnight to match cron behaviour
+  billingPeriodStart.setUTCHours(0, 0, 0, 0);
+  const billingPeriodEnd = new Date(billingPeriodStart);
+  billingPeriodEnd.setUTCDate(billingPeriodEnd.getUTCDate() + parsedDays - 1);
+  billingPeriodEnd.setUTCHours(0, 0, 0, 0);
+
+  // Pro-rate using the cron's formula: (days / fullCycleDays) * fullCyclePrice.
+  // fullCycleDays defaults to 30 for MONTHLY plans (matches existing helper).
+  const cycleDaysMap = { MONTHLY: 30, QUARTERLY: 90, HALF_YEARLY: 180, YEARLY: 365 };
+  const billingCycle = lead.actualPlanBillingCycle || 'MONTHLY';
+  const fullCycleDays = cycleDaysMap[billingCycle] || 30;
+  const fullCyclePrice = lead.actualPlanPrice;
+  const baseAmount = Math.round((parsedDays / fullCycleDays) * fullCyclePrice * 100) / 100;
+
+  const discountAmount = 0;
+  const taxableAmount = baseAmount - discountAmount;
+  const sgstRate = 9;
+  const cgstRate = 9;
+  const sgstAmount = (taxableAmount * sgstRate) / 100;
+  const cgstAmount = (taxableAmount * cgstRate) / 100;
+  const totalGstAmount = sgstAmount + cgstAmount;
+  const grandTotal = taxableAmount + totalGstAmount;
+
+  const invoiceNumber = await generateInvoiceNumber();
+  const invoiceDate = new Date();
+  const dueDate = new Date(invoiceDate);
+  dueDate.setUTCDate(dueDate.getUTCDate() + 15);
+
+  const invoice = await prisma.invoice.create({
+    data: {
+      invoiceNumber,
+      leadId: lead.id,
+      invoiceDate,
+      dueDate,
+      billingPeriodStart,
+      billingPeriodEnd,
+      companyName: lead.campaignData?.company || 'Unknown',
+      customerUsername: lead.customerUsername,
+      billingAddress: lead.billingAddress || lead.fullAddress || lead.campaignData?.address,
+      installationAddress: lead.fullAddress,
+      contactPhone: lead.campaignData?.phone,
+      contactEmail: lead.campaignData?.email,
+      planName: `${lead.customerUsername || 'Customer'}_${lead.actualPlanName}`,
+      planDescription: 'Internet Leased Line',
+      hsnSacCode: '998422',
+      baseAmount,
+      discountAmount,
+      taxableAmount,
+      sgstRate,
+      cgstRate,
+      sgstAmount,
+      cgstAmount,
+      totalGstAmount,
+      grandTotal,
+      status: 'GENERATED',
+      notes: `Manual generation (${parsedDays} days): ${reason.trim()}`,
+      createdById: userId
+    }
+  });
+
+  // Ledger entry (same as auto-generation)
+  try {
+    await createInvoiceLedgerEntry(invoice, userId);
+  } catch (err) {
+    console.error('[generateManualInvoice] Ledger entry failed:', err);
+    // Don't fail the invoice creation if ledger entry fails
+  }
+
+  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+
+  res.status(201).json({
+    message: `Manual invoice ${invoice.invoiceNumber} generated successfully (${parsedDays} days, ₹${grandTotal.toFixed(2)}).`,
+    data: invoice
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4. POST /generate-otc/:leadId  -  generateOTCInvoice
 // ---------------------------------------------------------------------------
 export const generateOTCInvoice = asyncHandler(async function generateOTCInvoice(req, res) {

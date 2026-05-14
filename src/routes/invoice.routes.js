@@ -4,6 +4,7 @@ import {
   getAllInvoices,
   getInvoiceById,
   generateInvoice,
+  generateManualInvoice,
   generateOTCInvoice,
   updateInvoiceStatus,
   markInvoicePaid,
@@ -67,6 +68,9 @@ router.post('/bulk-pay', bulkPayInvoices);
 
 // Generate invoice for a lead
 router.post('/generate/:leadId', generateInvoice);
+
+// Manually generate a partial-period invoice (user-specified days + audit reason)
+router.post('/generate-manual/:leadId', generateManualInvoice);
 
 // Generate OTC (One Time Charge) invoice for a lead
 router.post('/generate-otc/:leadId', generateOTCInvoice);
