@@ -16,6 +16,8 @@ import {
   nocProcessServiceOrder,
   setActivationDate,
   accountsProcessServiceOrder,
+  approveDateChange,
+  rejectDateChange,
 } from '../controllers/serviceOrder.controller.js';
 import { uploadOrderAttachments } from '../config/cloudinary.js';
 
@@ -81,6 +83,18 @@ router.post(
   '/:id/accounts-process',
   requireRole('ACCOUNTS_TEAM', 'SUPER_ADMIN'),
   accountsProcessServiceOrder
+);
+
+// Admin reviews effectiveDate change proposed by Accounts
+router.post(
+  '/:id/approve-date-change',
+  requireRole('SUPER_ADMIN'),
+  approveDateChange
+);
+router.post(
+  '/:id/reject-date-change',
+  requireRole('SUPER_ADMIN'),
+  rejectDateChange
 );
 
 // Get single order (must be after static routes, before :id param routes)

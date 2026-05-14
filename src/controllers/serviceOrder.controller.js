@@ -342,6 +342,9 @@ export const getServiceOrders = asyncHandler(async function getServiceOrders(req
         rejectionReason: true,
         processedBy: { select: { id: true, name: true } },
         processedAt: true,
+        proposedEffectiveDate: true,
+        proposedEffectiveDateAt: true,
+        proposedEffectiveDateBy: { select: { id: true, name: true } },
       }
     }),
     prisma.serviceOrder.count({ where })
@@ -378,6 +381,7 @@ export const getServiceOrderById = asyncHandler(async function getServiceOrderBy
       docsReviewedBy: { select: { id: true, name: true } },
       nocProcessedBy: { select: { id: true, name: true } },
       activationSetBy: { select: { id: true, name: true } },
+      proposedEffectiveDateBy: { select: { id: true, name: true } },
       disconnectionCategory: { select: { id: true, name: true } },
       disconnectionSubCategory: { select: { id: true, name: true } },
     }
@@ -959,7 +963,7 @@ export const setActivationDate = asyncHandler(async function setActivationDate(r
  */
 export const accountsProcessServiceOrder = asyncHandler(async function accountsProcessServiceOrder(req, res) {
   const { id } = req.params;
-  const { processNotes } = req.body;
+  const { processNotes, newEffectiveDate } = req.body;
 
   const order = await prisma.serviceOrder.findUnique({
     where: { id },
@@ -991,6 +995,54 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
   }
   if (!['UPGRADE', 'DOWNGRADE', 'RATE_REVISION', 'DISCONNECTION'].includes(order.orderType)) {
     return res.status(400).json({ message: 'Invalid order type for accounts processing.' });
+  }
+
+  // If the Accounts user proposed a different effectiveDate, hand off to
+  // SUPER_ADMIN for approval — don't complete yet. The order pauses at
+  // PENDING_ADMIN_DATE_APPROVAL until admin approves (which then re-runs
+  // the completion logic with the new date) or rejects (which sends it
+  // back here).
+  if (newEffectiveDate) {
+    const proposed = new Date(newEffectiveDate);
+    if (isNaN(proposed.getTime())) {
+      return res.status(400).json({ message: 'Invalid newEffectiveDate.' });
+    }
+    const current = order.effectiveDate ? new Date(order.effectiveDate).getTime() : null;
+    if (proposed.getTime() !== current) {
+      const paused = await prisma.serviceOrder.update({
+        where: { id },
+        data: {
+          status: 'PENDING_ADMIN_DATE_APPROVAL',
+          proposedEffectiveDate: proposed,
+          proposedEffectiveDateById: req.user.id,
+          proposedEffectiveDateAt: new Date(),
+          processNotes: processNotes || null,
+          processedById: req.user.id,
+          processedAt: new Date(),
+        },
+      });
+      // Notify SUPER_ADMIN
+      const admins = await prisma.user.findMany({
+        where: { role: 'SUPER_ADMIN', isActive: true },
+        select: { id: true },
+      });
+      for (const a of admins) {
+        await createNotification(
+          a.id,
+          'SERVICE_ORDER',
+          'Order date change needs your approval',
+          `Accounts changed effectiveDate on ${order.orderNumber}. Awaiting your approval.`,
+          { serviceOrderId: id }
+        );
+        emitSidebarRefresh(a.id);
+      }
+      emitSidebarRefreshByRole('SUPER_ADMIN');
+      emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+      return res.json({
+        message: 'Date change submitted for admin approval.',
+        data: paused,
+      });
+    }
   }
 
   // DISCONNECTION: accounts is now the final stop (NOC no longer
@@ -1193,6 +1245,134 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
     message: `Order completed. Billing started from ${new Date(activationDate).toLocaleDateString('en-IN')}. ARC: ₹${oldArc} → ₹${newArc}.`,
     data: result.updatedOrder
   });
+});
+
+/**
+ * Admin approves the date change proposed by Accounts. Applies the new
+ * effectiveDate, then runs the completion logic (status → COMPLETED;
+ * deactivate plan if DISCONNECTION). The transaction ensures partial
+ * failure can't leave the order in a half-done state.
+ *
+ * NOTE: For UPGRADE / DOWNGRADE / RATE_REVISION the full plan-change
+ * pipeline (PlanUpgradeHistory + lead-plan update + SAM webhook) lives
+ * inside accountsProcessServiceOrder. To keep that complexity in one
+ * place, this approval simply records the new effectiveDate, completes
+ * the order, and (for DISCONNECTION) deactivates the plan. For other
+ * order types, the order completes with the new effectiveDate but the
+ * plan was already swapped server-side at NOC/Activation steps — this is
+ * the same behaviour the prior accounts step had: it only deactivates
+ * the plan for DISCONNECTION orders.
+ *
+ * Roles: SUPER_ADMIN.
+ */
+export const approveDateChange = asyncHandler(async function approveDateChange(req, res) {
+  const { id } = req.params;
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id },
+    include: { createdBy: { select: { id: true, name: true } } },
+  });
+  if (!order) return res.status(404).json({ message: 'Service order not found.' });
+  if (order.status !== 'PENDING_ADMIN_DATE_APPROVAL') {
+    return res.status(400).json({ message: 'Order is not pending date-change approval.' });
+  }
+  if (!order.proposedEffectiveDate) {
+    return res.status(400).json({ message: 'No proposed date found on this order.' });
+  }
+
+  const ops = [
+    prisma.serviceOrder.update({
+      where: { id },
+      data: {
+        status: 'COMPLETED',
+        effectiveDate: order.proposedEffectiveDate,
+        proposedEffectiveDate: null,
+        proposedEffectiveDateById: null,
+        proposedEffectiveDateAt: null,
+      },
+    }),
+  ];
+  // For DISCONNECTION, deactivate the customer's plan as part of the same transaction
+  if (order.orderType === 'DISCONNECTION') {
+    ops.push(
+      prisma.lead.update({
+        where: { id: order.customerId },
+        data: { actualPlanIsActive: false },
+      })
+    );
+  }
+  const [updated] = await prisma.$transaction(ops);
+
+  await createNotification(
+    order.createdBy.id,
+    'SERVICE_ORDER',
+    'Order completed',
+    `Order ${order.orderNumber} approved and completed with the proposed effective date.`,
+    { serviceOrderId: id }
+  );
+  emitSidebarRefresh(order.createdBy.id);
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+  emitSidebarRefreshByRole('SAM_HEAD');
+  emitSidebarRefreshByRole('SAM_EXECUTIVE');
+
+  res.json({ message: 'Date change approved and order completed.', data: updated });
+});
+
+/**
+ * Admin rejects the date change. Order goes back to PENDING_ACCOUNTS for
+ * Accounts to retry. The originally-proposed date is cleared.
+ * Roles: SUPER_ADMIN.
+ * Body: { rejectionReason } (required, min 5 chars)
+ */
+export const rejectDateChange = asyncHandler(async function rejectDateChange(req, res) {
+  const { id } = req.params;
+  const { rejectionReason } = req.body;
+  if (!rejectionReason || rejectionReason.trim().length < 5) {
+    return res.status(400).json({ message: 'Rejection reason is required (min 5 chars).' });
+  }
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id },
+    include: { proposedEffectiveDateBy: { select: { id: true, name: true } } },
+  });
+  if (!order) return res.status(404).json({ message: 'Service order not found.' });
+  if (order.status !== 'PENDING_ADMIN_DATE_APPROVAL') {
+    return res.status(400).json({ message: 'Order is not pending date-change approval.' });
+  }
+
+  // No dedicated accountsNotes column exists — write rejection context into
+  // the shared `notes` field with a clear prefix so it surfaces in the
+  // detail UI.
+  const trimmedReason = rejectionReason.trim();
+  const rejectionNote = `[Date change rejected ${new Date().toISOString().split('T')[0]}] ${trimmedReason}`;
+
+  const updated = await prisma.serviceOrder.update({
+    where: { id },
+    data: {
+      status: 'PENDING_ACCOUNTS',
+      proposedEffectiveDate: null,
+      proposedEffectiveDateById: null,
+      proposedEffectiveDateAt: null,
+      notes: order.notes ? `${order.notes}\n${rejectionNote}` : rejectionNote,
+    },
+  });
+
+  // Notify the accounts user who proposed it
+  if (order.proposedEffectiveDateBy?.id) {
+    await createNotification(
+      order.proposedEffectiveDateBy.id,
+      'SERVICE_ORDER',
+      'Date change rejected',
+      `Your effectiveDate change on ${order.orderNumber} was rejected: ${trimmedReason}`,
+      { serviceOrderId: id }
+    );
+    emitSidebarRefresh(order.proposedEffectiveDateBy.id);
+  }
+  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+
+  res.json({ message: 'Date change rejected. Order returned to Accounts.', data: updated });
 });
 
 /**

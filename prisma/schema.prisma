@@ -112,6 +112,7 @@ model User {
   serviceOrderActivationSet          ServiceOrder[]        @relation("ServiceOrderActivationSet")
   serviceOrdersDeliveryApproved      ServiceOrder[]        @relation("DeliveryApprovedServiceOrders")
   serviceOrdersSalesDirectorApproved ServiceOrder[]        @relation("SalesDirectorApprovedServiceOrders")
+  proposedEffectiveDateServiceOrders ServiceOrder[]        @relation("ProposedEffectiveDateServiceOrders")
   // Team leader hierarchy
   teamLeaderId                       String?
   teamLeader                         User?                 @relation("TeamMemberRelation", fields: [teamLeaderId], references: [id], onDelete: SetNull)
@@ -2122,6 +2123,7 @@ enum ServiceOrderStatus {
   PENDING_NOC
   PENDING_SAM_ACTIVATION            // legacy — preserved until in-flight orders are migrated
   PENDING_ACCOUNTS
+  PENDING_ADMIN_DATE_APPROVAL       // Accounts proposed a new effectiveDate; awaiting SUPER_ADMIN
   COMPLETED
   CANCELLED
 }
@@ -2195,6 +2197,13 @@ model ServiceOrder {
   salesDirectorApprovedById String?
   salesDirectorApprovedAt   DateTime?
   salesDirectorApprovedBy   User?      @relation("SalesDirectorApprovedServiceOrders", fields: [salesDirectorApprovedById], references: [id], onDelete: SetNull)
+
+  // Optional: Accounts user proposes a new effectiveDate before completion.
+  // Triggers PENDING_ADMIN_DATE_APPROVAL until SUPER_ADMIN approves.
+  proposedEffectiveDate     DateTime?
+  proposedEffectiveDateById String?
+  proposedEffectiveDateAt   DateTime?
+  proposedEffectiveDateBy   User?      @relation("ProposedEffectiveDateServiceOrders", fields: [proposedEffectiveDateById], references: [id], onDelete: SetNull)
 
   // Processing (Accounts/NOC completion)
   processedById         String?

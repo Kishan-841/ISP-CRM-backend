@@ -1281,7 +1281,8 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       saNocOrdersPending,
       accountsOrdersPending,
       saSa2Pending,
-      cnPendingApproval
+      cnPendingApproval,
+      dateChangeApprovalPending
     ] = await Promise.all([
       prisma.campaignData.count({ where: { status: 'NEW' } }),
       prisma.lead.count({ where: { status: 'NEW', isColdLead: false } }),
@@ -1333,14 +1334,15 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       prisma.lead.count({
         where: { superAdmin2ApprovalStatus: 'PENDING', opsApprovalStatus: 'APPROVED', status: 'FEASIBLE' }
       }),
-      prisma.creditNote.count({ where: { status: 'PENDING_APPROVAL' } })
+      prisma.creditNote.count({ where: { status: 'PENDING_APPROVAL' } }),
+      prisma.serviceOrder.count({ where: { status: 'PENDING_ADMIN_DATE_APPROVAL' } })
     ]);
     // Admin / Sales Director / Master also see the global cold-lead count
     const saColdLeadsPending = await prisma.lead.count({ where: { isColdLead: true } });
     if (isMaster) {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSa2Pending, cnPendingApproval, saColdLeadsPending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSa2Pending, cnPendingApproval, saColdLeadsPending, dateChangeApprovalPending });
     } else {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, sa2Pending: saSa2Pending, cnPendingApproval, coldLeadsPending: saColdLeadsPending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, sa2Pending: saSa2Pending, cnPendingApproval, coldLeadsPending: saColdLeadsPending, dateChangeApprovalPending });
     }
   }
 
