@@ -265,7 +265,11 @@ export const getServiceOrders = asyncHandler(async function getServiceOrders(req
     where.status = 'PENDING_DOCS_REVIEW';
     where.orderType = { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION', 'DISCONNECTION'] };
   } else if (hasRole(req.user, 'ACCOUNTS_TEAM')) {
-    where.status = 'PENDING_ACCOUNTS';
+    // Accounts sees orders ready to process AND orders they've already
+    // sent for admin date-change approval — the latter render as
+    // read-only "awaiting admin approval" rows so the operator can see
+    // their pending action.
+    where.status = { in: ['PENDING_ACCOUNTS', 'PENDING_ADMIN_DATE_APPROVAL'] };
     // Accounts now handles ALL order types (disconnection completion lives here).
   } else if (hasRole(req.user, 'NOC')) {
     where.status = 'PENDING_NOC';
