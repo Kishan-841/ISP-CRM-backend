@@ -7354,8 +7354,13 @@ export const getDeliveryReport = asyncHandler(async function getDeliveryReport(r
     const userRole = req.user.role;
     const isDeliveryTeam = hasRole(req.user, 'DELIVERY_TEAM');
     const isAdmin = isAdminOrTestUser(req.user);
+    // OPS_TEAM reaches this page from Team Dashboard → Delivery Reports
+    // and needs read-only visibility into the full delivery pipeline.
+    // Treated like admin for scoping (sees everyone, can filter by
+    // deliveryUserId), not like a delivery agent (no "see only mine").
+    const isOps = hasRole(req.user, 'OPS_TEAM');
 
-    if (!isDeliveryTeam && !isAdmin) {
+    if (!isDeliveryTeam && !isAdmin && !isOps) {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
@@ -7367,10 +7372,10 @@ export const getDeliveryReport = asyncHandler(async function getDeliveryReport(r
     };
 
     // Delivery team sees only their assigned leads
-    if (isDeliveryTeam && !isAdmin) {
+    if (isDeliveryTeam && !isAdmin && !isOps) {
       where.deliveryAssignedToId = userId;
-    } else if (isAdmin && deliveryUserId) {
-      // Admin filtering by specific delivery user
+    } else if ((isAdmin || isOps) && deliveryUserId) {
+      // Admin / OPS filtering by specific delivery user
       where.deliveryAssignedToId = deliveryUserId;
     }
 
