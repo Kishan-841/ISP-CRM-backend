@@ -641,7 +641,7 @@ export const processServiceOrder = asyncHandler(async function processServiceOrd
 });
 
 /**
- * Get docs review queue for UPGRADE/DOWNGRADE/RATE_REVISION orders
+ * Get docs review queue for all order types pending docs review
  * Roles: DOCS_TEAM, SUPER_ADMIN
  */
 export const getDocsReviewQueue = asyncHandler(async function getDocsReviewQueue(req, res) {
@@ -652,7 +652,7 @@ export const getDocsReviewQueue = asyncHandler(async function getDocsReviewQueue
 
   const where = {
     status: 'PENDING_DOCS_REVIEW',
-    orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] }
+    orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION', 'DISCONNECTION'] }
   };
 
   if (search) {
@@ -801,7 +801,7 @@ export const docsReviewServiceOrder = asyncHandler(async function docsReviewServ
 });
 
 /**
- * Get NOC queue for UPGRADE/DOWNGRADE/RATE_REVISION orders pending bandwidth change
+ * Get NOC queue for all order types pending NOC processing (disconnection skips speed test)
  * Roles: NOC_TEAM, SUPER_ADMIN
  */
 export const getNocServiceOrderQueue = asyncHandler(async function getNocServiceOrderQueue(req, res) {
