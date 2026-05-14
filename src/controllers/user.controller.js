@@ -990,7 +990,9 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
         }
       }),
       prisma.serviceOrder.count({
-        where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+        // DOCS now reviews ALL order types (DISCONNECTION joined the
+        // standard pipeline in the new flow).
+        where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION', 'DISCONNECTION'] } }
       })
     ]);
     if (isMaster) {
@@ -1025,7 +1027,9 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       prisma.vendor.count({ where: { approvalStatus: 'PENDING_ACCOUNTS' } }),
       prisma.vendor.count({ where: { docsStatus: 'UPLOADED' } }),
       prisma.serviceOrder.count({
-        where: { status: 'PENDING_ACCOUNTS', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+        // Accounts now handles ALL order types (DISCONNECTION completion
+        // moved here from NOC; NOC just confirms now).
+        where: { status: 'PENDING_ACCOUNTS' }
       }),
       prisma.complaint.count({
         where: {
@@ -1046,16 +1050,25 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
 
   if (userRole === 'DELIVERY_TEAM' || isMaster) {
     // Delivery Team counts: pending deliveries (leads pushed to installation)
-    const deliveryPending = await prisma.lead.count({
-      where: {
-        pushedToInstallationAt: { not: null },
-        OR: [
-          { deliveryStatus: null },
-          { deliveryStatus: 'PENDING' }
-        ]
-      }
-    });
-    Object.assign(counts, { deliveryPending });
+    // + service orders waiting on delivery's first-gate approval (UPGRADE/DOWNGRADE only).
+    const [deliveryPending, deliveryOrderApprovalPending] = await Promise.all([
+      prisma.lead.count({
+        where: {
+          pushedToInstallationAt: { not: null },
+          OR: [
+            { deliveryStatus: null },
+            { deliveryStatus: 'PENDING' }
+          ]
+        }
+      }),
+      prisma.serviceOrder.count({
+        where: {
+          status: 'PENDING_DELIVERY_APPROVAL',
+          orderType: { in: ['UPGRADE', 'DOWNGRADE'] }
+        }
+      })
+    ]);
+    Object.assign(counts, { deliveryPending, deliveryOrderApprovalPending });
   }
 
   if (userRole === 'STORE_MANAGER' || isMaster) {
@@ -1096,15 +1109,11 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       counts.nocPending = nocPending;
     }
 
-    // Add service order NOC queue count. Mirrors getNocServiceOrderQueue —
-    // commercial changes waiting on speed test + disconnections waiting on NOC confirm.
+    // Add service order NOC queue count. New flow: every order at
+    // PENDING_NOC sits with NOC (disconnections no longer short-circuit
+    // through APPROVED — they flow through DOCS → NOC → ACCOUNTS like the rest).
     const nocOrdersPending = await prisma.serviceOrder.count({
-      where: {
-        OR: [
-          { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } },
-          { status: 'APPROVED', orderType: 'DISCONNECTION' },
-        ],
-      },
+      where: { status: 'PENDING_NOC' },
     });
     counts.nocOrdersPending = nocOrdersPending;
 
@@ -1163,7 +1172,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
   }
 
   if (userRole === 'SAM_HEAD' || isMaster) {
-    const [unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries, samActivationPending] = await Promise.all([
+    const [unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries] = await Promise.all([
       prisma.lead.count({
         where: {
           customerUserId: { not: null },
@@ -1178,20 +1187,19 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
         }
       }),
       prisma.serviceOrder.count({
-        where: { status: { in: ['PENDING_APPROVAL', 'APPROVED'] } }
+        // SAM_HEAD oversight: orders sitting in either of the early
+        // approval gates (delivery + sales director).
+        where: { status: { in: ['PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL'] } }
       }),
       prisma.customerEnquiry.count({
         where: { status: 'SUBMITTED' }
       }),
-      prisma.serviceOrder.count({
-        where: { status: 'PENDING_SAM_ACTIVATION' }
-      }),
     ]);
-    Object.assign(counts, { unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries, samActivationPending });
+    Object.assign(counts, { unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries });
   }
 
   if (userRole === 'SAM_EXECUTIVE' || isMaster) {
-    const [pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending, samExecActivationPending] = await Promise.all([
+    const [pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending] = await Promise.all([
       prisma.sAMMeeting.count({
         where: {
           ...(!isMaster && { samExecutiveId: userId }),
@@ -1214,16 +1222,17 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
         }
       }),
       prisma.serviceOrder.count({
-        where: { ...(!isMaster && { createdById: userId }), status: { in: ['PENDING_APPROVAL', 'APPROVED'] } }
-      }),
-      prisma.serviceOrder.count({
-        where: { status: 'PENDING_SAM_ACTIVATION', ...(!isMaster && { createdById: userId }) }
+        // Their own orders waiting at either early-approval gate.
+        where: {
+          ...(!isMaster && { createdById: userId }),
+          status: { in: ['PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL'] }
+        }
       }),
     ]);
     if (isMaster) {
-      Object.assign(counts, { pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending, samExecActivationPending });
+      Object.assign(counts, { pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending });
     } else {
-      Object.assign(counts, { pendingMomEmails, overdueVisits, contractExpiring: samExecContractExpiring, ordersPending: samExecOrdersPending, samActivationPending: samExecActivationPending });
+      Object.assign(counts, { pendingMomEmails, overdueVisits, contractExpiring: samExecContractExpiring, ordersPending: samExecOrdersPending });
     }
   }
 
@@ -1245,6 +1254,15 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
 
   if (userRole === 'SUPER_ADMIN' || userRole === 'SALES_DIRECTOR' || isMaster) {
     // Super Admin counts: overview of all queues + POs pending super admin approval (level 2) + delivery request approval + vendor approval
+    //
+    // Service-order counts under the new state machine:
+    //   orderApprovalPending           = combined PENDING_DELIVERY_APPROVAL + PENDING_SALES_DIRECTOR_APPROVAL
+    //   salesDirectorPending           = PENDING_SALES_DIRECTOR_APPROVAL only (so SALES_DIRECTOR has a focused count)
+    //   deliveryOrderApprovalPending   = PENDING_DELIVERY_APPROVAL (UPGRADE/DOWNGRADE only)
+    //   saDocsOrderReviewPending       = PENDING_DOCS_REVIEW (now ALL order types, incl. DISCONNECTION)
+    //   saNocOrdersPending             = PENDING_NOC (no more APPROVED+DISCONNECTION short-circuit)
+    //   accountsOrdersPending          = PENDING_ACCOUNTS (now ALL order types)
+    //   PENDING_SAM_ACTIVATION dropped — the stage no longer exists in the new flow.
     const [
       isrQueue,
       bdmQueue,
@@ -1257,10 +1275,11 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       vendorsPendingAdmin,
       complaintsOpen,
       orderApprovalPending,
+      salesDirectorPending,
+      deliveryOrderApprovalPending,
       saDocsOrderReviewPending,
       saNocOrdersPending,
       accountsOrdersPending,
-      saSamActivationPending,
       saSa2Pending,
       cnPendingApproval
     ] = await Promise.all([
@@ -1290,23 +1309,26 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       prisma.complaint.count({
         where: { status: { notIn: ['CLOSED'] } }
       }),
-      prisma.serviceOrder.count({ where: { status: 'PENDING_APPROVAL' } }),
       prisma.serviceOrder.count({
-        where: { status: 'PENDING_DOCS_REVIEW', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+        where: { status: { in: ['PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL'] } }
+      }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_SALES_DIRECTOR_APPROVAL' }
       }),
       prisma.serviceOrder.count({
         where: {
-          OR: [
-            { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } },
-            { status: 'APPROVED', orderType: 'DISCONNECTION' },
-          ],
-        },
+          status: 'PENDING_DELIVERY_APPROVAL',
+          orderType: { in: ['UPGRADE', 'DOWNGRADE'] }
+        }
       }),
       prisma.serviceOrder.count({
-        where: { status: 'PENDING_ACCOUNTS', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } }
+        where: { status: 'PENDING_DOCS_REVIEW' }
       }),
       prisma.serviceOrder.count({
-        where: { status: 'PENDING_SAM_ACTIVATION' }
+        where: { status: 'PENDING_NOC' }
+      }),
+      prisma.serviceOrder.count({
+        where: { status: 'PENDING_ACCOUNTS' }
       }),
       prisma.lead.count({
         where: { superAdmin2ApprovalStatus: 'PENDING', opsApprovalStatus: 'APPROVED', status: 'FEASIBLE' }
@@ -1316,9 +1338,9 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     // Admin / Sales Director / Master also see the global cold-lead count
     const saColdLeadsPending = await prisma.lead.count({ where: { isColdLead: true } });
     if (isMaster) {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSamActivationPending, saSa2Pending, cnPendingApproval, saColdLeadsPending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSa2Pending, cnPendingApproval, saColdLeadsPending });
     } else {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, samActivationPending: saSamActivationPending, sa2Pending: saSa2Pending, cnPendingApproval, coldLeadsPending: saColdLeadsPending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, sa2Pending: saSa2Pending, cnPendingApproval, coldLeadsPending: saColdLeadsPending });
     }
   }
 

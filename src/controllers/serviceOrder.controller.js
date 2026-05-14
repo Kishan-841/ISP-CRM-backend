@@ -42,6 +42,7 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     disconnectionSubCategoryId,
     notes,
     effectiveDate,
+    mailReceivedDate,  // optional — date SAM confirms customer consented in writing
     approvalFileUrl,   // optional — Cloudinary HTTPS URL to .pdf/.eml/.msg
     poFileUrl,         // optional — Cloudinary HTTPS URL to .pdf/.eml/.msg
   } = req.body;
@@ -132,21 +133,25 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
 
   const orderNumber = await generateServiceOrderNumber();
 
-  // All order types now enter the same admin-approval gate first.
-  // SUPER_ADMIN approves → DISCONNECTION jumps straight to APPROVED (NOC),
-  // commercial changes (UPGRADE/DOWNGRADE/RATE_REVISION) move to
-  // PENDING_DOCS_REVIEW for the DOCS_TEAM to handle the PO. See
-  // approveServiceOrder for the post-approval routing.
+  // Initial state depends on orderType. UPGRADE/DOWNGRADE need delivery
+  // approval first (they touch provisioning); RATE_REVISION/DISCONNECTION
+  // skip directly to Sales Director.
+  const initialStatus =
+    (orderType === 'UPGRADE' || orderType === 'DOWNGRADE')
+      ? 'PENDING_DELIVERY_APPROVAL'
+      : 'PENDING_SALES_DIRECTOR_APPROVAL';
+
   const data = {
     orderNumber,
     customerId,
     orderType,
-    status: 'PENDING_APPROVAL',
+    status: initialStatus,
     createdById: req.user.id,
     currentPlanName: customer.actualPlanName,
     currentBandwidth: customer.actualPlanBandwidth,
     currentArc: customer.arcAmount ?? customer.actualPlanPrice,
     effectiveDate: effectiveDate ? new Date(effectiveDate) : null,
+    mailReceivedDate: mailReceivedDate ? new Date(mailReceivedDate) : null,
     notes: notes || null,
     approvalFileUrl: approvalFileUrl || null,
     poFileUrl: poFileUrl || null,
@@ -220,17 +225,23 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
 
   const order = await prisma.serviceOrder.create({ data });
 
-  // All new orders sit in PENDING_APPROVAL — only SUPER_ADMIN sees them
-  // until approved. DOCS_TEAM only gets notified once the admin gate
-  // releases the order (see approveServiceOrder).
+  // Notify the team that owns the first gate. SUPER_ADMIN always sees
+  // everything (admin override is allowed).
   const companyName = customer.campaignData?.company || 'Customer';
   const orderTypeLabel = orderType.replace('_', ' ').toLowerCase();
+  const firstGateLabel = initialStatus === 'PENDING_DELIVERY_APPROVAL'
+    ? 'delivery approval'
+    : 'Sales Director approval';
   await notifyAllAdmins(
     'SAM_ASSIGNMENT',
     'New Service Order',
-    `${orderTypeLabel} request for "${companyName}" (${orderNumber}) requires admin approval.`,
+    `${orderTypeLabel} request for "${companyName}" (${orderNumber}) requires ${firstGateLabel}.`,
     { serviceOrderId: order.id, orderNumber, orderType }
   );
+  if (initialStatus === 'PENDING_DELIVERY_APPROVAL') {
+    await emitSidebarRefreshByRole('DELIVERY_TEAM');
+  }
+  await emitSidebarRefreshByRole('SALES_DIRECTOR');
   await emitSidebarRefreshByRole('SUPER_ADMIN');
 
   res.status(201).json({ message: 'Service order created successfully.', data: order });
@@ -246,20 +257,23 @@ export const getServiceOrders = asyncHandler(async function getServiceOrders(req
 
   let where = {};
 
-  // Role-based filtering
+  // Role-based filtering. Each role sees only what's pending their action.
+  // SUPER_ADMIN and SAM_HEAD see everything.
   if (hasRole(req.user, 'SAM_EXECUTIVE')) {
     where.createdById = req.user.id;
   } else if (hasRole(req.user, 'DOCS_TEAM')) {
     where.status = 'PENDING_DOCS_REVIEW';
-    where.orderType = { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] };
+    where.orderType = { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION', 'DISCONNECTION'] };
   } else if (hasRole(req.user, 'ACCOUNTS_TEAM')) {
     where.status = 'PENDING_ACCOUNTS';
-    where.orderType = { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] };
+    // Accounts now handles ALL order types (disconnection completion lives here).
   } else if (hasRole(req.user, 'NOC')) {
-    where.OR = [
-      { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } },
-      { status: 'APPROVED', orderType: 'DISCONNECTION' }
-    ];
+    where.status = 'PENDING_NOC';
+  } else if (hasRole(req.user, 'SALES_DIRECTOR')) {
+    where.status = 'PENDING_SALES_DIRECTOR_APPROVAL';
+  } else if (hasRole(req.user, 'DELIVERY_TEAM')) {
+    where.status = 'PENDING_DELIVERY_APPROVAL';
+    where.orderType = { in: ['UPGRADE', 'DOWNGRADE'] };
   }
   // SAM_HEAD and SUPER_ADMIN see all
 
@@ -382,8 +396,12 @@ export const getServiceOrderById = asyncHandler(async function getServiceOrderBy
 });
 
 /**
- * Approve a service order
- * Role: SUPER_ADMIN
+ * Sales Director approval — universal second gate (or first gate for
+ * RATE_REVISION/DISCONNECTION). Always transitions to PENDING_DOCS_REVIEW
+ * regardless of orderType (disconnection now flows through DOCS too).
+ *
+ * Function name preserved for backward compat with the route mount.
+ * Roles: SALES_DIRECTOR, SUPER_ADMIN.
  */
 export const approveServiceOrder = asyncHandler(async function approveServiceOrder(req, res) {
   const { id } = req.params;
@@ -400,60 +418,51 @@ export const approveServiceOrder = asyncHandler(async function approveServiceOrd
     return res.status(404).json({ message: 'Service order not found.' });
   }
 
-  if (order.status !== 'PENDING_APPROVAL') {
-    return res.status(400).json({ message: 'Only pending orders can be approved.' });
+  if (order.status !== 'PENDING_SALES_DIRECTOR_APPROVAL') {
+    return res.status(400).json({ message: 'Order is not pending Sales Director approval.' });
   }
-
-  // Route by orderType:
-  //   DISCONNECTION   → APPROVED              (NOC executes the disconnection)
-  //   UPGRADE/DOWNGRADE/RATE_REVISION
-  //                  → PENDING_DOCS_REVIEW    (DOCS_TEAM verifies the PO,
-  //                                            then NOC, SAM, ACCOUNTS)
-  const isCommercialChange = ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'].includes(order.orderType);
-  const nextStatus = isCommercialChange ? 'PENDING_DOCS_REVIEW' : 'APPROVED';
 
   const updated = await prisma.serviceOrder.update({
     where: { id },
     data: {
-      status: nextStatus,
+      status: 'PENDING_DOCS_REVIEW',
+      // Keep the legacy approvedBy fields populated for back-compat — these
+      // are read by old reports.
       approvedById: req.user.id,
       approvedAt: new Date(),
+      // New explicit field for the Sales Director gate.
+      salesDirectorApprovedById: req.user.id,
+      salesDirectorApprovedAt: new Date(),
     }
   });
 
-  // Notify creator
+  // Notify creator + DOCS_TEAM
   const companyName = order.customer?.campaignData?.company || 'Customer';
   await createNotification(
     order.createdById,
     'SAM_ASSIGNMENT',
-    'Service Order Approved',
-    `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" has been approved.`,
+    'Sales Director Approved — Pending Docs Review',
+    `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" was approved and is now pending docs review.`,
     { serviceOrderId: id, orderNumber: order.orderNumber }
   );
   emitSidebarRefresh(order.createdById);
 
-  // Notify the team that owns the next stage
-  if (order.orderType === 'DISCONNECTION') {
-    // Disconnection: NOC team executes
-    await emitSidebarRefreshByRole('NOC');
-  } else {
-    // Commercial change: hand to DOCS_TEAM for PO review
-    const docsTeamUsers = await prisma.user.findMany({
-      where: { role: 'DOCS_TEAM', isActive: true },
-      select: { id: true }
-    });
-    for (const docsUser of docsTeamUsers) {
-      await createNotification(
-        docsUser.id,
-        'SERVICE_ORDER',
-        'New Order Request - PO Review',
-        `${order.orderType.replace('_', ' ').toLowerCase()} order #${order.orderNumber} approved by admin — ready for PO review.`,
-        { serviceOrderId: id }
-      );
-      emitSidebarRefresh(docsUser.id);
-    }
-    await emitSidebarRefreshByRole('DOCS_TEAM');
+  const docsTeamUsers = await prisma.user.findMany({
+    where: { role: 'DOCS_TEAM', isActive: true },
+    select: { id: true }
+  });
+  for (const docsUser of docsTeamUsers) {
+    await createNotification(
+      docsUser.id,
+      'SERVICE_ORDER',
+      'New Order — Docs Review Pending',
+      `${order.orderType.replace('_', ' ').toLowerCase()} order #${order.orderNumber} approved by Sales Director — ready for docs review.`,
+      { serviceOrderId: id }
+    );
+    emitSidebarRefresh(docsUser.id);
   }
+  await emitSidebarRefreshByRole('DOCS_TEAM');
+  await emitSidebarRefreshByRole('SALES_DIRECTOR');
   await emitSidebarRefreshByRole('SUPER_ADMIN');
   await emitSidebarRefreshByRole('SAM_HEAD');
 
@@ -461,8 +470,62 @@ export const approveServiceOrder = asyncHandler(async function approveServiceOrd
 });
 
 /**
- * Reject a service order
- * Role: SUPER_ADMIN
+ * Delivery approval — first gate for UPGRADE / DOWNGRADE orders only.
+ * Roles: DELIVERY_TEAM, SUPER_ADMIN.
+ * Transitions: PENDING_DELIVERY_APPROVAL → PENDING_SALES_DIRECTOR_APPROVAL.
+ */
+export const deliveryApproveServiceOrder = asyncHandler(async function deliveryApproveServiceOrder(req, res) {
+  const { id } = req.params;
+
+  const order = await prisma.serviceOrder.findUnique({
+    where: { id },
+    include: {
+      customer: { select: { campaignData: { select: { company: true } } } },
+      createdBy: { select: { id: true, name: true } }
+    }
+  });
+
+  if (!order) return res.status(404).json({ message: 'Service order not found.' });
+  if (order.status !== 'PENDING_DELIVERY_APPROVAL') {
+    return res.status(400).json({ message: 'Order is not pending delivery approval.' });
+  }
+  if (!['UPGRADE', 'DOWNGRADE'].includes(order.orderType)) {
+    return res.status(400).json({ message: 'Delivery approval only applies to upgrade/downgrade orders.' });
+  }
+
+  const updated = await prisma.serviceOrder.update({
+    where: { id },
+    data: {
+      status: 'PENDING_SALES_DIRECTOR_APPROVAL',
+      deliveryApprovedById: req.user.id,
+      deliveryApprovedAt: new Date(),
+    }
+  });
+
+  // Notify Sales Director (next gate) + creator (status moved forward)
+  const companyName = order.customer?.campaignData?.company || 'Customer';
+  await createNotification(
+    order.createdById,
+    'SAM_ASSIGNMENT',
+    'Delivery Approved — Pending Sales Director',
+    `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" was approved by delivery and is now pending Sales Director approval.`,
+    { serviceOrderId: id, orderNumber: order.orderNumber }
+  );
+  emitSidebarRefresh(order.createdById);
+  await emitSidebarRefreshByRole('SALES_DIRECTOR');
+  await emitSidebarRefreshByRole('SUPER_ADMIN');
+  await emitSidebarRefreshByRole('DELIVERY_TEAM');
+
+  res.json({ message: 'Service order approved by delivery.', data: updated });
+});
+
+/**
+ * Reject a service order at either pending-approval state. Records which
+ * stage rejected via `rejectedFromStatus` so reports can filter by gate.
+ * Roles: DELIVERY_TEAM, SALES_DIRECTOR, SUPER_ADMIN.
+ *
+ * Note: docs review uses its own dedicated rejection path (DOCS_REJECTED),
+ * so this endpoint only covers the two early gates.
  */
 export const rejectServiceOrder = asyncHandler(async function rejectServiceOrder(req, res) {
   const { id } = req.params;
@@ -483,8 +546,9 @@ export const rejectServiceOrder = asyncHandler(async function rejectServiceOrder
     return res.status(404).json({ message: 'Service order not found.' });
   }
 
-  if (order.status !== 'PENDING_APPROVAL') {
-    return res.status(400).json({ message: 'Only pending orders can be rejected.' });
+  const rejectableStates = ['PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL'];
+  if (!rejectableStates.includes(order.status)) {
+    return res.status(400).json({ message: 'Only orders pending delivery or Sales Director approval can be rejected here. Use docs-review reject for the docs stage.' });
   }
 
   const updated = await prisma.serviceOrder.update({
@@ -492,6 +556,7 @@ export const rejectServiceOrder = asyncHandler(async function rejectServiceOrder
     data: {
       status: 'REJECTED',
       rejectionReason,
+      rejectedFromStatus: order.status,   // captures which gate killed it
       approvedById: req.user.id,
       approvedAt: new Date(),
     }
@@ -499,15 +564,18 @@ export const rejectServiceOrder = asyncHandler(async function rejectServiceOrder
 
   // Notify creator
   const companyName = order.customer?.campaignData?.company || 'Customer';
+  const rejector = order.status === 'PENDING_DELIVERY_APPROVAL' ? 'Delivery' : 'Sales Director';
   await createNotification(
     order.createdById,
     'SAM_ASSIGNMENT',
     'Service Order Rejected',
-    `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" was rejected: ${rejectionReason}`,
+    `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" was rejected by ${rejector}: ${rejectionReason}`,
     { serviceOrderId: id, orderNumber: order.orderNumber }
   );
   emitSidebarRefresh(order.createdById);
   await emitSidebarRefreshByRole('SUPER_ADMIN');
+  await emitSidebarRefreshByRole('SALES_DIRECTOR');
+  await emitSidebarRefreshByRole('DELIVERY_TEAM');
   await emitSidebarRefreshByRole('SAM_HEAD');
 
   res.json({ message: 'Service order rejected.', data: updated });
@@ -742,17 +810,10 @@ export const getNocServiceOrderQueue = asyncHandler(async function getNocService
   const skip = (page - 1) * limit;
   const search = req.query.search || '';
 
-  // NOC owns two distinct piles:
-  //  - Commercial changes (UPGRADE/DOWNGRADE/RATE_REVISION) at PENDING_NOC
-  //    after docs review — NOC uploads the speed test.
-  //  - Disconnections at APPROVED — admin approval lands here directly
-  //    (no docs/accounts/SAM-activation hop). NOC just confirms.
-  const baseWhere = {
-    OR: [
-      { status: 'PENDING_NOC', orderType: { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'] } },
-      { status: 'APPROVED', orderType: 'DISCONNECTION' },
-    ],
-  };
+  // NOC sees every order at PENDING_NOC. Disconnections now flow through
+  // the same path as commercial changes (no more APPROVED short-circuit) —
+  // NOC just confirms; final plan deactivation happens in ACCOUNTS.
+  const baseWhere = { status: 'PENDING_NOC' };
 
   const where = search
     ? {
@@ -837,149 +898,58 @@ export const nocProcessServiceOrder = asyncHandler(async function nocProcessServ
   });
 
   if (!order) return res.status(404).json({ message: 'Service order not found.' });
-
-  // DISCONNECTION: NOC just confirms — no speed test, no SAM activation hop,
-  // jumps straight to COMPLETED and flips the customer's plan to inactive.
-  // (Commercial changes still flow through PENDING_SAM_ACTIVATION → PENDING_ACCOUNTS.)
-  if (order.orderType === 'DISCONNECTION') {
-    if (order.status !== 'APPROVED') {
-      return res.status(400).json({ message: 'Disconnection order is not in APPROVED state.' });
-    }
-
-    const [updated] = await prisma.$transaction([
-      prisma.serviceOrder.update({
-        where: { id },
-        data: {
-          status: 'COMPLETED',
-          nocProcessedById: req.user.id,
-          nocProcessedAt: new Date(),
-          processedById: req.user.id,
-          processedAt: new Date(),
-          nocNotes: nocNotes || null,
-          updatedAt: new Date(),
-        },
-      }),
-      prisma.lead.update({
-        where: { id: order.customerId },
-        data: { actualPlanIsActive: false },
-      }),
-    ]);
-
-    await createNotification(
-      order.createdBy.id,
-      'SERVICE_ORDER',
-      'Disconnection Completed',
-      `Order #${order.orderNumber} disconnected — customer plan deactivated.`,
-      { serviceOrderId: id }
-    );
-    emitSidebarRefresh(order.createdBy.id);
-    emitSidebarRefreshByRole('NOC');
-    emitSidebarRefreshByRole('SAM_HEAD');
-    emitSidebarRefreshByRole('SAM_EXECUTIVE');
-    emitSidebarRefreshByRole('SUPER_ADMIN');
-
-    return res.json({ message: 'Disconnection completed. Customer plan deactivated.', data: updated });
-  }
-
-  // Commercial change branch
   if (order.status !== 'PENDING_NOC') {
     return res.status(400).json({ message: 'Order is not pending NOC processing.' });
   }
 
-  if (!req.file) {
+  // Speed test required for bandwidth-changing orders. Disconnection is just
+  // a NOC confirmation — no speed to test (final plan deactivation now
+  // happens in ACCOUNTS, not here).
+  const requiresSpeedTest = ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'].includes(order.orderType);
+  if (requiresSpeedTest && !req.file) {
     return res.status(400).json({ message: 'Speed test screenshot is required.' });
   }
 
   const updated = await prisma.serviceOrder.update({
     where: { id },
     data: {
-      status: 'PENDING_SAM_ACTIVATION',
-      nocSpeedTestUrl: req.file.path,
-      nocSpeedTestUploadedAt: new Date(),
+      status: 'PENDING_ACCOUNTS',
+      nocSpeedTestUrl: req.file?.path || null,
+      nocSpeedTestUploadedAt: req.file ? new Date() : null,
       nocProcessedById: req.user.id,
       nocProcessedAt: new Date(),
       nocNotes: nocNotes || null,
-      updatedAt: new Date()
+      updatedAt: new Date(),
     }
   });
 
-  // Notify creator (SAM) that NOC is done, they need activation date
   await createNotification(
     order.createdBy.id,
     'SERVICE_ORDER',
-    'NOC Complete - Set Activation Date',
-    `Order #${order.orderNumber} bandwidth change is done. Please set activation date from customer.`,
+    'NOC Complete — Pending Accounts',
+    `Order #${order.orderNumber} processed by NOC. Now pending accounts.`,
     { serviceOrderId: id }
   );
   emitSidebarRefresh(order.createdBy.id);
   emitSidebarRefreshByRole('NOC');
+  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
   emitSidebarRefreshByRole('SAM_HEAD');
-  emitSidebarRefreshByRole('SAM_EXECUTIVE');
   emitSidebarRefreshByRole('SUPER_ADMIN');
 
-  res.json({ message: 'NOC processing completed. Order moved to SAM for activation date.', data: updated });
+  res.json({ message: 'NOC processing completed. Order moved to accounts.', data: updated });
 });
 
 /**
- * Set activation date for a service order after NOC processing
- * SAM gets the billing start date from customer and enters it here
- * Roles: SAM_EXECUTIVE, SAM_HEAD, SUPER_ADMIN
+ * DEPRECATED: SAM no longer sets activation dates. The new flow goes
+ * NOC → ACCOUNTS → COMPLETED automatically; the 10-day notice is enforced
+ * SAM-side via scheduled_termination_at and CRM only mirrors on COMPLETED.
+ *
+ * Endpoint kept mounted to return 410 for any clients still calling it.
  */
 export const setActivationDate = asyncHandler(async function setActivationDate(req, res) {
-  const { id } = req.params;
-  const { activationDate } = req.body;
-
-  if (!activationDate) {
-    return res.status(400).json({ message: 'Activation date is required.' });
-  }
-
-  const order = await prisma.serviceOrder.findUnique({
-    where: { id },
-    include: { createdBy: { select: { id: true, name: true } } }
+  return res.status(410).json({
+    message: 'set-activation-date is deprecated. The new flow goes NOC → ACCOUNTS → COMPLETED automatically.',
   });
-
-  if (!order) return res.status(404).json({ message: 'Service order not found.' });
-  if (order.status !== 'PENDING_SAM_ACTIVATION') {
-    return res.status(400).json({ message: 'Order is not pending activation date.' });
-  }
-
-  // SAM_EXECUTIVE can only set for their own orders
-  if (req.user.role === 'SAM_EXECUTIVE' && order.createdById !== req.user.id) {
-    return res.status(403).json({ message: 'You can only set activation date for your own orders.' });
-  }
-
-  const updated = await prisma.serviceOrder.update({
-    where: { id },
-    data: {
-      status: 'PENDING_ACCOUNTS',
-      activationDate: new Date(activationDate),
-      activationSetById: req.user.id,
-      activationSetAt: new Date(),
-      updatedAt: new Date()
-    }
-  });
-
-  // Notify ACCOUNTS_TEAM
-  const accountsUsers = await prisma.user.findMany({
-    where: { role: 'ACCOUNTS_TEAM', isActive: true },
-    select: { id: true }
-  });
-  for (const accUser of accountsUsers) {
-    await createNotification(
-      accUser.id,
-      'SERVICE_ORDER',
-      'Order Ready for Billing',
-      `Order #${order.orderNumber} activation date set. Ready to start billing.`,
-      { serviceOrderId: id }
-    );
-    emitSidebarRefresh(accUser.id);
-  }
-  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
-  emitSidebarRefreshByRole('SAM_HEAD');
-  emitSidebarRefreshByRole('SAM_EXECUTIVE');
-  emitSidebarRefreshByRole('SUPER_ADMIN');
-
-  res.json({ message: 'Activation date set. Order moved to accounts for billing.', data: updated });
 });
 
 /**
@@ -1019,12 +989,54 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
   if (order.status !== 'PENDING_ACCOUNTS') {
     return res.status(400).json({ message: 'Order is not pending accounts processing.' });
   }
-  if (!['UPGRADE', 'DOWNGRADE', 'RATE_REVISION'].includes(order.orderType)) {
+  if (!['UPGRADE', 'DOWNGRADE', 'RATE_REVISION', 'DISCONNECTION'].includes(order.orderType)) {
     return res.status(400).json({ message: 'Invalid order type for accounts processing.' });
   }
 
+  // DISCONNECTION: accounts is now the final stop (NOC no longer
+  // deactivates). Settle the books, deactivate the plan, mark COMPLETED.
+  if (order.orderType === 'DISCONNECTION') {
+    const [updatedOrder] = await prisma.$transaction([
+      prisma.serviceOrder.update({
+        where: { id },
+        data: {
+          status: 'COMPLETED',
+          processedById: req.user.id,
+          processedAt: new Date(),
+          processNotes: processNotes || null,
+          updatedAt: new Date(),
+        },
+      }),
+      prisma.lead.update({
+        where: { id: order.customer.id },
+        data: { actualPlanIsActive: false },
+      }),
+    ]);
+
+    await createNotification(
+      order.createdBy.id,
+      'SERVICE_ORDER',
+      'Disconnection Completed',
+      `Order #${order.orderNumber} disconnected — customer plan deactivated by accounts.`,
+      { serviceOrderId: id }
+    );
+    emitSidebarRefresh(order.createdBy.id);
+    emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+    emitSidebarRefreshByRole('SAM_HEAD');
+    emitSidebarRefreshByRole('SAM_EXECUTIVE');
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+
+    return res.json({
+      message: 'Disconnection completed. Customer plan deactivated.',
+      data: updatedOrder,
+    });
+  }
+
   const lead = order.customer;
-  const activationDate = order.activationDate;
+  // SAM-set activation date is gone in the new flow. Fall back to the
+  // order's effectiveDate, or "now" if neither is set, so we still have a
+  // stamp to write into the lead/history rows.
+  const activationDate = order.activationDate || order.effectiveDate || new Date();
   const oldArc = lead.arcAmount || lead.actualPlanPrice || 0;
   const newArc = order.newArc;
   const newBandwidth = order.newBandwidth || lead.actualPlanBandwidth;

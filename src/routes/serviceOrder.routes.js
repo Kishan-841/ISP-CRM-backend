@@ -5,6 +5,7 @@ import {
   getServiceOrders,
   getServiceOrderById,
   approveServiceOrder,
+  deliveryApproveServiceOrder,
   rejectServiceOrder,
   processServiceOrder,
   uploadOrderAttachment,
@@ -32,7 +33,7 @@ router.get(
 // List orders (role-based filtering inside controller)
 router.get(
   '/',
-  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'NOC', 'DOCS_TEAM'),
+  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'DOCS_TEAM', 'SALES_DIRECTOR', 'DELIVERY_TEAM'),
   getServiceOrders
 );
 
@@ -85,21 +86,28 @@ router.post(
 // Get single order (must be after static routes, before :id param routes)
 router.get(
   '/:id',
-  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'NOC', 'DOCS_TEAM'),
+  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'DOCS_TEAM', 'SALES_DIRECTOR', 'DELIVERY_TEAM'),
   getServiceOrderById
 );
 
-// Approve order
+// Delivery approval — first gate (UPGRADE/DOWNGRADE only)
+router.post(
+  '/:id/delivery-approve',
+  requireRole('DELIVERY_TEAM', 'SUPER_ADMIN'),
+  deliveryApproveServiceOrder
+);
+
+// Sales Director approval (replaces admin approval)
 router.post(
   '/:id/approve',
-  requireRole('SUPER_ADMIN'),
+  requireRole('SALES_DIRECTOR', 'SUPER_ADMIN'),
   approveServiceOrder
 );
 
-// Reject order
+// Reject — accepted by either approving role at the early gates
 router.post(
   '/:id/reject',
-  requireRole('SUPER_ADMIN'),
+  requireRole('DELIVERY_TEAM', 'SALES_DIRECTOR', 'SUPER_ADMIN'),
   rejectServiceOrder
 );
 
