@@ -110,6 +110,8 @@ model User {
   serviceOrderDocsReviewed           ServiceOrder[]        @relation("ServiceOrderDocsReviewed")
   serviceOrderNocProcessed           ServiceOrder[]        @relation("ServiceOrderNocProcessed")
   serviceOrderActivationSet          ServiceOrder[]        @relation("ServiceOrderActivationSet")
+  serviceOrdersDeliveryApproved      ServiceOrder[]        @relation("DeliveryApprovedServiceOrders")
+  serviceOrdersSalesDirectorApproved ServiceOrder[]        @relation("SalesDirectorApprovedServiceOrders")
   // Team leader hierarchy
   teamLeaderId                       String?
   teamLeader                         User?                 @relation("TeamMemberRelation", fields: [teamLeaderId], references: [id], onDelete: SetNull)
@@ -2110,13 +2112,15 @@ enum ServiceOrderType {
 }
 
 enum ServiceOrderStatus {
-  PENDING_APPROVAL
-  APPROVED
+  PENDING_APPROVAL                  // legacy — preserved for in-flight orders until migrated
+  APPROVED                          // legacy — preserved for in-flight DISCONNECTION orders until migrated
   REJECTED
+  PENDING_DELIVERY_APPROVAL         // new initial gate for UPGRADE / DOWNGRADE
+  PENDING_SALES_DIRECTOR_APPROVAL   // new initial gate for RATE_REVISION / DISCONNECTION; second gate for UPGRADE / DOWNGRADE
   PENDING_DOCS_REVIEW
   DOCS_REJECTED
   PENDING_NOC
-  PENDING_SAM_ACTIVATION
+  PENDING_SAM_ACTIVATION            // legacy — preserved until in-flight orders are migrated
   PENDING_ACCOUNTS
   COMPLETED
   CANCELLED
@@ -2142,6 +2146,11 @@ model ServiceOrder {
   // Effective date (when the change should take effect)
   effectiveDate         DateTime?
 
+  // Customer's mail-received date — when SAM confirms the customer
+  // consented in writing. Set on creation by SAM (or manually for
+  // CRM-internal orders). Surfaced on the detail UI for both approvers.
+  mailReceivedDate      DateTime?
+
   // Disconnection fields
   disconnectionDate     DateTime?
   disconnectionReason   String?
@@ -2161,9 +2170,31 @@ model ServiceOrder {
   poFileUrl             String?              // "View Purchase Order"
 
   // Approval
+  // Legacy approvedBy fields remain populated by Sales Director approval —
+  // old reports read them. salesDirectorApprovedBy is the new explicit
+  // counterpart for the same gate.
   approvedById          String?
   approvedAt            DateTime?
   rejectionReason       String?
+
+  // Records WHICH stage rejected the order — useful for filtering / display
+  // even though the terminal state stays `REJECTED`. Examples:
+  // 'PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL',
+  // 'PENDING_DOCS_REVIEW' (mirrors docsRejectedReason path), etc.
+  rejectedFromStatus        String?
+
+  // Delivery team's approval gate (UPGRADE/DOWNGRADE only). Tracks who
+  // approved at this stage and when.
+  deliveryApprovedById      String?
+  deliveryApprovedAt        DateTime?
+  deliveryApprovedBy        User?      @relation("DeliveryApprovedServiceOrders", fields: [deliveryApprovedById], references: [id], onDelete: SetNull)
+
+  // Sales Director's approval gate (universal). Distinct from the legacy
+  // approvedBy/approvedById fields, which we keep populated for backward
+  // compat (Sales Director approval IS what fills those today).
+  salesDirectorApprovedById String?
+  salesDirectorApprovedAt   DateTime?
+  salesDirectorApprovedBy   User?      @relation("SalesDirectorApprovedServiceOrders", fields: [salesDirectorApprovedById], references: [id], onDelete: SetNull)
 
   // Processing (Accounts/NOC completion)
   processedById         String?
@@ -2206,6 +2237,8 @@ model ServiceOrder {
   @@index([orderType, status])
   @@index([docsReviewedById])
   @@index([nocProcessedById])
+  @@index([deliveryApprovedById])
+  @@index([salesDirectorApprovedById])
 }
 
 // Disconnection reason categories for service orders
