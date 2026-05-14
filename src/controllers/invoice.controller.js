@@ -284,14 +284,22 @@ export const generateManualInvoice = asyncHandler(async function generateManualI
     return res.status(400).json({ message: 'Plan is not active for this customer.' });
   }
 
-  // Period: day after the last invoice's billingPeriodEnd, OR today if no prior invoice.
+  // Period start: day after the last invoice's billingPeriodEnd if that's in
+  // the past (preserves continuity); otherwise TODAY. Most plans bill in
+  // advance, so the last invoice's period often ends in the future — in
+  // that case a manual bridge bill should start today, not jump ahead.
   // End = start + days - 1 (inclusive).
   const lastInvoice = lead.invoices[0];
-  const billingPeriodStart = lastInvoice
-    ? new Date(new Date(lastInvoice.billingPeriodEnd).getTime() + 24 * 60 * 60 * 1000)
-    : new Date();
-  // Normalize to UTC midnight to match cron behaviour
-  billingPeriodStart.setUTCHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  let billingPeriodStart;
+  if (lastInvoice) {
+    const nextAfterLast = new Date(new Date(lastInvoice.billingPeriodEnd).getTime() + 24 * 60 * 60 * 1000);
+    nextAfterLast.setUTCHours(0, 0, 0, 0);
+    billingPeriodStart = nextAfterLast > today ? today : nextAfterLast;
+  } else {
+    billingPeriodStart = today;
+  }
   const billingPeriodEnd = new Date(billingPeriodStart);
   billingPeriodEnd.setUTCDate(billingPeriodEnd.getUTCDate() + parsedDays - 1);
   billingPeriodEnd.setUTCHours(0, 0, 0, 0);
