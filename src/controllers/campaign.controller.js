@@ -3592,13 +3592,20 @@ export const getLeaderboardData = asyncHandler(async function getLeaderboardData
 export const getAllCallHistory = asyncHandler(async function getAllCallHistory(req, res) {
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
+    const isSalesDirector = req.user.role === 'SALES_DIRECTOR';
+    // SD has read-all visibility into call history but isn't a real admin —
+    // treat them like an admin for the where-clause scoping only.
+    const canViewAll = isAdmin || isSalesDirector;
     const { page, limit, skip } = parsePagination(req.query, 50);
-    const { search, startDate, endDate } = req.query;
+    const { search, startDate, endDate, isrId } = req.query;
 
     // Build where clause based on role
     let whereClause = {};
-    if (!isAdmin) {
+    if (!canViewAll) {
       whereClause = { userId };
+    } else if (isrId) {
+      // Admin/SD can narrow to a specific ISR via filter
+      whereClause = { userId: isrId };
     }
 
     // Add date filtering
