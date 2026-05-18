@@ -63,8 +63,9 @@ router.get('/channel-partners', getChannelPartners);
 // Get all vendors (accessible by all authenticated users)
 router.get('/', getVendors);
 
-// Get vendor stats (admin + accounts)
-router.get('/stats', requireRole('SUPER_ADMIN', 'ACCOUNTS_TEAM', 'FEASIBILITY_TEAM'), getVendorStats);
+// Get vendor stats (admin + accounts + feasibility + delivery — every role
+// that has the Vendors page accessible needs the count tiles to populate).
+router.get('/stats', requireRole('SUPER_ADMIN', 'ACCOUNTS_TEAM', 'FEASIBILITY_TEAM', 'DELIVERY_TEAM'), getVendorStats);
 
 // Vendor approval queue (admin)
 router.get('/approval-queue', requireRole('SUPER_ADMIN'), getVendorApprovalQueue);
