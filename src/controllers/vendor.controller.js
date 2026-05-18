@@ -169,7 +169,12 @@ export const createVendor = asyncHandler(async function createVendor(req, res) {
       bankName: bankName?.trim() || null,
       branchName: branchName?.trim() || null,
       cancelledCheque: cancelledChequeUrl,
-      docsStatus: (panDocumentUrl && gstDocumentUrl && cancelledChequeUrl) ? 'UPLOADED' : 'PENDING',
+      // PAN + Cancelled Cheque are the genuinely required docs (per the
+      // frontend form). GST is optional — small vendors below the GST
+      // threshold won't have one. Treat the vendor as docs-ready as soon
+      // as the required ones are uploaded so Accounts doesn't get a
+      // "please upload" prompt that the creator can't satisfy.
+      docsStatus: (panDocumentUrl && cancelledChequeUrl) ? 'UPLOADED' : 'PENDING',
       approvalStatus: 'PENDING_ADMIN',
       createdById: req.user.id
     },
@@ -516,9 +521,12 @@ export const createVendorFromFeasibility = asyncHandler(async function createVen
   const gstDocumentUrl = req.files?.gstDocument?.[0]?.path || null;
   const cancelledChequeUrl = req.files?.cancelledCheque?.[0]?.path || null;
 
-  // Determine docs status
-  const hasAllDocs = panDocumentUrl && gstDocumentUrl && cancelledChequeUrl;
-  const docsStatus = hasAllDocs ? 'UPLOADED' : 'PENDING';
+  // Required docs are PAN + Cancelled Cheque; GST is optional. See note
+  // in createVendor — keep the gate in sync with the actual required-field
+  // set so the Accounts-side "please upload" prompt doesn't trigger when
+  // there's nothing left for the creator to upload.
+  const hasRequiredDocs = panDocumentUrl && cancelledChequeUrl;
+  const docsStatus = hasRequiredDocs ? 'UPLOADED' : 'PENDING';
 
   const vendor = await prisma.vendor.create({
     data: {
