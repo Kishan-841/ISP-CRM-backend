@@ -41,7 +41,8 @@ import {
   getISRPipelineFunnel,
   getISRPipelineComparison,
   exportCampaignData,
-  editCampaignData
+  editCampaignData,
+  getIsrDataByBucket
 } from '../controllers/campaign.controller.js';
 
 const router = express.Router();
@@ -100,6 +101,11 @@ router.get('/reports/export-campaign-data', exportCampaignData);
 // ISR Pipeline Funnel routes
 router.get('/reports/pipeline-funnel', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'ISR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getISRPipelineFunnel);
 router.get('/reports/pipeline-comparison', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getISRPipelineComparison);
+
+// ISR Admin Dashboard — drill-in for the four stat cards. Admin-gated
+// inside the controller (SUPER_ADMIN / SALES_DIRECTOR / BDM_TEAM_LEADER /
+// OPS_TEAM), so no requireRole here — keeps the gate in one place.
+router.get('/isr-data', getIsrDataByBucket);
 
 // Shared routes (both Admin and assigned ISR)
 router.get('/:id', getCampaign);

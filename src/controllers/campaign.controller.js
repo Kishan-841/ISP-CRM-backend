@@ -4683,3 +4683,212 @@ export const exportCampaignData = asyncHandler(async function exportCampaignData
 
     res.json({ data: exportData });
 });
+
+/**
+ * GET /api/campaigns/isr-data?bucket=assigned|working|pending|converted
+ *   &search=&page=&limit=&period=&fromDate=&toDate=&userId=
+ *
+ * Powers the admin ISR dashboard's drill-in. Returns CampaignData rows in
+ * the requested bucket joined with the assigned ISR (resolved via a
+ * follow-up findMany — there's no direct relation on CampaignData), the
+ * most recent call outcome, and the lead if one was created. Admin / Master
+ * / Sales Director / BDM Team Leader / OPS only — same gate the dashboard
+ * itself uses.
+ */
+export const getIsrDataByBucket = asyncHandler(async function getIsrDataByBucket(req, res) {
+  const isAdmin = isAdminOrTestUser(req.user);
+  const canView = isAdmin || hasAnyRole(req.user, ['SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM']);
+  if (!canView) {
+    return res.status(403).json({ message: 'Access denied.' });
+  }
+
+  const { bucket = 'assigned', search, period, fromDate, toDate, userId } = req.query;
+  const { page, limit, skip } = parsePagination(req.query, 25);
+
+  // Bucket → status filter (mirrors getISRDashboardStats counts exactly).
+  const bucketStatus = {
+    assigned:  null,                          // no filter
+    working:   { not: 'NEW' },
+    pending:   'NEW',
+    converted: 'INTERESTED',
+  };
+  if (!(bucket in bucketStatus)) {
+    return res.status(400).json({
+      message: `Invalid bucket. Expected one of: ${Object.keys(bucketStatus).join(', ')}.`
+    });
+  }
+
+  // Date scope. Accepts the period values the ISR admin dashboard sends
+  // (last7days, monthly, yearly, alltime, custom) plus a few common
+  // synonyms so the same endpoint can be reused from other dashboards.
+  let dateScope = null;
+  const now = new Date();
+  switch (period) {
+    case 'today': {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      dateScope = { gte: start };
+      break;
+    }
+    case 'last7days': {
+      const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0);
+      dateScope = { gte: d };
+      break;
+    }
+    case 'monthly': {
+      const d = new Date(); d.setDate(d.getDate() - 30); d.setHours(0, 0, 0, 0);
+      dateScope = { gte: d };
+      break;
+    }
+    case 'yearly': {
+      const d = new Date(); d.setDate(d.getDate() - 365); d.setHours(0, 0, 0, 0);
+      dateScope = { gte: d };
+      break;
+    }
+    case 'lastMonth': {
+      dateScope = {
+        gte: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0),
+        lte: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
+      };
+      break;
+    }
+    case 'lastYear': {
+      dateScope = {
+        gte: new Date(now.getFullYear() - 1, 0, 1, 0, 0, 0, 0),
+        lte: new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999),
+      };
+      break;
+    }
+    case 'mtd':
+      dateScope = { gte: new Date(now.getFullYear(), now.getMonth(), 1) };
+      break;
+    case 'ytd':
+      dateScope = { gte: new Date(now.getFullYear(), 0, 1) };
+      break;
+    case 'custom': {
+      if (fromDate && toDate) {
+        const end = new Date(toDate); end.setHours(23, 59, 59, 999);
+        dateScope = { gte: new Date(fromDate), lte: end };
+      }
+      break;
+    }
+    case 'alltime':
+    case undefined:
+    case '':
+    case null:
+    default:
+      dateScope = null;
+  }
+
+  // Build the WHERE clause.
+  const where = {};
+  if (bucketStatus[bucket] !== null) where.status = bucketStatus[bucket];
+  if (dateScope) where.updatedAt = dateScope;
+  if (search && search.length >= 2) {
+    where.OR = [
+      { company: { contains: search, mode: 'insensitive' } },
+      { name:    { contains: search, mode: 'insensitive' } },
+      { email:   { contains: search, mode: 'insensitive' } },
+      { phone:   { contains: search } },
+    ];
+  }
+  // Optional scope to a specific ISR (used when the page is reached from a
+  // per-ISR dashboard, not just the aggregate admin one).
+  if (userId) {
+    where.assignedToId = userId;
+  }
+
+  const [rows, total] = await Promise.all([
+    prisma.campaignData.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        company: true,
+        name: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        city: true,
+        state: true,
+        industry: true,
+        title: true,
+        status: true,
+        assignedToId: true,
+        createdAt: true,
+        updatedAt: true,
+        campaign: { select: { id: true, code: true, name: true } },
+        // Most recent call log on this campaign data (gives us the outcome).
+        callLogs: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            status: true,
+            otherReason: true,
+            duration: true,
+            notes: true,
+            createdAt: true,
+            user: { select: { id: true, name: true } },
+          },
+        },
+        // Whether this campaign data has been converted to a lead.
+        lead: { select: { id: true, leadNumber: true, status: true } },
+      },
+    }),
+    prisma.campaignData.count({ where }),
+  ]);
+
+  // CampaignData has no direct `assignedTo` Prisma relation — resolve the
+  // assigned ISR's name/email with a single follow-up query (same trick
+  // exportCampaignData uses).
+  const isrIds = [...new Set(rows.map(r => r.assignedToId).filter(Boolean))];
+  const isrs = isrIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: isrIds } },
+        select: { id: true, name: true, email: true },
+      })
+    : [];
+  const isrMap = new Map(isrs.map(u => [u.id, u]));
+
+  res.json({
+    items: rows.map(r => {
+      const isr = r.assignedToId ? isrMap.get(r.assignedToId) : null;
+      const call = r.callLogs[0] || null;
+      return {
+        id: r.id,
+        company: r.company,
+        name: r.name || [r.firstName, r.lastName].filter(Boolean).join(' ') || null,
+        email: r.email,
+        phone: r.phone,
+        city: r.city,
+        state: r.state,
+        industry: r.industry,
+        title: r.title,
+        status: r.status,
+        isrId: r.assignedToId || null,
+        isrName: isr?.name || null,
+        isrEmail: isr?.email || null,
+        campaign: r.campaign
+          ? { id: r.campaign.id, code: r.campaign.code, name: r.campaign.name }
+          : null,
+        lastCall: call ? {
+          outcome: call.status,
+          otherReason: call.otherReason,
+          duration: call.duration,
+          notes: call.notes,
+          at: call.createdAt,
+          by: call.user?.name,
+        } : null,
+        lead: r.lead
+          ? { id: r.lead.id, leadNumber: r.lead.leadNumber, status: r.lead.status }
+          : null,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      };
+    }),
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  });
+});
