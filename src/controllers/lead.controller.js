@@ -4859,13 +4859,15 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       dateFrom.setDate(now.getDate() - 7);
       dateFrom.setHours(0, 0, 0, 0);
     } else if (period === 'lastMonth') {
-      dateFrom = new Date(now);
-      dateFrom.setMonth(now.getMonth() - 1);
-      dateFrom.setHours(0, 0, 0, 0);
+      // Previous CALENDAR month — 1st of last month → last day of last month.
+      // (Was previously a rolling 30-day window, which was misleading: on
+      //  May 18 it produced Apr 18 → May 18 instead of all-of-April.)
+      dateFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      dateTo   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
     } else if (period === 'lastYear') {
-      dateFrom = new Date(now);
-      dateFrom.setFullYear(now.getFullYear() - 1);
-      dateFrom.setHours(0, 0, 0, 0);
+      // Previous CALENDAR year — Jan 1 → Dec 31 of last year.
+      dateFrom = new Date(now.getFullYear() - 1, 0, 1, 0, 0, 0, 0);
+      dateTo   = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
     } else if (period === 'mtd') {
       dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
       dateFrom.setHours(0, 0, 0, 0);
