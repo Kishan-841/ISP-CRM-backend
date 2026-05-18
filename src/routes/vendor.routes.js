@@ -78,7 +78,7 @@ router.get('/:id', getVendorById);
 // Create new vendor (with file uploads)
 router.post(
   '/',
-  requireRole('SUPER_ADMIN', 'ACCOUNTS_TEAM', 'FEASIBILITY_TEAM'),
+  requireRole('SUPER_ADMIN', 'ACCOUNTS_TEAM', 'FEASIBILITY_TEAM', 'DELIVERY_TEAM'),
   vendorUpload.fields([
     { name: 'panDocument', maxCount: 1 },
     { name: 'gstDocument', maxCount: 1 },

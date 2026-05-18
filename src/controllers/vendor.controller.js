@@ -79,7 +79,7 @@ export const getVendorById = asyncHandler(async function getVendorById(req, res)
 
 // Create new vendor
 export const createVendor = asyncHandler(async function createVendor(req, res) {
-  if (!hasAnyRole(req.user, ['SUPER_ADMIN', 'ACCOUNTS_TEAM', 'FEASIBILITY_TEAM'])) {
+  if (!hasAnyRole(req.user, ['SUPER_ADMIN', 'ACCOUNTS_TEAM', 'FEASIBILITY_TEAM', 'DELIVERY_TEAM'])) {
     return res.status(403).json({ message: 'Access denied.' });
   }
 
