@@ -15,21 +15,10 @@ export const getVendors = asyncHandler(async function getVendors(req, res) {
   }
 
   if (approvalStatus) {
-    // Special pseudo-status used by the "Docs Rejected" tab: vendors that
-    // cleared admin approval but had their docs rejected by accounts. They're
-    // waiting on the creator to re-upload, not on accounts.
-    if (approvalStatus === 'DOCS_REJECTED') {
-      where.approvalStatus = 'PENDING_ACCOUNTS';
-      where.docsStatus = 'REJECTED';
-    } else if (approvalStatus.includes(',')) {
+    if (approvalStatus.includes(',')) {
       where.approvalStatus = { in: approvalStatus.split(',') };
     } else {
       where.approvalStatus = approvalStatus;
-      // For the regular "Pending Accounts" tab, exclude rejected-docs rows so
-      // accounts doesn't see vendors that are awaiting creator re-upload.
-      if (approvalStatus === 'PENDING_ACCOUNTS') {
-        where.docsStatus = { not: 'REJECTED' };
-      }
     }
   }
 
@@ -309,29 +298,14 @@ export const deleteVendor = asyncHandler(async function deleteVendor(req, res) {
   });
 });
 
-// Get vendor stats.
-// Note: `pendingAccounts` deliberately excludes vendors whose docs have been
-// rejected — those are awaiting CREATOR re-upload, not accounts action, and
-// shouldn't bloat the accounts queue. They surface in their own `docsRejected`
-// bucket so the creator (and admins) can find them.
+// Get vendor stats
 export const getVendorStats = asyncHandler(async function getVendorStats(req, res) {
-  const [total, active, inactive, pendingAdmin, pendingAccounts, docsRejected, approved, rejected] = await Promise.all([
+  const [total, active, inactive, pendingAdmin, pendingAccounts, approved, rejected] = await Promise.all([
     prisma.vendor.count(),
     prisma.vendor.count({ where: { isActive: true } }),
     prisma.vendor.count({ where: { isActive: false } }),
     prisma.vendor.count({ where: { approvalStatus: 'PENDING_ADMIN' } }),
-    prisma.vendor.count({
-      where: {
-        approvalStatus: 'PENDING_ACCOUNTS',
-        docsStatus: { not: 'REJECTED' },
-      },
-    }),
-    prisma.vendor.count({
-      where: {
-        approvalStatus: 'PENDING_ACCOUNTS',
-        docsStatus: 'REJECTED',
-      },
-    }),
+    prisma.vendor.count({ where: { approvalStatus: 'PENDING_ACCOUNTS' } }),
     prisma.vendor.count({ where: { approvalStatus: 'APPROVED' } }),
     prisma.vendor.count({ where: { approvalStatus: 'REJECTED' } })
   ]);
@@ -342,7 +316,6 @@ export const getVendorStats = asyncHandler(async function getVendorStats(req, re
     inactive,
     pendingAdmin,
     pendingAccounts,
-    docsRejected,
     approved,
     rejected
   });
@@ -605,12 +578,9 @@ export const createVendorFromFeasibility = asyncHandler(async function createVen
   });
 });
 
-// Upload vendor documents (after initial creation)
+// Upload vendor documents — also used by the creator (e.g. DELIVERY_TEAM) to
+// resubmit a REJECTED vendor with corrected info + re-uploaded docs.
 export const uploadVendorDocs = asyncHandler(async function uploadVendorDocs(req, res) {
-  if (!hasAnyRole(req.user, ['SUPER_ADMIN', 'FEASIBILITY_TEAM'])) {
-    return res.status(403).json({ message: 'Access denied.' });
-  }
-
   const { id } = req.params;
   const vendor = await prisma.vendor.findUnique({ where: { id } });
 
@@ -618,11 +588,24 @@ export const uploadVendorDocs = asyncHandler(async function uploadVendorDocs(req
     return res.status(404).json({ message: 'Vendor not found.' });
   }
 
+  // Privileged roles can always upload. Anyone else must be the creator AND
+  // the vendor must be in REJECTED state (the resubmit path).
+  const isPrivileged = hasAnyRole(req.user, ['SUPER_ADMIN', 'FEASIBILITY_TEAM']);
+  const isResubmittingCreator =
+    vendor.createdById === req.user.id && vendor.approvalStatus === 'REJECTED';
+
+  if (!isPrivileged && !isResubmittingCreator) {
+    return res.status(403).json({ message: 'Access denied.' });
+  }
+
   const panDocumentUrl = req.files?.panDocument?.[0]?.path || null;
   const gstDocumentUrl = req.files?.gstDocument?.[0]?.path || null;
   const cancelledChequeUrl = req.files?.cancelledCheque?.[0]?.path || null;
 
-  const { panNumber, gstNumber, accountNumber, ifscCode, accountName, bankName, branchName } = req.body;
+  const {
+    panNumber, gstNumber, accountNumber, ifscCode, accountName, bankName, branchName,
+    companyName, contactPerson, email, phone, address, city, state, category,
+  } = req.body;
 
   const updateData = { docsStatus: 'UPLOADED' };
 
@@ -636,6 +619,22 @@ export const uploadVendorDocs = asyncHandler(async function uploadVendorDocs(req
   if (accountName?.trim()) updateData.accountName = accountName.trim();
   if (bankName?.trim()) updateData.bankName = bankName.trim();
   if (branchName?.trim()) updateData.branchName = branchName.trim();
+  if (companyName?.trim()) updateData.companyName = companyName.trim();
+  if (contactPerson !== undefined) updateData.contactPerson = contactPerson?.trim() || null;
+  if (email !== undefined) updateData.email = email?.trim() || null;
+  if (phone !== undefined) updateData.phone = phone?.trim() || null;
+  if (address !== undefined) updateData.address = address?.trim() || null;
+  if (city !== undefined) updateData.city = city?.trim() || null;
+  if (state !== undefined) updateData.state = state?.trim() || null;
+  if (category) updateData.category = category;
+
+  // Resubmit path: admin already approved the company on the first pass, so
+  // skip admin and send straight back to accounts. Clear the rejection trail.
+  if (vendor.approvalStatus === 'REJECTED') {
+    updateData.approvalStatus = 'PENDING_ACCOUNTS';
+    updateData.accountsRejectionReason = null;
+    updateData.rejectedAt = null;
+  }
 
   const updated = await prisma.vendor.update({
     where: { id },
@@ -647,11 +646,12 @@ export const uploadVendorDocs = asyncHandler(async function uploadVendorDocs(req
   await notifyAllByRole(
     'ACCOUNTS_TEAM',
     'VENDOR_DOCS_REMINDER',
-    'Vendor Documents Uploaded',
-    `Documents uploaded for vendor "${updated.companyName}" - ready for verification`,
+    vendor.approvalStatus === 'REJECTED' ? 'Vendor Resubmitted' : 'Vendor Documents Uploaded',
+    `Documents ${vendor.approvalStatus === 'REJECTED' ? 'resubmitted' : 'uploaded'} for vendor "${updated.companyName}" - ready for verification`,
     { vendorId: updated.id, companyName: updated.companyName }
   );
   emitSidebarRefreshByRole('ACCOUNTS_TEAM');
+  emitSidebarRefreshByRole('SUPER_ADMIN');
 
   res.json({
     success: true,
@@ -691,11 +691,17 @@ export const verifyVendorDocs = asyncHandler(async function verifyVendorDocs(req
   }
 
   const updateData = { docsStatus: decision };
-  // When docs verified, also set vendor as fully APPROVED
   if (decision === 'VERIFIED') {
     updateData.approvalStatus = 'APPROVED';
     updateData.accountsApprovedById = req.user.id;
     updateData.accountsApprovedAt = new Date();
+  } else {
+    // On rejection, surface the vendor in the "Rejected" tab and record the
+    // reason so the creator (and reviewers) can see what needs fixing.
+    updateData.approvalStatus = 'REJECTED';
+    updateData.accountsRejectionReason = reason.trim();
+    updateData.accountsApprovedById = req.user.id;
+    updateData.rejectedAt = new Date();
   }
   const updated = await prisma.vendor.update({
     where: { id },

@@ -103,10 +103,11 @@ router.post(
   createVendorFromFeasibility
 );
 
-// Upload vendor documents (after initial creation)
+// Upload vendor documents (initial submission AND creator-led resubmit after
+// accounts rejection — controller enforces creator+REJECTED check for non-privileged roles).
 router.post(
   '/:id/upload-docs',
-  requireRole('SUPER_ADMIN', 'FEASIBILITY_TEAM'),
+  requireRole('SUPER_ADMIN', 'FEASIBILITY_TEAM', 'DELIVERY_TEAM', 'ACCOUNTS_TEAM'),
   vendorUpload.fields([
     { name: 'panDocument', maxCount: 1 },
     { name: 'gstDocument', maxCount: 1 },
