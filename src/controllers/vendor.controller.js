@@ -15,10 +15,21 @@ export const getVendors = asyncHandler(async function getVendors(req, res) {
   }
 
   if (approvalStatus) {
-    if (approvalStatus.includes(',')) {
+    // Special pseudo-status used by the "Docs Rejected" tab: vendors that
+    // cleared admin approval but had their docs rejected by accounts. They're
+    // waiting on the creator to re-upload, not on accounts.
+    if (approvalStatus === 'DOCS_REJECTED') {
+      where.approvalStatus = 'PENDING_ACCOUNTS';
+      where.docsStatus = 'REJECTED';
+    } else if (approvalStatus.includes(',')) {
       where.approvalStatus = { in: approvalStatus.split(',') };
     } else {
       where.approvalStatus = approvalStatus;
+      // For the regular "Pending Accounts" tab, exclude rejected-docs rows so
+      // accounts doesn't see vendors that are awaiting creator re-upload.
+      if (approvalStatus === 'PENDING_ACCOUNTS') {
+        where.docsStatus = { not: 'REJECTED' };
+      }
     }
   }
 
@@ -298,14 +309,29 @@ export const deleteVendor = asyncHandler(async function deleteVendor(req, res) {
   });
 });
 
-// Get vendor stats
+// Get vendor stats.
+// Note: `pendingAccounts` deliberately excludes vendors whose docs have been
+// rejected — those are awaiting CREATOR re-upload, not accounts action, and
+// shouldn't bloat the accounts queue. They surface in their own `docsRejected`
+// bucket so the creator (and admins) can find them.
 export const getVendorStats = asyncHandler(async function getVendorStats(req, res) {
-  const [total, active, inactive, pendingAdmin, pendingAccounts, approved, rejected] = await Promise.all([
+  const [total, active, inactive, pendingAdmin, pendingAccounts, docsRejected, approved, rejected] = await Promise.all([
     prisma.vendor.count(),
     prisma.vendor.count({ where: { isActive: true } }),
     prisma.vendor.count({ where: { isActive: false } }),
     prisma.vendor.count({ where: { approvalStatus: 'PENDING_ADMIN' } }),
-    prisma.vendor.count({ where: { approvalStatus: 'PENDING_ACCOUNTS' } }),
+    prisma.vendor.count({
+      where: {
+        approvalStatus: 'PENDING_ACCOUNTS',
+        docsStatus: { not: 'REJECTED' },
+      },
+    }),
+    prisma.vendor.count({
+      where: {
+        approvalStatus: 'PENDING_ACCOUNTS',
+        docsStatus: 'REJECTED',
+      },
+    }),
     prisma.vendor.count({ where: { approvalStatus: 'APPROVED' } }),
     prisma.vendor.count({ where: { approvalStatus: 'REJECTED' } })
   ]);
@@ -316,6 +342,7 @@ export const getVendorStats = asyncHandler(async function getVendorStats(req, re
     inactive,
     pendingAdmin,
     pendingAccounts,
+    docsRejected,
     approved,
     rejected
   });
