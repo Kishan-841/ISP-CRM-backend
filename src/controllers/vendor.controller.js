@@ -589,10 +589,13 @@ export const uploadVendorDocs = asyncHandler(async function uploadVendorDocs(req
   }
 
   // Privileged roles can always upload. Anyone else must be the creator AND
-  // the vendor must be in REJECTED state (the resubmit path).
+  // the vendor must be in a rejected state (resubmit path). Two shapes count
+  // as "rejected" here: the new flow (approvalStatus=REJECTED) and the legacy
+  // stuck shape from before this fix (PENDING_ACCOUNTS + docsStatus=REJECTED).
   const isPrivileged = hasAnyRole(req.user, ['SUPER_ADMIN', 'FEASIBILITY_TEAM']);
   const isResubmittingCreator =
-    vendor.createdById === req.user.id && vendor.approvalStatus === 'REJECTED';
+    vendor.createdById === req.user.id &&
+    (vendor.approvalStatus === 'REJECTED' || vendor.docsStatus === 'REJECTED');
 
   if (!isPrivileged && !isResubmittingCreator) {
     return res.status(403).json({ message: 'Access denied.' });
