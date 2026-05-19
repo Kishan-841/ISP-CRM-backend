@@ -31,7 +31,7 @@ async function main() {
 
   console.log('\n=================================');
   console.log('Super Admin Credentials:');
-  console.log('Email: admin@ispcrm.com');
+  console.log('Email: paras@gazonindia.com');
   console.log('Password: admin123');
   console.log('=================================\n');
 
