@@ -4801,13 +4801,16 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     // Who's pipeline to show?
     //   - BDM: always themselves
     //   - TL with no query: themselves (legacy behaviour)
-    //   - Admin with no query, OR any role passing userId=all: aggregate
-    //     across every active BDM / BDM_CP / BDM_TEAM_LEADER so super-admin
-    //     and master logins see a platform-wide view instead of their own
-    //     empty pipeline.
-    //   - Admin/TL with a specific userId: that BDM (or TL team)
+    //   - TL passing userId=all: their TEAM (TL + BDMs under them) — NOT
+    //     platform-wide. TL must never see other teams' data even if the
+    //     query param tries to escalate.
+    //   - Admin with no query, OR admin/OPS passing userId=all: aggregate
+    //     across every active BDM / BDM_CP / BDM_TEAM_LEADER so super-admin,
+    //     master, OPS see a platform-wide view instead of their own empty pipeline.
+    //   - Admin/TL/OPS with a specific userId: that BDM (or TL team)
     const queryUserId = req.query.userId;
-    const wantsAllBdms = (isAdmin || isTL || isOps) && (queryUserId === 'all' || ((isAdmin || isOps) && !queryUserId));
+    const wantsAllBdms = (isAdmin || isOps) && (queryUserId === 'all' || !queryUserId);
+    const tlWantsTeam = isTL && queryUserId === 'all';
 
     let userIds;
     if (wantsAllBdms) {
@@ -4819,6 +4822,13 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         select: { id: true }
       });
       userIds = allBdms.map(u => u.id);
+    } else if (tlWantsTeam) {
+      // Scope to TL + their direct reports only — no chance of seeing other teams.
+      const teamMembers = await prisma.user.findMany({
+        where: { teamLeaderId: req.user.id, isActive: true },
+        select: { id: true }
+      });
+      userIds = [req.user.id, ...teamMembers.map(u => u.id)];
     } else {
       const targetUserId = (isAdmin || isTL || isOps) && queryUserId ? queryUserId : req.user.id;
       userIds = [targetUserId];
