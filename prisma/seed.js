@@ -8,31 +8,34 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Seeding database...');
 
-  // Create Super Admin
+  // Create Super Admin accounts. Both upserts use `update: {}` so re-running
+  // the seed on prod NEVER overwrites a password that's been changed since
+  // first creation — only the initial create branch sets the password.
   const hashedPassword = await bcrypt.hash('admin123', 10);
 
-  const superAdmin = await prisma.user.upsert({
-    where: { email: 'admin@ispcrm.com' },
-    update: {},
-    create: {
-      email: 'admin@ispcrm.com',
-      password: hashedPassword,
-      name: 'Super Admin',
-      role: 'SUPER_ADMIN',
-      isActive: true
-    }
-  });
+  const superAdmins = [
+    { email: 'admin@ispcrm.com',     name: 'Super Admin' },
+    { email: 'paras@gazonindia.com', name: 'Paras' },
+  ];
 
-  console.log('Super Admin created:', {
-    email: superAdmin.email,
-    name: superAdmin.name,
-    role: superAdmin.role
-  });
+  for (const u of superAdmins) {
+    const created = await prisma.user.upsert({
+      where: { email: u.email },
+      update: {},
+      create: {
+        email: u.email,
+        password: hashedPassword,
+        name: u.name,
+        role: 'SUPER_ADMIN',
+        isActive: true,
+      },
+    });
+    console.log('Super Admin upserted:', { email: created.email, name: created.name, role: created.role });
+  }
 
   console.log('\n=================================');
-  console.log('Super Admin Credentials:');
-  console.log('Email: paras@gazonindia.com');
-  console.log('Password: admin123');
+  console.log('Super Admin Credentials (initial — change on first login):');
+  superAdmins.forEach(u => console.log(`  ${u.email}  /  admin123`));
   console.log('=================================\n');
 
   await seedComplaintCategories();
