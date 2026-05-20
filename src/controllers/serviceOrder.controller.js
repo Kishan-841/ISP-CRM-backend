@@ -4,7 +4,11 @@ import { generateServiceOrderNumber } from '../services/documentNumber.service.j
 import { createNotification, notifyAllAdmins } from '../services/notification.service.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
-import { enqueueActivationWebhook, attemptDeliveryInBackground } from '../services/samWebhook.service.js';
+import {
+  enqueueActivationWebhook,
+  attemptDeliveryInBackground,
+  notifyCommercialChangeIfLinked,
+} from '../services/samWebhook.service.js';
 
 /**
  * Get disconnection reason categories with sub-categories
@@ -825,6 +829,19 @@ export const docsReviewServiceOrder = asyncHandler(async function docsReviewServ
   emitSidebarRefreshByRole('SAM_HEAD');
   emitSidebarRefreshByRole('SUPER_ADMIN');
 
+  // Fire commercialChange.statusChanged if this SO was created off a QUICK
+  // approval. Maps the docs-review outcome → spec status enum:
+  //   APPROVED → PENDING_NOC
+  //   REJECTED → DOCS_REJECTED (SAM-side: hard revert per spec §4.1)
+  const ccWebhookLog = await notifyCommercialChangeIfLinked(prisma, {
+    serviceOrderId: id,
+    fromStatus: 'PENDING_DOCS_REVIEW',
+    toStatus: decision === 'APPROVED' ? 'PENDING_NOC' : 'DOCS_REJECTED',
+    changedByUser: req.user,
+    note: decision === 'REJECTED' ? reason : undefined,
+  });
+  if (ccWebhookLog) attemptDeliveryInBackground(ccWebhookLog.id);
+
   res.json({ message: `Order ${decision === 'APPROVED' ? 'approved' : 'rejected'} successfully.`, data: updated });
 });
 
@@ -963,6 +980,16 @@ export const nocProcessServiceOrder = asyncHandler(async function nocProcessServ
   emitSidebarRefreshByRole('ACCOUNTS_TEAM');
   emitSidebarRefreshByRole('SAM_HEAD');
   emitSidebarRefreshByRole('SUPER_ADMIN');
+
+  // QUICK-originated orders bubble the stage transition to SAM.
+  const ccWebhookLog = await notifyCommercialChangeIfLinked(prisma, {
+    serviceOrderId: id,
+    fromStatus: 'PENDING_NOC',
+    toStatus: 'PENDING_ACCOUNTS',
+    changedByUser: req.user,
+    note: nocNotes || undefined,
+  });
+  if (ccWebhookLog) attemptDeliveryInBackground(ccWebhookLog.id);
 
   res.json({ message: 'NOC processing completed. Order moved to accounts.', data: updated });
 });
@@ -1240,6 +1267,17 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
   emitSidebarRefreshByRole('SAM_HEAD');
   emitSidebarRefreshByRole('SAM_EXECUTIVE');
   emitSidebarRefreshByRole('SUPER_ADMIN');
+
+  // QUICK-originated disconnection just hit COMPLETED — bubble it to SAM so
+  // they fire the final customer.disconnected back at us (spec §5.5).
+  const ccWebhookLog = await notifyCommercialChangeIfLinked(prisma, {
+    serviceOrderId: id,
+    fromStatus: 'PENDING_ACCOUNTS',
+    toStatus: 'COMPLETED',
+    changedByUser: req.user,
+    note: processNotes || undefined,
+  });
+  if (ccWebhookLog) attemptDeliveryInBackground(ccWebhookLog.id);
 
   return res.json({
     message: order.orderType === 'DISCONNECTION'

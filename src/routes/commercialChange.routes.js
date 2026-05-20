@@ -5,6 +5,7 @@ import {
   getSidebarCounts,
   getById,
   decide,
+  cancel,
 } from '../controllers/commercialChange.controller.js';
 
 // Quick Disconnect inbox endpoints — SUPER_ADMIN only. The receive side
@@ -19,5 +20,6 @@ router.get('/queue', getQueue);
 router.get('/sidebar-counts', getSidebarCounts);
 router.get('/:id', getById);
 router.patch('/:id/decide', decide);
+router.patch('/:id/cancel', cancel);
 
 export default router;

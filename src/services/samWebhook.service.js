@@ -48,6 +48,10 @@ function envConfigured() {
 const URL_ENV_BY_EVENT = {
   'customer.activated': 'SAM_CUSTOMER_ACTIVATED_URL',
   'quickDisconnect.decided': 'SAM_QUICK_DISCONNECT_DECIDED_URL',
+  // New per-spec event — fires on EVERY commercial-change state transition,
+  // not just the initial admin approval. URL is the new SAM endpoint
+  // /integrations/crm/commercial-change-status (or the documented alias).
+  'commercialChange.statusChanged': 'SAM_COMMERCIAL_CHANGE_STATUS_URL',
 };
 
 function resolveUrlForEvent(eventType) {
@@ -114,43 +118,89 @@ export async function enqueueActivationWebhook(tx, lead) {
   });
 }
 
-// Build the outbound payload for quickDisconnect.decided. Same envelope shape
-// as customer.activated (eventId / eventType / occurredAt + a domain object).
-function buildQuickDisconnectDecidedPayload(change, decidedByUser, decision, note) {
+// Build the outbound payload for commercialChange.statusChanged. Fires on
+// every transition through the QUICK workflow (admin approve, docs review
+// approve/reject, NOC complete, accounts complete, cancel, etc.) — not just
+// the first admin decision. Replaces the old quickDisconnect.decided event
+// (spec §3.4 Option A — retire the old single-fire model).
+function buildCommercialChangeStatusChangedPayload({
+  change,
+  fromStatus,
+  toStatus,
+  changedByUser,
+  note,
+  serviceOrder,
+}) {
   return {
     eventId: crypto.randomUUID(),
-    eventType: 'quickDisconnect.decided',
+    eventType: 'commercialChange.statusChanged',
     occurredAt: new Date().toISOString(),
     commercialChangeId: change.commercialChangeId,
-    decision, // 'APPROVE' | 'REJECT'
-    // SAM operators read this; email is more useful than the opaque UUID
-    // when triaging downstream — falls back to id if email is missing.
-    decidedBy: decidedByUser?.email || decidedByUser?.id || null,
+    fromStatus: fromStatus || null,
+    toStatus,
+    changedBy: changedByUser?.email || changedByUser?.id || null,
     ...(note ? { note } : {}),
+    ...(serviceOrder
+      ? { serviceOrderId: serviceOrder.id, serviceOrderNumber: serviceOrder.orderNumber }
+      : {}),
   };
 }
 
-// Enqueue a PENDING SamWebhookLog for a quick-disconnect decision inside the
-// caller's transaction. Returns the created row (or null if env not wired).
-// The CommercialChange row stores the resulting eventId + logId so the admin
-// detail UI can surface delivery status without joining via raw SamWebhookLog.
-export async function enqueueQuickDisconnectDecidedWebhook(tx, change, decidedByUser, decision, note) {
+// Enqueue a PENDING SamWebhookLog for a commercial-change status transition
+// inside the caller's transaction. Returns the created row (or null if env
+// isn't wired). Callers should record the resulting eventId + logId on the
+// CommercialChange row only if this is the FIRST transition — subsequent
+// transitions overwrite the previous link, which is fine because SAM's
+// observability for older transitions lives in the SamWebhookLog table.
+export async function enqueueCommercialChangeStatusChangedWebhook(tx, args) {
   if (!envConfigured()) {
     console.warn('[SamWebhook] SAM_WEBHOOK_URL / SAM_WEBHOOK_SECRET not set; skipping enqueue.');
     return null;
   }
-  const payload = buildQuickDisconnectDecidedPayload(change, decidedByUser, decision, note);
+  const payload = buildCommercialChangeStatusChangedPayload(args);
   return tx.samWebhookLog.create({
     data: {
       eventId: payload.eventId,
-      // SamWebhookLog.leadId is required by schema but irrelevant for this
-      // event type; we reuse it to keep this change cheap and so filtering
-      // by lead in the admin webhook viewer still surfaces decision events.
-      leadId: change.leadId,
+      // SamWebhookLog.leadId is schema-required; reuse it so the admin
+      // webhook viewer's leadId filter still surfaces transition events.
+      leadId: args.change.leadId,
       payload,
       status: 'PENDING',
       nextAttemptAt: new Date(),
     },
+  });
+}
+
+// Convenience wrapper used by the ServiceOrder workflow controllers. Given a
+// service-order id and the new status, looks up the linked CommercialChange
+// (if any) and fires commercialChange.statusChanged. No-op when the SO isn't
+// linked to a CC (i.e. normal disconnect, not QUICK-originated).
+//
+// `client` is either `prisma` or a transaction handle — pass the transaction
+// handle if the caller has one open, otherwise pass the global client.
+export async function notifyCommercialChangeIfLinked(client, {
+  serviceOrderId,
+  fromStatus,
+  toStatus,
+  changedByUser,
+  note,
+}) {
+  const change = await client.commercialChange.findUnique({
+    where: { serviceOrderId },
+    select: { id: true, leadId: true, commercialChangeId: true },
+  });
+  if (!change) return null;
+  const serviceOrder = await client.serviceOrder.findUnique({
+    where: { id: serviceOrderId },
+    select: { id: true, orderNumber: true },
+  });
+  return enqueueCommercialChangeStatusChangedWebhook(client, {
+    change,
+    fromStatus,
+    toStatus,
+    changedByUser,
+    note,
+    serviceOrder,
   });
 }
 

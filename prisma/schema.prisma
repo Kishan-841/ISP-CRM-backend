@@ -2500,6 +2500,7 @@ enum CommercialChangeStatus {
   PENDING
   APPROVED
   REJECTED
+  CANCELLED
 }
 
 model CommercialChange {
@@ -2519,6 +2520,13 @@ model CommercialChange {
   raisedBySamEmail  String?
   reason            String   @db.Text
   raisedAt          DateTime
+
+  // Disconnection categorisation — SAM operator picks these in the QUICK
+  // request UI, so CRM has everything it needs to auto-create the
+  // ServiceOrder when admin approves. Validated against the existing
+  // DisconnectionCategory / DisconnectionSubCategory tables on inbound.
+  disconnectionCategoryId    String?
+  disconnectionSubCategoryId String?
 
   status       CommercialChangeStatus @default(PENDING)
   decidedById  String?

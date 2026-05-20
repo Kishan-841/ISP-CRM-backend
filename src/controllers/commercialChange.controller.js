@@ -2,9 +2,10 @@ import prisma from '../config/db.js';
 import { isAdmin } from '../utils/roleHelper.js';
 import { asyncHandler, parsePagination } from '../utils/controllerHelper.js';
 import {
-  enqueueQuickDisconnectDecidedWebhook,
+  enqueueCommercialChangeStatusChangedWebhook,
   attemptDeliveryInBackground,
 } from '../services/samWebhook.service.js';
+import { generateServiceOrderNumber } from '../services/documentNumber.service.js';
 import { emitSidebarRefreshByRole } from '../sockets/index.js';
 
 // Quick-disconnect inbox surface — list / detail / decide. Inbound creation
@@ -122,10 +123,17 @@ export const getById = asyncHandler(async function getById(req, res) {
 
 // PATCH /api/commercial-changes/:id/decide — body { decision, note? }
 //
-// Single transaction: update row, write AuditLog, enqueue outbound webhook,
-// store the eventId+logId on the row. After commit the immediate post-commit
-// delivery attempt fires in background; if it 5xx's or times out, the retry
-// cron picks it up.
+// APPROVE path: flip CC to APPROVED, auto-create a DISCONNECTION ServiceOrder
+// at PENDING_DOCS_REVIEW (spec §1 stage 2 — admin approval IS the
+// Sales-Director gate for QUICK orders, so we skip PENDING_SALES_DIRECTOR_APPROVAL),
+// link CC ↔ SO, fire commercialChange.statusChanged { toStatus: 'PENDING_DOCS_REVIEW' }.
+//
+// REJECT path: flip CC to REJECTED, fire commercialChange.statusChanged
+// { toStatus: 'REJECTED' }. No SO is created.
+//
+// Everything (CC update, SO create, audit log, webhook enqueue) commits in
+// one transaction; the immediate post-commit delivery attempt fires in
+// background and falls back to the retry cron on 5xx/network.
 export const decide = asyncHandler(async function decide(req, res) {
   if (!isAdmin(req.user)) {
     return res.status(403).json({ message: 'Access denied.' });
@@ -142,16 +150,43 @@ export const decide = asyncHandler(async function decide(req, res) {
     return res.status(400).json({ message: 'A note (min 3 chars) is required when rejecting.' });
   }
 
-  const existing = await prisma.commercialChange.findUnique({ where: { id } });
+  const existing = await prisma.commercialChange.findUnique({
+    where: { id },
+    include: { lead: { select: { id: true, customerUserId: true, actualPlanName: true, actualPlanBandwidth: true, actualPlanPrice: true, arcAmount: true, campaignData: { select: { company: true } } } } },
+  });
   if (!existing) return res.status(404).json({ message: 'Not found.' });
   if (existing.status !== 'PENDING') {
     return res.status(409).json({ message: `Already ${existing.status.toLowerCase()}.` });
   }
+  if (decision === 'APPROVE') {
+    if (!existing.disconnectionCategoryId || !existing.disconnectionSubCategoryId) {
+      return res.status(400).json({
+        message: 'CommercialChange is missing disconnection category — cannot auto-create service order. SAM must include disconnectionCategoryId/SubCategoryId on the QUICK request payload.',
+      });
+    }
+    if (!existing.lead?.customerUserId) {
+      return res.status(400).json({ message: 'Lead has no active customer account — cannot create a service order.' });
+    }
+  }
 
   const newStatus = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+  const toStatus = decision === 'APPROVE' ? 'PENDING_DOCS_REVIEW' : 'REJECTED';
   const decidedAt = new Date();
 
-  const { updatedRow, webhookLog } = await prisma.$transaction(async (tx) => {
+  // Pre-generate the SO number outside the transaction — generator uses
+  // its own atomic upsert and we don't want to nest serialization conflicts.
+  let preparedServiceOrder = null;
+  if (decision === 'APPROVE') {
+    const orderNumber = await generateServiceOrderNumber();
+    preparedServiceOrder = {
+      orderNumber,
+      // QUICK marker baked into notes so every approver page (docs, NOC,
+      // accounts) sees the provenance via the inline notes column.
+      notes: `SAM-${(existing.commercialChangeId || '').slice(0, 8)} | QUICK disconnect — CRM Admin approved | Reason: ${existing.reason}`,
+    };
+  }
+
+  const { updatedRow, serviceOrder, webhookLog } = await prisma.$transaction(async (tx) => {
     const row = await tx.commercialChange.update({
       where: { id },
       data: {
@@ -180,13 +215,144 @@ export const decide = asyncHandler(async function decide(req, res) {
       },
     });
 
-    const log = await enqueueQuickDisconnectDecidedWebhook(
-      tx,
-      row,
-      req.user,
-      decision,
-      trimmedNote || undefined,
-    );
+    // On APPROVE — create the follow-on ServiceOrder and link it. We start
+    // at PENDING_DOCS_REVIEW (not PENDING_SALES_DIRECTOR_APPROVAL like
+    // a normal disconnect) because the CRM admin's approval here is the
+    // equivalent gate for QUICK orders.
+    let so = null;
+    if (decision === 'APPROVE') {
+      so = await tx.serviceOrder.create({
+        data: {
+          orderNumber: preparedServiceOrder.orderNumber,
+          customerId: existing.leadId,
+          orderType: 'DISCONNECTION',
+          status: 'PENDING_DOCS_REVIEW',
+          createdById: req.user.id,
+          currentPlanName: existing.lead?.actualPlanName ?? null,
+          currentBandwidth: existing.lead?.actualPlanBandwidth ?? null,
+          currentArc: existing.lead?.arcAmount ?? existing.lead?.actualPlanPrice ?? null,
+          disconnectionCategoryId: existing.disconnectionCategoryId,
+          disconnectionSubCategoryId: existing.disconnectionSubCategoryId,
+          disconnectionReason: existing.reason,
+          disconnectionDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          notes: preparedServiceOrder.notes,
+        },
+      });
+      await tx.commercialChange.update({
+        where: { id },
+        data: { serviceOrderId: so.id },
+      });
+    }
+
+    const log = await enqueueCommercialChangeStatusChangedWebhook(tx, {
+      change: row,
+      fromStatus: 'PENDING_ADMIN_APPROVAL',
+      toStatus,
+      changedByUser: req.user,
+      note: trimmedNote || undefined,
+      serviceOrder: so,
+    });
+
+    if (log) {
+      await tx.commercialChange.update({
+        where: { id },
+        data: { outboundEventId: log.eventId, outboundLogId: log.id },
+      });
+    }
+
+    return { updatedRow: row, serviceOrder: so, webhookLog: log };
+  });
+
+  if (webhookLog) {
+    attemptDeliveryInBackground(webhookLog.id);
+  }
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+  // If a SO was created, notify the docs team (their queue just got a new row).
+  if (serviceOrder) {
+    emitSidebarRefreshByRole('DOCS_TEAM');
+  }
+
+  res.json({
+    success: true,
+    message: decision === 'APPROVE' ? 'Approved — workflow ticket created.' : 'Rejected.',
+    item: updatedRow,
+    serviceOrder: serviceOrder ? { id: serviceOrder.id, orderNumber: serviceOrder.orderNumber, status: serviceOrder.status } : null,
+    outboundEnqueued: Boolean(webhookLog),
+  });
+});
+
+// PATCH /api/commercial-changes/:id/cancel — admin abandons an in-flight QD
+// after they've already approved it. Marks CC = CANCELLED, the linked SO =
+// CANCELLED, and fires commercialChange.statusChanged { toStatus: 'CANCELLED' }
+// so SAM reverts the account to ACTIVE on their side.
+//
+// Disallowed when the SO has already reached COMPLETED (can't un-disconnect
+// a customer through the cancel button — they'd need an upgrade/new lead).
+export const cancel = asyncHandler(async function cancel(req, res) {
+  if (!isAdmin(req.user)) {
+    return res.status(403).json({ message: 'Access denied.' });
+  }
+  const { id } = req.params;
+  const { note } = req.body || {};
+  const trimmedNote = typeof note === 'string' ? note.trim() : '';
+  if (trimmedNote.length < 3) {
+    return res.status(400).json({ message: 'A note (min 3 chars) is required when cancelling.' });
+  }
+
+  const existing = await prisma.commercialChange.findUnique({
+    where: { id },
+    include: { serviceOrder: { select: { id: true, orderNumber: true, status: true } } },
+  });
+  if (!existing) return res.status(404).json({ message: 'Not found.' });
+  if (existing.status !== 'APPROVED') {
+    return res.status(409).json({ message: `Cannot cancel a ${existing.status.toLowerCase()} request.` });
+  }
+  if (existing.serviceOrder?.status === 'COMPLETED') {
+    return res.status(409).json({ message: 'Service order already completed — cannot cancel.' });
+  }
+
+  const { updatedRow, webhookLog } = await prisma.$transaction(async (tx) => {
+    const row = await tx.commercialChange.update({
+      where: { id },
+      data: { status: 'CANCELLED', decisionNote: trimmedNote },
+    });
+
+    let priorSoStatus = null;
+    if (existing.serviceOrder?.id) {
+      priorSoStatus = existing.serviceOrder.status;
+      await tx.serviceOrder.update({
+        where: { id: existing.serviceOrder.id },
+        data: { status: 'CANCELLED', updatedAt: new Date() },
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        entityType: 'COMMERCIAL_CHANGE',
+        entityId: id,
+        action: 'UPDATE',
+        changes: { status: { from: 'APPROVED', to: 'CANCELLED' }, decisionNote: { from: existing.decisionNote, to: trimmedNote } },
+        snapshot: row,
+        context: {
+          commercialChangeId: row.commercialChangeId,
+          cancelledServiceOrderId: existing.serviceOrder?.id || null,
+          cancelledFromStatus: priorSoStatus,
+        },
+        userId: req.user.id,
+        userRole: req.user.role,
+        userName: req.user.name,
+        userEmail: req.user.email,
+      },
+    });
+
+    const log = await enqueueCommercialChangeStatusChangedWebhook(tx, {
+      change: row,
+      fromStatus: priorSoStatus || 'APPROVED',
+      toStatus: 'CANCELLED',
+      changedByUser: req.user,
+      note: trimmedNote,
+      serviceOrder: existing.serviceOrder?.id ? existing.serviceOrder : null,
+    });
 
     if (log) {
       await tx.commercialChange.update({
@@ -198,15 +364,11 @@ export const decide = asyncHandler(async function decide(req, res) {
     return { updatedRow: row, webhookLog: log };
   });
 
-  if (webhookLog) {
-    attemptDeliveryInBackground(webhookLog.id);
-  }
+  if (webhookLog) attemptDeliveryInBackground(webhookLog.id);
   emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('DOCS_TEAM');
+  emitSidebarRefreshByRole('NOC');
+  emitSidebarRefreshByRole('ACCOUNTS_TEAM');
 
-  res.json({
-    success: true,
-    message: decision === 'APPROVE' ? 'Approved.' : 'Rejected.',
-    item: updatedRow,
-    outboundEnqueued: Boolean(webhookLog),
-  });
+  res.json({ success: true, message: 'Cancelled.', item: updatedRow });
 });
