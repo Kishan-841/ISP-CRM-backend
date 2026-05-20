@@ -36,6 +36,26 @@ function envConfigured() {
   return Boolean(process.env.SAM_WEBHOOK_URL && process.env.SAM_WEBHOOK_SECRET);
 }
 
+// Per-event URL resolver. SAM has separate endpoints per event type (their
+// customer-activated handler 400s on a quickDisconnect.decided payload — and
+// vice versa), so we route to the right URL based on payload.eventType.
+//
+// Resolution order for each event:
+//   1. The per-event env var (e.g. SAM_QUICK_DISCONNECT_DECIDED_URL)
+//   2. The legacy single SAM_WEBHOOK_URL (back-compat for customer.activated,
+//      which was wired before this routing existed)
+// If neither is set, attemptDelivery short-circuits and logs.
+const URL_ENV_BY_EVENT = {
+  'customer.activated': 'SAM_CUSTOMER_ACTIVATED_URL',
+  'quickDisconnect.decided': 'SAM_QUICK_DISCONNECT_DECIDED_URL',
+};
+
+function resolveUrlForEvent(eventType) {
+  const specific = URL_ENV_BY_EVENT[eventType];
+  if (specific && process.env[specific]) return process.env[specific];
+  return process.env.SAM_WEBHOOK_URL || null;
+}
+
 function toIsoDate(value) {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(value);
@@ -159,6 +179,25 @@ export async function attemptDelivery(logId) {
   const body = JSON.stringify(log.payload);
   const signature = signBody(body, ts);
 
+  const eventType = log.payload?.eventType || 'unknown';
+  const targetUrl = resolveUrlForEvent(eventType);
+  if (!targetUrl) {
+    // No URL wired for this event type and no legacy SAM_WEBHOOK_URL fallback
+    // either. Mark FAILED so the retry cron stops banging on it.
+    await prisma.samWebhookLog.update({
+      where: { id: log.id },
+      data: {
+        status: 'FAILED',
+        attemptCount: log.attemptCount + 1,
+        lastAttemptedAt: new Date(),
+        lastResponseStatus: null,
+        lastResponseBody: `No URL configured for eventType=${eventType}. Set ${URL_ENV_BY_EVENT[eventType] || 'SAM_WEBHOOK_URL'}.`,
+      },
+    });
+    console.error(`[SamWebhook] No URL configured for eventType=${eventType} — set ${URL_ENV_BY_EVENT[eventType] || 'SAM_WEBHOOK_URL'} env var.`);
+    return;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -166,7 +205,7 @@ export async function attemptDelivery(logId) {
   let responseBody = '';
   let networkError = null;
   try {
-    const res = await fetch(process.env.SAM_WEBHOOK_URL, {
+    const res = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -222,7 +261,7 @@ export async function attemptDelivery(logId) {
       },
     });
     console.error(
-      `[SamWebhook] Permanent failure (${responseStatus}) for event ${log.eventId}: ${responseBody}`
+      `[SamWebhook] Permanent failure (${responseStatus}) for eventType=${eventType} eventId=${log.eventId} url=${targetUrl}: ${responseBody}`
     );
     return;
   }
@@ -241,7 +280,7 @@ export async function attemptDelivery(logId) {
       },
     });
     console.error(
-      `[SamWebhook] Giving up after ${newAttemptCount} attempts for event ${log.eventId}` +
+      `[SamWebhook] Giving up after ${newAttemptCount} attempts for eventType=${eventType} eventId=${log.eventId} url=${targetUrl}` +
         (networkError ? ` (network: ${networkError.message})` : ` (status: ${responseStatus})`)
     );
     return;
