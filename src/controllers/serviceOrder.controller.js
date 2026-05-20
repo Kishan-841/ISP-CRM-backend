@@ -225,6 +225,26 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
 
   const order = await prisma.serviceOrder.create({ data });
 
+  // If this is a DISCONNECTION and the customer has an APPROVED-but-unlinked
+  // QuickDisconnect, link the two so the admin UI can deep-link from the
+  // Quick Disconnects inbox to the resulting workflow ticket. We pick the
+  // most recent unlinked APPROVED row — if there's no match (e.g. the SO
+  // was created the normal way, not as a follow-on to a QD approval),
+  // nothing happens.
+  if (orderType === 'DISCONNECTION') {
+    const linkable = await prisma.commercialChange.findFirst({
+      where: { leadId: customerId, status: 'APPROVED', serviceOrderId: null },
+      orderBy: { decidedAt: 'desc' },
+      select: { id: true },
+    });
+    if (linkable) {
+      await prisma.commercialChange.update({
+        where: { id: linkable.id },
+        data: { serviceOrderId: order.id },
+      });
+    }
+  }
+
   // Notify the team that owns the first gate. SUPER_ADMIN always sees
   // everything (admin override is allowed).
   const companyName = customer.campaignData?.company || 'Customer';

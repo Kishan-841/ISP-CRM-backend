@@ -221,3 +221,132 @@ export const receiveQuickDisconnectRequested = async (req, res) => {
   trace(`201 CREATED: id=${created.id} commercialChangeId=${commercialChangeId} leadId=${lead.id} raisedBy=${payload.raisedBy?.email || payload.raisedBy?.id || 'unknown'}`);
   res.status(201).json({ message: 'Accepted.', id: created.id });
 };
+
+// POST /api/webhooks/sam/customer.disconnected
+//
+// SAM fires this once it actually terminates the customer (after the
+// scheduled-termination sweep, regardless of whether it originated from a
+// QUICK approval or a normal 21-day retention). Closes the loop so CRM can
+// flip the Lead from active to inactive — until this fires, CRM lies about
+// the customer's state.
+//
+// Body (verified-then-parsed):
+//   {
+//     eventId, eventType, occurredAt,
+//     customer: { externalId },
+//     terminationDate,
+//     finalArc?,
+//     commercialChangeId?
+//   }
+export const receiveCustomerDisconnected = async (req, res) => {
+  const TAG = '[CustomerDisconnected inbound]';
+  const trace = (...args) => console.log(TAG, ...args);
+
+  if (!envConfigured()) {
+    trace('REJECT 503: SAM_WEBHOOK_SECRET not set');
+    return res.status(503).json({ message: 'Webhook receiver not configured.' });
+  }
+
+  const signature = req.header('x-sam-signature');
+  const timestamp = req.header('x-sam-timestamp');
+  const rawBody = req.rawBody || '';
+  trace(`hit: sig=${signature ? signature.slice(0, 8) + '…' : 'MISSING'} ts=${timestamp || 'MISSING'} bodyBytes=${rawBody.length}`);
+
+  if (!verifySignature(rawBody, timestamp, signature)) {
+    trace('REJECT 401: bad signature');
+    return res.status(401).json({ message: 'Invalid signature.' });
+  }
+  if (!timestampInWindow(timestamp)) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    trace(`REJECT 401: timestamp skew their=${timestamp} our=${nowSec}`);
+    return res.status(401).json({ message: 'Timestamp outside allowed skew.' });
+  }
+
+  const payload = req.body || {};
+  const eventId = payload.eventId;
+  const externalId = payload.customer?.externalId;
+  const terminationDateStr = payload.terminationDate;
+
+  if (!eventId || !externalId || !terminationDateStr) {
+    trace(`REJECT 400: missing fields. eventId=${!!eventId} externalId=${!!externalId} terminationDate=${!!terminationDateStr}`);
+    return res.status(400).json({
+      message: 'Missing required fields: eventId, customer.externalId, terminationDate.',
+    });
+  }
+  if (payload.eventType && payload.eventType !== 'customer.disconnected') {
+    trace(`REJECT 400: bad eventType=${payload.eventType}`);
+    return res.status(400).json({ message: `Unexpected eventType: ${payload.eventType}` });
+  }
+
+  const terminationDate = new Date(terminationDateStr);
+  if (Number.isNaN(terminationDate.getTime())) {
+    trace(`REJECT 400: invalid terminationDate=${terminationDateStr}`);
+    return res.status(400).json({ message: 'Invalid terminationDate.' });
+  }
+
+  // Idempotent dedup via the generic InboundWebhookEvent table — this event
+  // updates an existing Lead row rather than creating something new, so the
+  // CommercialChange dedup pattern doesn't apply here.
+  const existing = await prisma.inboundWebhookEvent.findUnique({
+    where: { eventId },
+    select: { id: true },
+  });
+  if (existing) {
+    trace(`200 OK dedup: eventId=${eventId} already processed`);
+    return res.status(200).json({ message: 'Already processed.', deduped: true });
+  }
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: externalId },
+    select: { id: true, actualPlanIsActive: true, actualPlanEndDate: true, leadNumber: true },
+  });
+  if (!lead) {
+    trace(`REJECT 404: unknown externalId=${externalId}`);
+    return res.status(404).json({ message: `Unknown customer.externalId: ${externalId}` });
+  }
+
+  // Apply termination + dedup row + audit log in one transaction so the lead
+  // never flips without a corresponding audit + dedup record.
+  await prisma.$transaction(async (tx) => {
+    await tx.inboundWebhookEvent.create({
+      data: {
+        eventId,
+        eventType: 'customer.disconnected',
+        payload,
+      },
+    });
+
+    await tx.lead.update({
+      where: { id: lead.id },
+      data: {
+        actualPlanIsActive: false,
+        actualPlanEndDate: terminationDate,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        entityType: 'LEAD',
+        entityId: lead.id,
+        action: 'UPDATE',
+        changes: {
+          actualPlanIsActive: { from: lead.actualPlanIsActive, to: false },
+          actualPlanEndDate: { from: lead.actualPlanEndDate, to: terminationDate },
+        },
+        context: {
+          source: 'sam-webhook',
+          eventType: 'customer.disconnected',
+          inboundEventId: eventId,
+          commercialChangeId: payload.commercialChangeId || null,
+          finalArc: payload.finalArc ?? null,
+        },
+        userId: null,
+        userRole: 'SAM',
+        userName: 'SAM',
+      },
+    });
+  });
+
+  trace(`200 OK: leadId=${lead.id} (${lead.leadNumber}) terminated at ${terminationDate.toISOString()}`);
+  res.status(200).json({ message: 'Customer disconnected.', leadId: lead.id });
+};

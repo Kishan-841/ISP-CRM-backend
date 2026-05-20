@@ -1,5 +1,9 @@
 import express from 'express';
-import { receiveQuickDisconnectRequested, ping } from '../controllers/samWebhookInbound.controller.js';
+import {
+  receiveQuickDisconnectRequested,
+  receiveCustomerDisconnected,
+  ping,
+} from '../controllers/samWebhookInbound.controller.js';
 
 // Public webhook receivers from the downstream SAM service. No staff auth —
 // every handler verifies the X-SAM-Signature HMAC before reading the body.
@@ -12,5 +16,6 @@ const router = express.Router();
 router.get('/ping', ping);
 
 router.post('/quick-disconnect.requested', receiveQuickDisconnectRequested);
+router.post('/customer.disconnected', receiveCustomerDisconnected);
 
 export default router;

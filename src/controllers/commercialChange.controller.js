@@ -60,6 +60,7 @@ export const getQueue = asyncHandler(async function getQueue(req, res) {
       include: {
         lead: { select: LEAD_SUMMARY_SELECT },
         decidedBy: { select: { id: true, name: true, email: true } },
+        serviceOrder: { select: { id: true, orderNumber: true, status: true } },
       },
     }),
     prisma.commercialChange.count({ where }),
@@ -91,6 +92,11 @@ export const getById = asyncHandler(async function getById(req, res) {
     include: {
       lead: { select: LEAD_SUMMARY_SELECT },
       decidedBy: { select: { id: true, name: true, email: true } },
+      // Follow-on ServiceOrder (created by SAM via POST /service-orders after
+      // admin approves). The UI uses this to deep-link into the workflow queue.
+      serviceOrder: {
+        select: { id: true, orderNumber: true, status: true, orderType: true, createdAt: true },
+      },
     },
   });
   if (!row) return res.status(404).json({ message: 'Not found.' });

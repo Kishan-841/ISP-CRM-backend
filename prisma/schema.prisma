@@ -2243,6 +2243,11 @@ model ServiceOrder {
   approvedBy  User? @relation("ServiceOrdersApproved", fields: [approvedById], references: [id])
   processedBy User? @relation("ServiceOrdersProcessed", fields: [processedById], references: [id])
 
+  // QuickDisconnect linkage — back-relation. Populated when this order was
+  // created off a CRM-admin-approved CommercialChange (see
+  // CommercialChange.serviceOrderId).
+  commercialChange CommercialChange? @relation("CommercialChangeServiceOrder")
+
   @@index([customerId])
   @@index([createdById])
   @@index([status])
@@ -2526,9 +2531,32 @@ model CommercialChange {
   outboundEventId String?
   outboundLogId   String?
 
+  // Follow-on ServiceOrder created after admin approves and SAM kicks off
+  // the downstream disconnection workflow via POST /service-orders. Linked
+  // on creation so the admin UI can deep-link from "Quick Disconnects →
+  // Approved" to the actual workflow ticket the ops team works against.
+  serviceOrderId String?       @unique
+  serviceOrder   ServiceOrder? @relation("CommercialChangeServiceOrder", fields: [serviceOrderId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status, createdAt])
   @@index([leadId])
+}
+
+// Generic inbound webhook idempotency table. Used by handlers that don't
+// have a natural per-payload row to dedupe against (e.g. customer.disconnected,
+// where the lead row already exists and we don't want to mutate it twice for
+// the same event). The quick-disconnect.requested handler still uses its own
+// CommercialChange.inboundEventId dedup because that flow always creates a
+// new row — this table is for "update an existing row" inbound events.
+model InboundWebhookEvent {
+  id         String   @id @default(uuid())
+  eventId    String   @unique
+  eventType  String
+  payload    Json?
+  receivedAt DateTime @default(now())
+
+  @@index([eventType, receivedAt])
 }
