@@ -2520,6 +2520,14 @@ model CommercialChange {
   // approval time: effectiveDate = decidedAt + quickRequestedDays.
   quickRequestedDays Int?
 
+  // Doc URLs SAM sends on the QUICK request — Cloudinary HTTPS links to
+  // the customer's approval mail / PO. Threaded through to the auto-created
+  // ServiceOrder so the downstream queues (Docs Review / NOC / Accounts /
+  // Order Approvals) all surface them via the existing Documents column.
+  // Without these, every approver page renders "—" for QUICK orders.
+  approvalFileUrl String?
+  poFileUrl       String?
+
   raisedBySamUserId String
   raisedBySamEmail  String?
   reason            String   @db.Text

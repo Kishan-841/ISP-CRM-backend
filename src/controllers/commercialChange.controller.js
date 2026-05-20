@@ -245,6 +245,11 @@ export const decide = asyncHandler(async function decide(req, res) {
           effectiveDate: terminationDate,
           disconnectionDate: terminationDate,
           notes: preparedServiceOrder.notes,
+          // Thread the doc URLs SAM sent on the QUICK request into the SO so
+          // every downstream Documents column (Docs Review / NOC / Accounts /
+          // Order Approvals) shows them. Both nullable — null in, null on SO.
+          approvalFileUrl: existing.approvalFileUrl,
+          poFileUrl: existing.poFileUrl,
         },
       });
       await tx.commercialChange.update({

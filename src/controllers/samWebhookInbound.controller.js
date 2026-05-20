@@ -213,6 +213,30 @@ export const receiveQuickDisconnectRequested = async (req, res) => {
     quickRequestedDays = days;
   }
 
+  // Doc URLs — SAM sends Cloudinary HTTPS links to the customer's approval
+  // mail and PO. Mirror the same HTTPS-only rule createServiceOrder applies
+  // so we don't accidentally accept arbitrary links and inject them into
+  // the docs-review UI.
+  const validateHttpsUrl = (value, label) => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || !/^https:\/\//i.test(value)) {
+      return `${label} must be an HTTPS URL.`;
+    }
+    return null;
+  };
+  const approvalUrlErr = validateHttpsUrl(payload.approvalFileUrl, 'approvalFileUrl');
+  if (approvalUrlErr) {
+    trace(`REJECT 400: ${approvalUrlErr}`);
+    return res.status(400).json({ message: approvalUrlErr });
+  }
+  const poUrlErr = validateHttpsUrl(payload.poFileUrl, 'poFileUrl');
+  if (poUrlErr) {
+    trace(`REJECT 400: ${poUrlErr}`);
+    return res.status(400).json({ message: poUrlErr });
+  }
+  const approvalFileUrl = payload.approvalFileUrl || null;
+  const poFileUrl = payload.poFileUrl || null;
+
   const created = await prisma.$transaction(async (tx) => {
     const row = await tx.commercialChange.create({
       data: {
@@ -230,6 +254,8 @@ export const receiveQuickDisconnectRequested = async (req, res) => {
         status: 'PENDING',
         disconnectionCategoryId,
         disconnectionSubCategoryId,
+        approvalFileUrl,
+        poFileUrl,
       },
     });
 
