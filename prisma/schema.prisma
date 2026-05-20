@@ -2515,6 +2515,10 @@ model CommercialChange {
   requestedArc       Float?
   requestedPlanName  String?
   requestedBandwidth Int?
+  // SAM's "termination after approval" — calendar days, 1..15. Used to
+  // compute the auto-created ServiceOrder's effectiveDate at admin
+  // approval time: effectiveDate = decidedAt + quickRequestedDays.
+  quickRequestedDays Int?
 
   raisedBySamUserId String
   raisedBySamEmail  String?

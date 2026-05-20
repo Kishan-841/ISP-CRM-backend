@@ -199,6 +199,20 @@ export const receiveQuickDisconnectRequested = async (req, res) => {
   const raisedAt = payload.occurredAt ? new Date(payload.occurredAt) : new Date();
   const requested = payload.requested || {};
 
+  // SAM's "termination after approval" — calendar days, 1..15. Used to
+  // compute the auto-created ServiceOrder's effectiveDate at admin approval.
+  // Validate the range here so a malformed value (e.g. 999) is rejected at
+  // raise time, not silently used downstream.
+  let quickRequestedDays = null;
+  if (requested.days !== undefined && requested.days !== null) {
+    const days = Number(requested.days);
+    if (!Number.isInteger(days) || days < 1 || days > 15) {
+      trace(`REJECT 400: requested.days=${requested.days} out of range (1..15)`);
+      return res.status(400).json({ message: 'requested.days must be an integer between 1 and 15.' });
+    }
+    quickRequestedDays = days;
+  }
+
   const created = await prisma.$transaction(async (tx) => {
     const row = await tx.commercialChange.create({
       data: {
@@ -208,6 +222,7 @@ export const receiveQuickDisconnectRequested = async (req, res) => {
         requestedArc: requested.arc ?? null,
         requestedPlanName: requested.planName ?? null,
         requestedBandwidth: requested.bandwidth ?? null,
+        quickRequestedDays,
         raisedBySamUserId: String(payload.raisedBy?.id ?? ''),
         raisedBySamEmail: payload.raisedBy?.email ?? null,
         reason: reason.trim(),

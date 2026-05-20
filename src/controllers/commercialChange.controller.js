@@ -219,8 +219,16 @@ export const decide = asyncHandler(async function decide(req, res) {
     // at PENDING_DOCS_REVIEW (not PENDING_SALES_DIRECTOR_APPROVAL like
     // a normal disconnect) because the CRM admin's approval here is the
     // equivalent gate for QUICK orders.
+    //
+    // effectiveDate / disconnectionDate semantics for QUICK: per the SAM
+    // contract (§C3) the termination clock starts at admin approval, not
+    // when SAM raised the request. So both fields = decidedAt + quickRequestedDays.
+    // Falls back to a 30-day default only if SAM somehow didn't send `requested.days`
+    // (current inbound validates the range, so this is purely defensive).
     let so = null;
     if (decision === 'APPROVE') {
+      const days = existing.quickRequestedDays ?? 30;
+      const terminationDate = new Date(decidedAt.getTime() + days * 24 * 60 * 60 * 1000);
       so = await tx.serviceOrder.create({
         data: {
           orderNumber: preparedServiceOrder.orderNumber,
@@ -234,7 +242,8 @@ export const decide = asyncHandler(async function decide(req, res) {
           disconnectionCategoryId: existing.disconnectionCategoryId,
           disconnectionSubCategoryId: existing.disconnectionSubCategoryId,
           disconnectionReason: existing.reason,
-          disconnectionDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          effectiveDate: terminationDate,
+          disconnectionDate: terminationDate,
           notes: preparedServiceOrder.notes,
         },
       });
