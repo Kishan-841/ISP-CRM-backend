@@ -107,16 +107,10 @@ export const receiveQuickDisconnectRequested = async (req, res) => {
   const commercialChangeId = payload.commercialChangeId;
   const externalId = payload.customer?.externalId;
   const reason = payload.reason;
-  // Category fields are now part of the QUICK payload — CRM auto-creates the
-  // ServiceOrder at admin approval (spec §4.4) and the SO controller requires
-  // both ids. Reject up front rather than failing later in the approve path.
-  const disconnectionCategoryId = payload.disconnectionCategoryId;
-  const disconnectionSubCategoryId = payload.disconnectionSubCategoryId;
-  if (!eventId || !commercialChangeId || !externalId || !reason?.trim()
-      || !disconnectionCategoryId || !disconnectionSubCategoryId) {
-    trace(`REJECT 400: missing fields. eventId=${!!eventId} commercialChangeId=${!!commercialChangeId} externalId=${!!externalId} reason=${!!reason?.trim()} categoryId=${!!disconnectionCategoryId} subCategoryId=${!!disconnectionSubCategoryId}`);
+  if (!eventId || !commercialChangeId || !externalId || !reason?.trim()) {
+    trace(`REJECT 400: missing fields. eventId=${!!eventId} commercialChangeId=${!!commercialChangeId} externalId=${!!externalId} reason=${!!reason?.trim()}`);
     return res.status(400).json({
-      message: 'Missing required fields: eventId, commercialChangeId, customer.externalId, reason, disconnectionCategoryId, disconnectionSubCategoryId.',
+      message: 'Missing required fields: eventId, commercialChangeId, customer.externalId, reason.',
     });
   }
   if (payload.eventType && payload.eventType !== 'quickDisconnect.requested') {
@@ -124,21 +118,36 @@ export const receiveQuickDisconnectRequested = async (req, res) => {
     return res.status(400).json({ message: `Unexpected eventType: ${payload.eventType}` });
   }
 
-  // Validate category pair against existing tables — same rules as
-  // createServiceOrder so a mistyped slug is caught at SAM-side raise time,
-  // not later when admin tries to approve and the SO create blows up.
-  const subCategory = await prisma.disconnectionSubCategory.findFirst({
-    where: {
-      id: disconnectionSubCategoryId,
-      categoryId: disconnectionCategoryId,
-      isActive: true,
-      category: { isActive: true },
-    },
-    select: { id: true },
-  });
-  if (!subCategory) {
-    trace(`REJECT 400: invalid category pair categoryId=${disconnectionCategoryId} subCategoryId=${disconnectionSubCategoryId}`);
-    return res.status(400).json({ message: 'Invalid disconnectionCategoryId / disconnectionSubCategoryId.' });
+  // Category fields are needed at admin-approve time (CRM auto-creates the
+  // ServiceOrder there per spec §4.4), but are OPTIONAL on inbound so SAM
+  // clients that haven't shipped the new payload yet keep working — the
+  // row still gets persisted into the Pending inbox so admin can at least
+  // see and reject it. If absent, admin gets a clear "SAM must send
+  // category fields" 400 in the decide controller.
+  const disconnectionCategoryId = payload.disconnectionCategoryId || null;
+  const disconnectionSubCategoryId = payload.disconnectionSubCategoryId || null;
+
+  // If SAM did send them, validate the pair up front — that way a mistyped
+  // slug is caught at raise time, not later. Both must be present together;
+  // if only one is set, that's a contract violation worth flagging.
+  if ((disconnectionCategoryId && !disconnectionSubCategoryId) || (!disconnectionCategoryId && disconnectionSubCategoryId)) {
+    trace(`REJECT 400: only one of categoryId/subCategoryId set — must send both or neither`);
+    return res.status(400).json({ message: 'Send both disconnectionCategoryId and disconnectionSubCategoryId, or neither.' });
+  }
+  if (disconnectionCategoryId && disconnectionSubCategoryId) {
+    const subCategory = await prisma.disconnectionSubCategory.findFirst({
+      where: {
+        id: disconnectionSubCategoryId,
+        categoryId: disconnectionCategoryId,
+        isActive: true,
+        category: { isActive: true },
+      },
+      select: { id: true },
+    });
+    if (!subCategory) {
+      trace(`REJECT 400: invalid category pair categoryId=${disconnectionCategoryId} subCategoryId=${disconnectionSubCategoryId}`);
+      return res.status(400).json({ message: 'Invalid disconnectionCategoryId / disconnectionSubCategoryId.' });
+    }
   }
 
   // Dedup matrix (mirrors spec):
