@@ -21,14 +21,16 @@ import prisma from '../config/db.js';
 // the original event with the same eventId, so SAM's idempotency check
 // short-circuits to DUPLICATE rather than upserting stale data.
 
-const MAX_ATTEMPTS = 7; // first attempt + 6 retries
+const MAX_ATTEMPTS = 11; // first attempt + 10 retries
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_BODY_LOG_BYTES = 2048;
 
 // Backoff schedule indexed by the attemptCount that just failed.
-// Index 0 = first attempt failed → wait 1s before retry.
-// After index 5 (the 6th failure), we mark FAILED.
-const BACKOFF_SECONDS = [1, 5, 30, 120, 600, 3600];
+// Index 0 = first attempt failed → wait 5s before retry.
+// After index 9 (the 10th failure), we mark FAILED.
+// Sum ≈ 28h — covers the 24h target for quickDisconnect.decided redeliveries
+// while still letting transient blips clear within a minute.
+const BACKOFF_SECONDS = [5, 30, 120, 600, 1800, 3600, 7200, 14400, 28800, 43200];
 
 function envConfigured() {
   return Boolean(process.env.SAM_WEBHOOK_URL && process.env.SAM_WEBHOOK_SECRET);
@@ -85,6 +87,46 @@ export async function enqueueActivationWebhook(tx, lead) {
     data: {
       eventId: payload.eventId,
       leadId: lead.id,
+      payload,
+      status: 'PENDING',
+      nextAttemptAt: new Date(),
+    },
+  });
+}
+
+// Build the outbound payload for quickDisconnect.decided. Same envelope shape
+// as customer.activated (eventId / eventType / occurredAt + a domain object).
+function buildQuickDisconnectDecidedPayload(change, decidedByUser, decision, note) {
+  return {
+    eventId: crypto.randomUUID(),
+    eventType: 'quickDisconnect.decided',
+    occurredAt: new Date().toISOString(),
+    commercialChangeId: change.commercialChangeId,
+    decision, // 'APPROVE' | 'REJECT'
+    // SAM operators read this; email is more useful than the opaque UUID
+    // when triaging downstream — falls back to id if email is missing.
+    decidedBy: decidedByUser?.email || decidedByUser?.id || null,
+    ...(note ? { note } : {}),
+  };
+}
+
+// Enqueue a PENDING SamWebhookLog for a quick-disconnect decision inside the
+// caller's transaction. Returns the created row (or null if env not wired).
+// The CommercialChange row stores the resulting eventId + logId so the admin
+// detail UI can surface delivery status without joining via raw SamWebhookLog.
+export async function enqueueQuickDisconnectDecidedWebhook(tx, change, decidedByUser, decision, note) {
+  if (!envConfigured()) {
+    console.warn('[SamWebhook] SAM_WEBHOOK_URL / SAM_WEBHOOK_SECRET not set; skipping enqueue.');
+    return null;
+  }
+  const payload = buildQuickDisconnectDecidedPayload(change, decidedByUser, decision, note);
+  return tx.samWebhookLog.create({
+    data: {
+      eventId: payload.eventId,
+      // SamWebhookLog.leadId is required by schema but irrelevant for this
+      // event type; we reuse it to keep this change cheap and so filtering
+      // by lead in the admin webhook viewer still surfaces decision events.
+      leadId: change.leadId,
       payload,
       status: 'PENDING',
       nextAttemptAt: new Date(),

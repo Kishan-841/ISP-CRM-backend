@@ -8,143 +8,145 @@ datasource db {
 }
 
 model User {
-  id                                 String                @id @default(uuid())
-  email                              String                @unique
+  id                                 String                   @id @default(uuid())
+  email                              String                   @unique
   password                           String
-  passwordIsHashed                   Boolean               @default(false)
+  passwordIsHashed                   Boolean                  @default(false)
   name                               String
   mobile                             String?
-  role                               Role                  @default(ISR)
-  isActive                           Boolean               @default(true)
-  createdAt                          DateTime              @default(now())
-  updatedAt                          DateTime              @updatedAt
+  role                               Role                     @default(ISR)
+  isActive                           Boolean                  @default(true)
+  createdAt                          DateTime                 @default(now())
+  updatedAt                          DateTime                 @updatedAt
   callLogs                           CallLog[]
-  collectionCalls                    CollectionCallLog[]   @relation("CollectionCallsMade")
+  collectionCalls                    CollectionCallLog[]      @relation("CollectionCallsMade")
   assignedCampaigns                  CampaignAssignment[]
-  createdCampaignData                CampaignData[]        @relation("CampaignDataCreatedBy")
-  deliveryRequestsAreaHeadApproved   DeliveryRequest[]     @relation("DeliveryRequestAreaHeadApproved")
-  deliveryRequestsAreaHeadRejected   DeliveryRequest[]     @relation("DeliveryRequestAreaHeadRejected")
-  deliveryRequestsAssignedToStore    DeliveryRequest[]     @relation("DeliveryRequestAssignedToStore")
-  deliveryRequestsPushedToNoc        DeliveryRequest[]     @relation("DeliveryRequestPushedToNoc")
-  deliveryRequestsCreated            DeliveryRequest[]     @relation("DeliveryRequestCreatedBy")
-  deliveryRequestsSuperAdminApproved DeliveryRequest[]     @relation("DeliveryRequestSuperAdminApproved")
-  deliveryRequestsSuperAdminRejected DeliveryRequest[]     @relation("DeliveryRequestSuperAdminRejected")
-  deliveryRequestLogsPerformed       DeliveryRequestLog[]  @relation("DeliveryRequestLogPerformedBy")
-  uploadLinksCreated                 DocumentUploadLink[]  @relation("UploadLinksCreated")
-  emailsSent                         EmailLog[]            @relation("EmailsSent")
-  inventoryCreated                   InventoryItem[]       @relation("InventoryCreatedBy")
-  invoicesCreated                    Invoice[]             @relation("InvoicesCreatedBy")
-  paymentsCreated                    InvoicePayment[]      @relation("PaymentsCreatedBy")
-  advancePaymentsCreated             AdvancePayment[]      @relation("AdvancePaymentsCreatedBy")
-  creditNotesCreated                 CreditNote[]          @relation("CreditNotesCreatedBy")
-  ledgerEntriesCreated               LedgerEntry[]         @relation("LedgerEntriesCreatedBy")
-  accountsVerifiedLeads              Lead[]                @relation("AccountsVerifiedBy")
-  gstVerifiedLeads                   Lead[]                @relation("GstVerifiedBy")
-  actualPlanCreatedLeads             Lead[]                @relation("ActualPlanCreatedBy")
-  assignedLeads                      Lead[]                @relation("AssignedTo")
-  createdLeads                       Lead[]                @relation("CreatedBy")
-  customerAcceptanceLeads            Lead[]                @relation("CustomerAcceptanceBy")
-  customerAccountsCreated            Lead[]                @relation("CustomerCreatedBy")
-  deliveryAssignedLeads              Lead[]                @relation("DeliveryAssignedTo")
-  demoPlanAssignedLeads              Lead[]                @relation("DemoPlanAssignedBy")
-  feasibilityAssignedLeads           Lead[]                @relation("FeasibilityAssignedTo")
-  nocAssignedLeads                   Lead[]                @relation("NocAssignedTo")
-  nocConfiguredLeads                 Lead[]                @relation("NocConfiguredBy")
-  nocPushedToDeliveryLeads           Lead[]                @relation("NocPushedToDelivery")
-  opsApprovedLeads                   Lead[]                @relation("OpsApprovedBy")
-  superAdmin2ApprovedLeads           Lead[]                @relation("SuperAdmin2ApprovedBy")
-  pushedToInstallation               Lead[]                @relation("PushedToInstallation")
-  speedTestUploadedLeads             Lead[]                @relation("SpeedTestUploadedBy")
-  installationStartedLeads           Lead[]                @relation("LeadInstallStarted")
-  installationCompletedLeads         Lead[]                @relation("LeadInstallCompleted")
-  leadDeliveryDocsReviewed           Lead[]                @relation("LeadDeliveryDocsReviewed")
+  createdCampaignData                CampaignData[]           @relation("CampaignDataCreatedBy")
+  deliveryRequestsAreaHeadApproved   DeliveryRequest[]        @relation("DeliveryRequestAreaHeadApproved")
+  deliveryRequestsAreaHeadRejected   DeliveryRequest[]        @relation("DeliveryRequestAreaHeadRejected")
+  deliveryRequestsAssignedToStore    DeliveryRequest[]        @relation("DeliveryRequestAssignedToStore")
+  deliveryRequestsPushedToNoc        DeliveryRequest[]        @relation("DeliveryRequestPushedToNoc")
+  deliveryRequestsCreated            DeliveryRequest[]        @relation("DeliveryRequestCreatedBy")
+  deliveryRequestsSuperAdminApproved DeliveryRequest[]        @relation("DeliveryRequestSuperAdminApproved")
+  deliveryRequestsSuperAdminRejected DeliveryRequest[]        @relation("DeliveryRequestSuperAdminRejected")
+  deliveryRequestLogsPerformed       DeliveryRequestLog[]     @relation("DeliveryRequestLogPerformedBy")
+  uploadLinksCreated                 DocumentUploadLink[]     @relation("UploadLinksCreated")
+  emailsSent                         EmailLog[]               @relation("EmailsSent")
+  inventoryCreated                   InventoryItem[]          @relation("InventoryCreatedBy")
+  invoicesCreated                    Invoice[]                @relation("InvoicesCreatedBy")
+  paymentsCreated                    InvoicePayment[]         @relation("PaymentsCreatedBy")
+  advancePaymentsCreated             AdvancePayment[]         @relation("AdvancePaymentsCreatedBy")
+  creditNotesCreated                 CreditNote[]             @relation("CreditNotesCreatedBy")
+  ledgerEntriesCreated               LedgerEntry[]            @relation("LedgerEntriesCreatedBy")
+  accountsVerifiedLeads              Lead[]                   @relation("AccountsVerifiedBy")
+  gstVerifiedLeads                   Lead[]                   @relation("GstVerifiedBy")
+  actualPlanCreatedLeads             Lead[]                   @relation("ActualPlanCreatedBy")
+  assignedLeads                      Lead[]                   @relation("AssignedTo")
+  createdLeads                       Lead[]                   @relation("CreatedBy")
+  customerAcceptanceLeads            Lead[]                   @relation("CustomerAcceptanceBy")
+  customerAccountsCreated            Lead[]                   @relation("CustomerCreatedBy")
+  deliveryAssignedLeads              Lead[]                   @relation("DeliveryAssignedTo")
+  demoPlanAssignedLeads              Lead[]                   @relation("DemoPlanAssignedBy")
+  feasibilityAssignedLeads           Lead[]                   @relation("FeasibilityAssignedTo")
+  nocAssignedLeads                   Lead[]                   @relation("NocAssignedTo")
+  nocConfiguredLeads                 Lead[]                   @relation("NocConfiguredBy")
+  nocPushedToDeliveryLeads           Lead[]                   @relation("NocPushedToDelivery")
+  opsApprovedLeads                   Lead[]                   @relation("OpsApprovedBy")
+  superAdmin2ApprovedLeads           Lead[]                   @relation("SuperAdmin2ApprovedBy")
+  pushedToInstallation               Lead[]                   @relation("PushedToInstallation")
+  speedTestUploadedLeads             Lead[]                   @relation("SpeedTestUploadedBy")
+  installationStartedLeads           Lead[]                   @relation("LeadInstallStarted")
+  installationCompletedLeads         Lead[]                   @relation("LeadInstallCompleted")
+  leadDeliveryDocsReviewed           Lead[]                   @relation("LeadDeliveryDocsReviewed")
   notifications                      Notification[]
-  receiptBatchesVerified             ReceiptBatchLog[]     @relation("ReceiptBatchVerifiedBy")
-  storeProductsCreated               StoreProduct[]        @relation("StoreProductCreatedBy")
-  storePOsAdminApproved              StorePurchaseOrder[]  @relation("StorePOAdminApproved")
-  storePurchaseOrders                StorePurchaseOrder[]  @relation("StorePOCreatedBy")
-  storePOsReceiptVerified            StorePurchaseOrder[]  @relation("StorePOReceiptVerified")
-  storePOsRejected                   StorePurchaseOrder[]  @relation("StorePORejected")
-  storePOsSuperAdminApproved         StorePurchaseOrder[]  @relation("StorePOSuperAdminApproved")
-  storeSerialAdded                   StoreSerialItem[]     @relation("StoreSerialAddedBy")
-  storeStockAdded                    StoreStock[]          @relation("StoreStockAddedBy")
-  storeIntakesPerformed              StoreStockIntakeLog[] @relation("StoreIntakePerformedBy")
+  receiptBatchesVerified             ReceiptBatchLog[]        @relation("ReceiptBatchVerifiedBy")
+  storeProductsCreated               StoreProduct[]           @relation("StoreProductCreatedBy")
+  storePOsAdminApproved              StorePurchaseOrder[]     @relation("StorePOAdminApproved")
+  storePurchaseOrders                StorePurchaseOrder[]     @relation("StorePOCreatedBy")
+  storePOsReceiptVerified            StorePurchaseOrder[]     @relation("StorePOReceiptVerified")
+  storePOsRejected                   StorePurchaseOrder[]     @relation("StorePORejected")
+  storePOsSuperAdminApproved         StorePurchaseOrder[]     @relation("StorePOSuperAdminApproved")
+  storeSerialAdded                   StoreSerialItem[]        @relation("StoreSerialAddedBy")
+  storeStockAdded                    StoreStock[]             @relation("StoreStockAddedBy")
+  storeIntakesPerformed              StoreStockIntakeLog[]    @relation("StoreIntakePerformedBy")
   storeDirectEntries                 StorePurchaseOrderItem[] @relation("StoreDirectEntryBy")
-  vendorsCreated                     Vendor[]              @relation("VendorsCreated")
-  vendorsAdminApproved               Vendor[]              @relation("VendorAdminApproved")
-  vendorsAccountsApproved            Vendor[]              @relation("VendorAccountsApproved")
+  vendorsCreated                     Vendor[]                 @relation("VendorsCreated")
+  vendorsAdminApproved               Vendor[]                 @relation("VendorAdminApproved")
+  vendorsAccountsApproved            Vendor[]                 @relation("VendorAccountsApproved")
   // SAM relations
-  samAssignmentsAsExecutive          SAMAssignment[]       @relation("SAMExecutiveAssignments")
-  samAssignmentsCreated              SAMAssignment[]       @relation("SAMAssignedBy")
-  samAssignmentHistoryAsExecutive    SAMAssignmentHistory[] @relation("SAMAssignmentHistoryExecutive")
-  samAssignmentHistoryAsAssigner     SAMAssignmentHistory[] @relation("SAMAssignmentHistoryAssignedBy")
-  samMeetings                        SAMMeeting[]          @relation("SAMExecutiveMeetings")
-  samVisits                          SAMVisit[]            @relation("SAMExecutiveVisits")
-  samCommunications                  CustomerCommunication[] @relation("SAMCommunications")
+  samAssignmentsAsExecutive          SAMAssignment[]          @relation("SAMExecutiveAssignments")
+  samAssignmentsCreated              SAMAssignment[]          @relation("SAMAssignedBy")
+  samAssignmentHistoryAsExecutive    SAMAssignmentHistory[]   @relation("SAMAssignmentHistoryExecutive")
+  samAssignmentHistoryAsAssigner     SAMAssignmentHistory[]   @relation("SAMAssignmentHistoryAssignedBy")
+  samMeetings                        SAMMeeting[]             @relation("SAMExecutiveMeetings")
+  samVisits                          SAMVisit[]               @relation("SAMExecutiveVisits")
+  samCommunications                  CustomerCommunication[]  @relation("SAMCommunications")
   // Plan upgrade history
-  planUpgradesCreated                PlanUpgradeHistory[]  @relation("PlanUpgradesCreated")
+  planUpgradesCreated                PlanUpgradeHistory[]     @relation("PlanUpgradesCreated")
   // Vendor docs verified
-  vendorDocsVerifiedLeads            Lead[]                @relation("VendorDocsVerifiedBy")
+  vendorDocsVerifiedLeads            Lead[]                   @relation("VendorDocsVerifiedBy")
   // Vendor PO relations
-  vendorPOsCreated                   VendorPurchaseOrder[] @relation("VendorPOsCreated")
-  vendorPOsApproved                  VendorPurchaseOrder[] @relation("VendorPOsApproved")
-  vendorPOsRejected                  VendorPurchaseOrder[] @relation("VendorPOsRejected")
+  vendorPOsCreated                   VendorPurchaseOrder[]    @relation("VendorPOsCreated")
+  vendorPOsApproved                  VendorPurchaseOrder[]    @relation("VendorPOsApproved")
+  vendorPOsRejected                  VendorPurchaseOrder[]    @relation("VendorPOsRejected")
   // Status change audit trail
-  statusChangeLogs                   StatusChangeLog[]     @relation("StatusChangeLogs")
-  auditEvents                        AuditEvent[]          @relation("AuditEvents")
+  statusChangeLogs                   StatusChangeLog[]        @relation("StatusChangeLogs")
+  auditEvents                        AuditEvent[]             @relation("AuditEvents")
   // Complaint relations
-  complaintsCreated                  Complaint[]           @relation("ComplaintsCreatedBy")
-  complaintAssignments               ComplaintAssignment[] @relation("ComplaintAssignments")
-  complaintAssignedBy                ComplaintAssignment[] @relation("ComplaintAssignedBy")
-  complaintAttachmentsUploaded         ComplaintAttachment[] @relation("ComplaintAttachmentUploadedBy")
-  complaintsClosed                     Complaint[]           @relation("ComplaintsClosedBy")
+  complaintsCreated                  Complaint[]              @relation("ComplaintsCreatedBy")
+  complaintAssignments               ComplaintAssignment[]    @relation("ComplaintAssignments")
+  complaintAssignedBy                ComplaintAssignment[]    @relation("ComplaintAssignedBy")
+  complaintAttachmentsUploaded       ComplaintAttachment[]    @relation("ComplaintAttachmentUploadedBy")
+  complaintsClosed                   Complaint[]              @relation("ComplaintsClosedBy")
   // BDM-ISR binding
-  campaignDataAssignedByBdm          CampaignData[]        @relation("CampaignDataAssignedByBdm")
-  campaignDataLastEditedBy           CampaignData[]        @relation("CampaignDataLastEditedBy")
+  campaignDataAssignedByBdm          CampaignData[]           @relation("CampaignDataAssignedByBdm")
+  campaignDataLastEditedBy           CampaignData[]           @relation("CampaignDataLastEditedBy")
   // Campaigns created
-  campaignsCreated                   Campaign[]            @relation("CampaignCreatedBy")
+  campaignsCreated                   Campaign[]               @relation("CampaignCreatedBy")
   // Service Order relations
-  serviceOrdersCreated               ServiceOrder[]        @relation("ServiceOrdersCreated")
-  serviceOrdersApproved              ServiceOrder[]        @relation("ServiceOrdersApproved")
-  serviceOrdersProcessed             ServiceOrder[]        @relation("ServiceOrdersProcessed")
-  serviceOrderDocsReviewed           ServiceOrder[]        @relation("ServiceOrderDocsReviewed")
-  serviceOrderNocProcessed           ServiceOrder[]        @relation("ServiceOrderNocProcessed")
-  serviceOrderActivationSet          ServiceOrder[]        @relation("ServiceOrderActivationSet")
-  serviceOrdersDeliveryApproved      ServiceOrder[]        @relation("DeliveryApprovedServiceOrders")
-  serviceOrdersSalesDirectorApproved ServiceOrder[]        @relation("SalesDirectorApprovedServiceOrders")
-  proposedEffectiveDateServiceOrders ServiceOrder[]        @relation("ProposedEffectiveDateServiceOrders")
+  serviceOrdersCreated               ServiceOrder[]           @relation("ServiceOrdersCreated")
+  serviceOrdersApproved              ServiceOrder[]           @relation("ServiceOrdersApproved")
+  serviceOrdersProcessed             ServiceOrder[]           @relation("ServiceOrdersProcessed")
+  serviceOrderDocsReviewed           ServiceOrder[]           @relation("ServiceOrderDocsReviewed")
+  serviceOrderNocProcessed           ServiceOrder[]           @relation("ServiceOrderNocProcessed")
+  serviceOrderActivationSet          ServiceOrder[]           @relation("ServiceOrderActivationSet")
+  serviceOrdersDeliveryApproved      ServiceOrder[]           @relation("DeliveryApprovedServiceOrders")
+  serviceOrdersSalesDirectorApproved ServiceOrder[]           @relation("SalesDirectorApprovedServiceOrders")
+  proposedEffectiveDateServiceOrders ServiceOrder[]           @relation("ProposedEffectiveDateServiceOrders")
   // Team leader hierarchy
   teamLeaderId                       String?
-  teamLeader                         User?                 @relation("TeamMemberRelation", fields: [teamLeaderId], references: [id], onDelete: SetNull)
-  teamMembers                        User[]                @relation("TeamMemberRelation")
-  popLocationsCreated                PopLocation[]         @relation("PopLocationCreatedBy")
+  teamLeader                         User?                    @relation("TeamMemberRelation", fields: [teamLeaderId], references: [id], onDelete: SetNull)
+  teamMembers                        User[]                   @relation("TeamMemberRelation")
+  popLocationsCreated                PopLocation[]            @relation("PopLocationCreatedBy")
   // NEXUS chatbot relations
-  nexusConversations                 NexusConversation[]   @relation("NexusConversationUser")
-  nexusKnowledgeCreated              NexusKnowledge[]      @relation("NexusKnowledgeCreatedBy")
+  nexusConversations                 NexusConversation[]      @relation("NexusConversationUser")
+  nexusKnowledgeCreated              NexusKnowledge[]         @relation("NexusKnowledgeCreatedBy")
   // Master deletion audit
-  leadDeletionsPerformed             LeadDeletionAudit[]   @relation("LeadDeletionsPerformed")
+  leadDeletionsPerformed             LeadDeletionAudit[]      @relation("LeadDeletionsPerformed")
+  // Quick-disconnect / commercial change decisions
+  commercialChangesDecided           CommercialChange[]       @relation("CommercialChangeDecided")
 
   @@index([teamLeaderId])
 }
 
 model Campaign {
-  id           String               @id @default(uuid())
-  name         String
-  description  String?
-  isActive     Boolean              @default(true)
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
-  code         String               @unique
-  dataSource   String?
-  status       CampaignStatus       @default(ACTIVE)
-  type         CampaignType         @default(ALL)
-  rejectedRecords Int               @default(0)
-  createdById             String?
-  channelPartnerVendorId  String?
-  createdBy    User?                @relation("CampaignCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  channelPartnerVendor Vendor?      @relation("CampaignChannelPartner", fields: [channelPartnerVendorId], references: [id])
-  assignments  CampaignAssignment[]
-  campaignData CampaignData[]
+  id                     String               @id @default(uuid())
+  name                   String
+  description            String?
+  isActive               Boolean              @default(true)
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  code                   String               @unique
+  dataSource             String?
+  status                 CampaignStatus       @default(ACTIVE)
+  type                   CampaignType         @default(ALL)
+  rejectedRecords        Int                  @default(0)
+  createdById            String?
+  channelPartnerVendorId String?
+  createdBy              User?                @relation("CampaignCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  channelPartnerVendor   Vendor?              @relation("CampaignChannelPartner", fields: [channelPartnerVendorId], references: [id])
+  assignments            CampaignAssignment[]
+  campaignData           CampaignData[]
 
   @@index([type])
   @@index([createdById])
@@ -164,43 +166,43 @@ model CampaignAssignment {
 }
 
 model CampaignData {
-  id              String     @id @default(uuid())
-  campaignId      String
-  name            String
-  phone           String
-  email           String?
-  address         String?
-  status          DataStatus @default(NEW)
-  notes           String?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-  assignedToId    String?
-  callLaterAt     DateTime?
-  otherReason     String?
-  city            String?
-  company         String
-  firstName       String?
-  industry        String?
-  lastName        String?
-  title           String
-  companySize     String?
-  createdById     String?
-  isSelfGenerated Boolean    @default(false)
-  linkedinUrl     String?
-  source          String?
-  state           String?
-  whatsapp        String?
-  callLogs        CallLog[]
-  campaign        Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  createdBy       User?      @relation("CampaignDataCreatedBy", fields: [createdById], references: [id])
-  assignedByBdmId String?
-  assignedByBdm   User?      @relation("CampaignDataAssignedByBdm", fields: [assignedByBdmId], references: [id])
-  lastEditedById          String?
-  lastEditedBy            User?      @relation("CampaignDataLastEditedBy", fields: [lastEditedById], references: [id])
-  lastEditedAt            DateTime?
-  channelPartnerVendorId  String?
-  channelPartnerVendor    Vendor?    @relation("CampaignDataChannelPartner", fields: [channelPartnerVendorId], references: [id])
-  lead            Lead?
+  id                     String     @id @default(uuid())
+  campaignId             String
+  name                   String
+  phone                  String
+  email                  String?
+  address                String?
+  status                 DataStatus @default(NEW)
+  notes                  String?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+  assignedToId           String?
+  callLaterAt            DateTime?
+  otherReason            String?
+  city                   String?
+  company                String
+  firstName              String?
+  industry               String?
+  lastName               String?
+  title                  String
+  companySize            String?
+  createdById            String?
+  isSelfGenerated        Boolean    @default(false)
+  linkedinUrl            String?
+  source                 String?
+  state                  String?
+  whatsapp               String?
+  callLogs               CallLog[]
+  campaign               Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdBy              User?      @relation("CampaignDataCreatedBy", fields: [createdById], references: [id])
+  assignedByBdmId        String?
+  assignedByBdm          User?      @relation("CampaignDataAssignedByBdm", fields: [assignedByBdmId], references: [id])
+  lastEditedById         String?
+  lastEditedBy           User?      @relation("CampaignDataLastEditedBy", fields: [lastEditedById], references: [id])
+  lastEditedAt           DateTime?
+  channelPartnerVendorId String?
+  channelPartnerVendor   Vendor?    @relation("CampaignDataChannelPartner", fields: [channelPartnerVendorId], references: [id])
+  lead                   Lead?
 
   @@index([campaignId, status])
   @@index([campaignId, assignedToId])
@@ -249,49 +251,49 @@ model Product {
 }
 
 model Lead {
-  id                        String               @id @default(uuid())
-  leadNumber                String?              @unique
-  campaignDataId            String               @unique
-  requirements              String?
-  status                    LeadStatus           @default(NEW)
-  createdById               String
-  assignedToId              String?
-  createdAt                 DateTime             @default(now())
-  updatedAt                 DateTime             @updatedAt
-  sharedVia                 String?
-  type                      LeadType             @default(QUALIFIED)
-  isImported                Boolean              @default(false)
-  linkedinUrl               String?
-  callLaterAt               DateTime?
-  dropReason                String?
-  location                  String?
-  feasibilityAssignedToId   String?
-  feasibilityNotes          String?
-  feasibilityReviewedAt     DateTime?
-  docsRejectedReason        String?
-  docsVerifiedAt            DateTime?
-  docsVerifiedById          String?
-  documents                 Json?
-  meetingDate               DateTime?
-  meetingNotes              String?
-  meetingOutcome            String?
-  meetingPlace              String?
-  latitude                  Float?
-  longitude                 Float?
-  bandwidthRequirement      String?
-  fullAddress               String?
-  meetingCount              Int                  @default(1)
-  accountsNotes             String?
-  accountsRejectedReason    String?
-  accountsVerifiedAt        DateTime?
-  accountsVerifiedById      String?
-  accountsStatus            AccountsStatus?
+  id                      String          @id @default(uuid())
+  leadNumber              String?         @unique
+  campaignDataId          String          @unique
+  requirements            String?
+  status                  LeadStatus      @default(NEW)
+  createdById             String
+  assignedToId            String?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  sharedVia               String?
+  type                    LeadType        @default(QUALIFIED)
+  isImported              Boolean         @default(false)
+  linkedinUrl             String?
+  callLaterAt             DateTime?
+  dropReason              String?
+  location                String?
+  feasibilityAssignedToId String?
+  feasibilityNotes        String?
+  feasibilityReviewedAt   DateTime?
+  docsRejectedReason      String?
+  docsVerifiedAt          DateTime?
+  docsVerifiedById        String?
+  documents               Json?
+  meetingDate             DateTime?
+  meetingNotes            String?
+  meetingOutcome          String?
+  meetingPlace            String?
+  latitude                Float?
+  longitude               Float?
+  bandwidthRequirement    String?
+  fullAddress             String?
+  meetingCount            Int             @default(1)
+  accountsNotes           String?
+  accountsRejectedReason  String?
+  accountsVerifiedAt      DateTime?
+  accountsVerifiedById    String?
+  accountsStatus          AccountsStatus?
   // GST applicability — captured by BDM at docs-upload time. When false the
   // BDM can skip the GST_DETAILS document upload, and the Accounts team is
   // not asked to record a GST number / legal name during their verification.
   // Defaults to true so leads created before this flag existed continue to
   // require GST (preserves prior behaviour for in-flight pipeline rows).
-  hasGst                    Boolean           @default(true)
+  hasGst                  Boolean         @default(true)
   // OTC applicability — BDM picks Yes/No at quote creation. When false:
   //   • OTC amount field is skipped/cleared on the quote
   //   • ADVANCE_OTC document is not required at docs upload
@@ -299,214 +301,217 @@ model Lead {
   //   • generateOTCInvoice rejects with 400
   // Defaults to true so leads created before this flag existed keep the prior
   // OTC-required behaviour. The choice is locked once made via the UI.
-  hasOtc                    Boolean           @default(true)
+  hasOtc                  Boolean         @default(true)
 
   // GST Verification fields
-  customerGstNo             String?           // GST Number entered by accounts team
-  customerLegalName         String?           // Legal name as per GST certificate
-  gstVerifiedAt             DateTime?         // When GST was verified
-  gstVerifiedById           String?           // Who verified it
+  customerGstNo     String? // GST Number entered by accounts team
+  customerLegalName String? // Legal name as per GST certificate
+  gstVerifiedAt     DateTime? // When GST was verified
+  gstVerifiedById   String? // Who verified it
 
   // Additional Customer Details (Accounts Review)
-  panCardNo                 String?           // PAN Card number
-  tanNumber                 String?           // TAN number
-  installationAddress       String?           // Installation address (100 char limit)
-  installationPincode       String?           // Installation pincode
-  poNumber                  String?           // Purchase Order number
-  poExpiryDate              DateTime?         // PO expiry date
-  billDate                  DateTime?         // Bill date
-  technicalInchargeMobile   String?           // Technical incharge mobile
-  technicalInchargeEmail    String?           // Technical incharge email
-  accountsInchargeMobile    String?           // Accounts incharge mobile
-  accountsInchargeEmail     String?           // Accounts incharge email
-  bdmName                   String?           // BDM name
-  serviceManager            String?           // Service manager name
-  advanceAmount             Float?
-  arcAmount                 Float?
-  originalArcAmount         Float?
-  otcAmount                 Float?
-  quotationAttachments      Json?
-  otcInvoiceId              String?              @unique
-  otcInvoiceGeneratedAt     DateTime?
-  paymentTerms              String?
-  interestLevel             InterestLevel?
-  installationNotes         String?
-  pushedToInstallationAt    DateTime?
-  pushedToInstallationById  String?
-  verificationAttempts      Int                  @default(0)
-  opsApprovalStatus         OpsApprovalStatus?
-  opsApprovedAt             DateTime?
-  opsApprovedById           String?
-  opsRejectedReason         String?
+  panCardNo                    String? // PAN Card number
+  tanNumber                    String? // TAN number
+  installationAddress          String? // Installation address (100 char limit)
+  installationPincode          String? // Installation pincode
+  poNumber                     String? // Purchase Order number
+  poExpiryDate                 DateTime? // PO expiry date
+  billDate                     DateTime? // Bill date
+  technicalInchargeMobile      String? // Technical incharge mobile
+  technicalInchargeEmail       String? // Technical incharge email
+  accountsInchargeMobile       String? // Accounts incharge mobile
+  accountsInchargeEmail        String? // Accounts incharge email
+  bdmName                      String? // BDM name
+  serviceManager               String? // Service manager name
+  advanceAmount                Float?
+  arcAmount                    Float?
+  originalArcAmount            Float?
+  otcAmount                    Float?
+  quotationAttachments         Json?
+  otcInvoiceId                 String?                    @unique
+  otcInvoiceGeneratedAt        DateTime?
+  paymentTerms                 String?
+  interestLevel                InterestLevel?
+  installationNotes            String?
+  pushedToInstallationAt       DateTime?
+  pushedToInstallationById     String?
+  verificationAttempts         Int                        @default(0)
+  opsApprovalStatus            OpsApprovalStatus?
+  opsApprovedAt                DateTime?
+  opsApprovedById              String?
+  opsRejectedReason            String?
   // Optional approval notes captured by OPS at decision-time. Unlike
   // rejection reasons these apply to both APPROVED and REJECTED — they
   // forward context to the Sales Director (next step) and to the BDM.
-  opsApprovalNotes          String?
-  superAdmin2ApprovalStatus SuperAdmin2ApprovalStatus?
-  superAdmin2ApprovedAt     DateTime?
-  superAdmin2ApprovedById   String?
-  superAdmin2RejectedReason String?
+  opsApprovalNotes             String?
+  superAdmin2ApprovalStatus    SuperAdmin2ApprovalStatus?
+  superAdmin2ApprovedAt        DateTime?
+  superAdmin2ApprovedById      String?
+  superAdmin2RejectedReason    String?
   // Same pattern for Sales Director — surfaced to the Docs team + BDM.
-  superAdmin2ApprovalNotes  String?
-  loginCompletedAt          DateTime?
-  loginCompletedById        String?
-  docUploadMethod           String?
-  tentativePrice            Float?
-  deliveryAssignedAt        DateTime?
-  deliveryAssignedToId      String?
-  deliveryNotes             String?
-  deliveryProducts          Json?
-  deliveryStatus            String?
-  deliveryCompletedViewedAt DateTime?
-  fromAddress               String?
-  fromLatitude              Float?
-  fromLongitude             Float?
-  numberOfIPs               Int?
-  customerCreatedAt         DateTime?
-  customerCreatedById       String?
-  customerIpAssigned        String?
-  customerPassword          String?
-  customerSwitchPort        String?
-  customerUserId            String?              @unique
-  customerUsername          String?              @unique
-  nocAssignedToId           String?
-  nocAssignedAt             DateTime?
-  nocConfiguredAt           DateTime?
-  nocConfiguredById         String?
-  billingAddress            String?
-  billingPincode            String?
-  expectedDeliveryDate      DateTime?
+  superAdmin2ApprovalNotes     String?
+  loginCompletedAt             DateTime?
+  loginCompletedById           String?
+  docUploadMethod              String?
+  tentativePrice               Float?
+  deliveryAssignedAt           DateTime?
+  deliveryAssignedToId         String?
+  deliveryNotes                String?
+  deliveryProducts             Json?
+  deliveryStatus               String?
+  deliveryCompletedViewedAt    DateTime?
+  fromAddress                  String?
+  fromLatitude                 Float?
+  fromLongitude                Float?
+  numberOfIPs                  Int?
+  customerCreatedAt            DateTime?
+  customerCreatedById          String?
+  customerIpAssigned           String?
+  customerPassword             String?
+  customerSwitchPort           String?
+  customerUserId               String?                    @unique
+  customerUsername             String?                    @unique
+  nocAssignedToId              String?
+  nocAssignedAt                DateTime?
+  nocConfiguredAt              DateTime?
+  nocConfiguredById            String?
+  billingAddress               String?
+  billingPincode               String?
+  expectedDeliveryDate         DateTime?
   // Cold Lead flag: true when BDM parked a lead with partial details after
   // a lukewarm meeting. Cold leads live in the Lead Pipeline tab and are
   // excluded from the Opportunity Pipeline until the BDM completes them.
-  isColdLead                Boolean              @default(false)
+  isColdLead                   Boolean                    @default(false)
   // Origin of the lead — set once at creation, never inferred. Used by the
   // Customer 360 journey tab to show the correct lead source and opening
   // events. Replaces the old inference block that couldn't distinguish
   // "Add Lead" from "Create Opportunity" (both set isSelfGenerated=true).
-  creationSource            LeadCreationSource   @default(UNKNOWN)
+  creationSource               LeadCreationSource         @default(UNKNOWN)
   // Simplified feasibility review fields (vendor setup moved to delivery)
-  feasibilityVendorType     String?              // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
-  tentativeCapex            Float?               // Feasibility team's CAPEX estimate
-  tentativeOpex             Float?               // Feasibility team's OPEX estimate
-  actualCapex               Float?               // Delivery team's final CAPEX from materials
-  actualOpex                Float?               // Delivery team's final OPEX from vendor setup
-  feasibilityDescription    String?              // Free-text notes from FT review
-  deliveryVendorSetupDone   Boolean              @default(false) // Must be true before material request
+  feasibilityVendorType        String? // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
+  tentativeCapex               Float? // Feasibility team's CAPEX estimate
+  tentativeOpex                Float? // Feasibility team's OPEX estimate
+  actualCapex                  Float? // Delivery team's final CAPEX from materials
+  actualOpex                   Float? // Delivery team's final OPEX from vendor setup
+  feasibilityDescription       String? // Free-text notes from FT review
+  deliveryVendorSetupDone      Boolean                    @default(false) // Must be true before material request
   // Delivery team must review PO + IIL Protocol Sheet before proceeding to
   // vendor setup. Set once via acknowledge-docs endpoint; vendor-setup
   // controller refuses to run until this is non-null.
-  deliveryDocsReviewedAt    DateTime?
-  deliveryDocsReviewedById  String?
-  circuitId                 String?              @unique
-  customerIpAddresses       Json?
-  nocPushedToDeliveryAt     DateTime?
-  nocPushedToDeliveryById   String?
-  customerAcceptanceAt      DateTime?
-  customerAcceptanceById    String?
-  customerAcceptanceNotes   String?
-  customerAcceptanceStatus  String?
+  deliveryDocsReviewedAt       DateTime?
+  deliveryDocsReviewedById     String?
+  circuitId                    String?                    @unique
+  customerIpAddresses          Json?
+  nocPushedToDeliveryAt        DateTime?
+  nocPushedToDeliveryById      String?
+  customerAcceptanceAt         DateTime?
+  customerAcceptanceById       String?
+  customerAcceptanceNotes      String?
+  customerAcceptanceStatus     String?
   customerAcceptanceScreenshot String?
-  installationCompletedAt   DateTime?
-  installationCompletedById String?
-  installationStartedAt     DateTime?
-  installationStartedById   String?
-  latencyTestScreenshot     String?
-  speedTestScreenshot       String?
-  speedTestUploadedAt       DateTime?
-  speedTestUploadedById     String?
-  demoPlanAssignedAt        DateTime?
-  demoPlanAssignedById      String?
-  demoPlanBandwidth         Int?
-  demoPlanDataLimit         Int?
-  demoPlanIsActive          Boolean              @default(false)
-  demoPlanName              String?
-  demoPlanNotes             String?
-  demoPlanUploadBandwidth   Int?
-  demoPlanValidityDays      Int?
-  actualPlanBandwidth       Int?
-  actualPlanCreatedAt       DateTime?
-  actualPlanCreatedById     String?
-  actualPlanDataLimit       Int?
-  actualPlanEndDate         DateTime?
-  actualPlanIsActive        Boolean              @default(false)
-  actualPlanName            String?
-  actualPlanNotes           String?
-  actualPlanPrice           Float?
-  actualPlanStartDate       DateTime?
-  actualPlanUploadBandwidth Int?
-  actualPlanValidityDays    Int?
-  actualPlanBillingType     String?
-  actualPlanBillingCycle    BillingCycle?         @default(MONTHLY)
-  demoPlanBillingType       String?
-  demoPlanEndDate           DateTime?
-  demoPlanStartDate         DateTime?
-  demoPlanPrice             Float?
-  deliveryRequests          DeliveryRequest[]    @relation("DeliveryRequestLead")
-  uploadLinks               DocumentUploadLink[]
-  invoices                  Invoice[]            @relation("LeadInvoices")
-  ledgerEntries             LedgerEntry[]        @relation("CustomerLedger")
-  advancePayments           AdvancePayment[]     @relation("AdvancePayments")
-  accountsVerifiedBy        User?                @relation("AccountsVerifiedBy", fields: [accountsVerifiedById], references: [id], onDelete: SetNull)
-  gstVerifiedBy             User?                @relation("GstVerifiedBy", fields: [gstVerifiedById], references: [id], onDelete: SetNull)
-  actualPlanCreatedBy       User?                @relation("ActualPlanCreatedBy", fields: [actualPlanCreatedById], references: [id], onDelete: SetNull)
-  assignedTo                User?                @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
-  campaignData              CampaignData         @relation(fields: [campaignDataId], references: [id], onDelete: Cascade)
-  createdBy                 User                 @relation("CreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  customerAcceptanceBy      User?                @relation("CustomerAcceptanceBy", fields: [customerAcceptanceById], references: [id], onDelete: SetNull)
-  customerCreatedBy         User?                @relation("CustomerCreatedBy", fields: [customerCreatedById], references: [id], onDelete: SetNull)
-  deliveryAssignedTo        User?                @relation("DeliveryAssignedTo", fields: [deliveryAssignedToId], references: [id], onDelete: SetNull)
-  demoPlanAssignedBy        User?                @relation("DemoPlanAssignedBy", fields: [demoPlanAssignedById], references: [id], onDelete: SetNull)
-  feasibilityAssignedTo     User?                @relation("FeasibilityAssignedTo", fields: [feasibilityAssignedToId], references: [id], onDelete: SetNull)
-  nocAssignedTo             User?                @relation("NocAssignedTo", fields: [nocAssignedToId], references: [id], onDelete: SetNull)
-  nocConfiguredBy           User?                @relation("NocConfiguredBy", fields: [nocConfiguredById], references: [id], onDelete: SetNull)
-  nocPushedToDeliveryBy     User?                @relation("NocPushedToDelivery", fields: [nocPushedToDeliveryById], references: [id], onDelete: SetNull)
-  opsApprovedBy             User?                @relation("OpsApprovedBy", fields: [opsApprovedById], references: [id], onDelete: SetNull)
-  superAdmin2ApprovedBy     User?                @relation("SuperAdmin2ApprovedBy", fields: [superAdmin2ApprovedById], references: [id], onDelete: SetNull)
-  pushedToInstallationBy    User?                @relation("PushedToInstallation", fields: [pushedToInstallationById], references: [id], onDelete: SetNull)
-  speedTestUploadedBy       User?                @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
-  installationStartedBy     User?                @relation("LeadInstallStarted",   fields: [installationStartedById],   references: [id], onDelete: SetNull)
-  installationCompletedBy   User?                @relation("LeadInstallCompleted", fields: [installationCompletedById], references: [id], onDelete: SetNull)
-  deliveryDocsReviewedBy    User?                @relation("LeadDeliveryDocsReviewed", fields: [deliveryDocsReviewedById], references: [id], onDelete: SetNull)
-  products                  LeadProduct[]
-  moms                      MOM[]
+  installationCompletedAt      DateTime?
+  installationCompletedById    String?
+  installationStartedAt        DateTime?
+  installationStartedById      String?
+  latencyTestScreenshot        String?
+  speedTestScreenshot          String?
+  speedTestUploadedAt          DateTime?
+  speedTestUploadedById        String?
+  demoPlanAssignedAt           DateTime?
+  demoPlanAssignedById         String?
+  demoPlanBandwidth            Int?
+  demoPlanDataLimit            Int?
+  demoPlanIsActive             Boolean                    @default(false)
+  demoPlanName                 String?
+  demoPlanNotes                String?
+  demoPlanUploadBandwidth      Int?
+  demoPlanValidityDays         Int?
+  actualPlanBandwidth          Int?
+  actualPlanCreatedAt          DateTime?
+  actualPlanCreatedById        String?
+  actualPlanDataLimit          Int?
+  actualPlanEndDate            DateTime?
+  actualPlanIsActive           Boolean                    @default(false)
+  actualPlanName               String?
+  actualPlanNotes              String?
+  actualPlanPrice              Float?
+  actualPlanStartDate          DateTime?
+  actualPlanUploadBandwidth    Int?
+  actualPlanValidityDays       Int?
+  actualPlanBillingType        String?
+  actualPlanBillingCycle       BillingCycle?              @default(MONTHLY)
+  demoPlanBillingType          String?
+  demoPlanEndDate              DateTime?
+  demoPlanStartDate            DateTime?
+  demoPlanPrice                Float?
+  deliveryRequests             DeliveryRequest[]          @relation("DeliveryRequestLead")
+  uploadLinks                  DocumentUploadLink[]
+  invoices                     Invoice[]                  @relation("LeadInvoices")
+  ledgerEntries                LedgerEntry[]              @relation("CustomerLedger")
+  advancePayments              AdvancePayment[]           @relation("AdvancePayments")
+  accountsVerifiedBy           User?                      @relation("AccountsVerifiedBy", fields: [accountsVerifiedById], references: [id], onDelete: SetNull)
+  gstVerifiedBy                User?                      @relation("GstVerifiedBy", fields: [gstVerifiedById], references: [id], onDelete: SetNull)
+  actualPlanCreatedBy          User?                      @relation("ActualPlanCreatedBy", fields: [actualPlanCreatedById], references: [id], onDelete: SetNull)
+  assignedTo                   User?                      @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  campaignData                 CampaignData               @relation(fields: [campaignDataId], references: [id], onDelete: Cascade)
+  createdBy                    User                       @relation("CreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  customerAcceptanceBy         User?                      @relation("CustomerAcceptanceBy", fields: [customerAcceptanceById], references: [id], onDelete: SetNull)
+  customerCreatedBy            User?                      @relation("CustomerCreatedBy", fields: [customerCreatedById], references: [id], onDelete: SetNull)
+  deliveryAssignedTo           User?                      @relation("DeliveryAssignedTo", fields: [deliveryAssignedToId], references: [id], onDelete: SetNull)
+  demoPlanAssignedBy           User?                      @relation("DemoPlanAssignedBy", fields: [demoPlanAssignedById], references: [id], onDelete: SetNull)
+  feasibilityAssignedTo        User?                      @relation("FeasibilityAssignedTo", fields: [feasibilityAssignedToId], references: [id], onDelete: SetNull)
+  nocAssignedTo                User?                      @relation("NocAssignedTo", fields: [nocAssignedToId], references: [id], onDelete: SetNull)
+  nocConfiguredBy              User?                      @relation("NocConfiguredBy", fields: [nocConfiguredById], references: [id], onDelete: SetNull)
+  nocPushedToDeliveryBy        User?                      @relation("NocPushedToDelivery", fields: [nocPushedToDeliveryById], references: [id], onDelete: SetNull)
+  opsApprovedBy                User?                      @relation("OpsApprovedBy", fields: [opsApprovedById], references: [id], onDelete: SetNull)
+  superAdmin2ApprovedBy        User?                      @relation("SuperAdmin2ApprovedBy", fields: [superAdmin2ApprovedById], references: [id], onDelete: SetNull)
+  pushedToInstallationBy       User?                      @relation("PushedToInstallation", fields: [pushedToInstallationById], references: [id], onDelete: SetNull)
+  speedTestUploadedBy          User?                      @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
+  installationStartedBy        User?                      @relation("LeadInstallStarted", fields: [installationStartedById], references: [id], onDelete: SetNull)
+  installationCompletedBy      User?                      @relation("LeadInstallCompleted", fields: [installationCompletedById], references: [id], onDelete: SetNull)
+  deliveryDocsReviewedBy       User?                      @relation("LeadDeliveryDocsReviewed", fields: [deliveryDocsReviewedById], references: [id], onDelete: SetNull)
+  products                     LeadProduct[]
+  moms                         MOM[]
 
   // SAM Customer Data Fields
-  serviceType               ServiceType?         // ILL, P2P, MPLS, etc.
-  ipDetails                 Json?                // IP allocation details { wan: "", lan: [], gateway: "", subnet: "" }
-  cpeDetails                Json?                // CPE details { make: "", model: "", serialNo: "", macAddress: "" }
-  contractStartDate         DateTime?            // Contract start date
-  contractDurationMonths    Int?                 // Contract duration in months
-  contractEndDate           DateTime?            // Contract end date (calculated)
-  escalationMatrix          Json?                // Array of escalation contacts [{ level: 1, name: "", phone: "", email: "", designation: "" }]
+  serviceType            ServiceType? // ILL, P2P, MPLS, etc.
+  ipDetails              Json? // IP allocation details { wan: "", lan: [], gateway: "", subnet: "" }
+  cpeDetails             Json? // CPE details { make: "", model: "", serialNo: "", macAddress: "" }
+  contractStartDate      DateTime? // Contract start date
+  contractDurationMonths Int? // Contract duration in months
+  contractEndDate        DateTime? // Contract end date (calculated)
+  escalationMatrix       Json? // Array of escalation contacts [{ level: 1, name: "", phone: "", email: "", designation: "" }]
 
   // SAM relations
-  samAssignment             SAMAssignment?       @relation("SAMCustomer")
-  samAssignmentHistory      SAMAssignmentHistory[] @relation("SAMAssignmentHistoryCustomer")
-  samMeetings               SAMMeeting[]         @relation("SAMCustomerMeetings")
-  samVisits                 SAMVisit[]           @relation("SAMCustomerVisits")
-  customerCommunications    CustomerCommunication[] @relation("CustomerCommunications")
+  samAssignment             SAMAssignment?             @relation("SAMCustomer")
+  samAssignmentHistory      SAMAssignmentHistory[]     @relation("SAMAssignmentHistoryCustomer")
+  samMeetings               SAMMeeting[]               @relation("SAMCustomerMeetings")
+  samVisits                 SAMVisit[]                 @relation("SAMCustomerVisits")
+  customerCommunications    CustomerCommunication[]    @relation("CustomerCommunications")
   // Plan upgrade history
-  planUpgrades              PlanUpgradeHistory[] @relation("PlanUpgrades")
+  planUpgrades              PlanUpgradeHistory[]       @relation("PlanUpgrades")
   // Complaints
   complaints                Complaint[]
   customerComplaintRequests CustomerComplaintRequest[]
   // Customer Enquiries (referrals)
-  customerEnquiries         CustomerEnquiry[]           @relation("CustomerEnquiries")
-  enquiryCreatedFrom        CustomerEnquiry?            @relation("EnquiryCreatedFrom")
+  customerEnquiries         CustomerEnquiry[]          @relation("CustomerEnquiries")
+  enquiryCreatedFrom        CustomerEnquiry?           @relation("EnquiryCreatedFrom")
   // Service Orders
-  serviceOrders             ServiceOrder[]              @relation("ServiceOrderCustomer")
+  serviceOrders             ServiceOrder[]             @relation("ServiceOrderCustomer")
 
   // Vendor linkage
-  vendorId                      String?
-  vendorDocsVerifiedAt          DateTime?
-  vendorDocsVerifiedById        String?
-  vendorDocsRejectedReason      String?
-  vendorCommissionPercentage    Float?            // Commission % set during feasibility review
-  vendor                    Vendor?              @relation("LeadVendor", fields: [vendorId], references: [id])
-  vendorDocsVerifiedBy      User?                @relation("VendorDocsVerifiedBy", fields: [vendorDocsVerifiedById], references: [id], onDelete: SetNull)
-  vendorsCreatedFor         Vendor[]             @relation("VendorCreatedForLead")
-  vendorPurchaseOrders      VendorPurchaseOrder[] @relation("LeadVendorPOs")
+  vendorId                   String?
+  vendorDocsVerifiedAt       DateTime?
+  vendorDocsVerifiedById     String?
+  vendorDocsRejectedReason   String?
+  vendorCommissionPercentage Float? // Commission % set during feasibility review
+  vendor                     Vendor?               @relation("LeadVendor", fields: [vendorId], references: [id])
+  vendorDocsVerifiedBy       User?                 @relation("VendorDocsVerifiedBy", fields: [vendorDocsVerifiedById], references: [id], onDelete: SetNull)
+  vendorsCreatedFor          Vendor[]              @relation("VendorCreatedForLead")
+  vendorPurchaseOrders       VendorPurchaseOrder[] @relation("LeadVendorPOs")
+
+  // Quick-disconnect / commercial change requests raised by SAM
+  commercialChanges CommercialChange[]
 
   @@index([vendorId])
   @@index([assignedToId, status])
@@ -597,58 +602,58 @@ model EmailLog {
 }
 
 model Vendor {
-  id                    String               @id @default(uuid())
-  companyName           String
-  gstNumber             String?
-  gstDocument           String?
-  contactPerson         String?
-  email                 String?
-  phone                 String?
-  panNumber             String?
-  panDocument           String?
-  address               String?
-  city                  String?
-  state                 String?
-  isActive              Boolean              @default(true)
+  id                      String                @id @default(uuid())
+  companyName             String
+  gstNumber               String?
+  gstDocument             String?
+  contactPerson           String?
+  email                   String?
+  phone                   String?
+  panNumber               String?
+  panDocument             String?
+  address                 String?
+  city                    String?
+  state                   String?
+  isActive                Boolean               @default(true)
   // Bank details
-  accountNumber         String?
-  ifscCode              String?
-  accountName           String?
-  bankName              String?
-  branchName            String?
-  cancelledCheque       String?
+  accountNumber           String?
+  ifscCode                String?
+  accountName             String?
+  bankName                String?
+  branchName              String?
+  cancelledCheque         String?
   // Category & Approval
-  category              VendorCategory?
-  approvalStatus        VendorApprovalStatus @default(PENDING_ADMIN)
-  adminApprovedById     String?
-  adminApprovedAt       DateTime?
-  adminRejectionReason  String?
-  accountsApprovedById  String?
-  accountsApprovedAt    DateTime?
+  category                VendorCategory?
+  approvalStatus          VendorApprovalStatus  @default(PENDING_ADMIN)
+  adminApprovedById       String?
+  adminApprovedAt         DateTime?
+  adminRejectionReason    String?
+  accountsApprovedById    String?
+  accountsApprovedAt      DateTime?
   accountsRejectionReason String?
-  rejectedAt            DateTime?
+  rejectedAt              DateTime?
   // Vendor type & docs
-  vendorType            VendorType?
-  individualName        String?
-  docsStatus            VendorDocsStatus     @default(PENDING)
-  estimatedCapex        Float?
-  estimatedOpex         Float?
-  commissionPercentage  Float?
-  createdForLeadId      String?
+  vendorType              VendorType?
+  individualName          String?
+  docsStatus              VendorDocsStatus      @default(PENDING)
+  estimatedCapex          Float?
+  estimatedOpex           Float?
+  commissionPercentage    Float?
+  createdForLeadId        String?
   // Base fields
-  createdById           String
-  createdAt             DateTime             @default(now())
-  updatedAt             DateTime             @updatedAt
+  createdById             String
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
   // Relations
-  storePurchaseOrders   StorePurchaseOrder[] @relation("StorePOVendor")
-  vendorPurchaseOrders  VendorPurchaseOrder[] @relation("VendorPOs")
-  createdBy             User                 @relation("VendorsCreated", fields: [createdById], references: [id])
-  adminApprovedBy       User?                @relation("VendorAdminApproved", fields: [adminApprovedById], references: [id])
-  accountsApprovedBy    User?                @relation("VendorAccountsApproved", fields: [accountsApprovedById], references: [id])
-  createdForLead        Lead?                @relation("VendorCreatedForLead", fields: [createdForLeadId], references: [id])
-  leads                 Lead[]               @relation("LeadVendor")
-  campaignsAsCP         Campaign[]           @relation("CampaignChannelPartner")
-  campaignDataAsCP      CampaignData[]       @relation("CampaignDataChannelPartner")
+  storePurchaseOrders     StorePurchaseOrder[]  @relation("StorePOVendor")
+  vendorPurchaseOrders    VendorPurchaseOrder[] @relation("VendorPOs")
+  createdBy               User                  @relation("VendorsCreated", fields: [createdById], references: [id])
+  adminApprovedBy         User?                 @relation("VendorAdminApproved", fields: [adminApprovedById], references: [id])
+  accountsApprovedBy      User?                 @relation("VendorAccountsApproved", fields: [accountsApprovedById], references: [id])
+  createdForLead          Lead?                 @relation("VendorCreatedForLead", fields: [createdForLeadId], references: [id])
+  leads                   Lead[]                @relation("LeadVendor")
+  campaignsAsCP           Campaign[]            @relation("CampaignChannelPartner")
+  campaignDataAsCP        CampaignData[]        @relation("CampaignDataChannelPartner")
 
   @@index([companyName])
   @@index([createdById])
@@ -670,7 +675,7 @@ model DocumentUploadLink {
   lastAccessedAt    DateTime?
   accessCount       Int       @default(0)
   customerNote      String?
-  requiredDocuments String[]  // Array of document type IDs that customer should upload
+  requiredDocuments String[] // Array of document type IDs that customer should upload
   createdBy         User      @relation("UploadLinksCreated", fields: [createdById], references: [id])
   lead              Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
@@ -950,10 +955,10 @@ model DeliveryRequestLog {
 }
 
 model Invoice {
-  id                   String        @id @default(uuid())
-  invoiceNumber        String        @unique
+  id                   String              @id @default(uuid())
+  invoiceNumber        String              @unique
   leadId               String
-  invoiceDate          DateTime      @default(now())
+  invoiceDate          DateTime            @default(now())
   dueDate              DateTime
   billingPeriodStart   DateTime
   billingPeriodEnd     DateTime
@@ -967,12 +972,12 @@ model Invoice {
   poNumber             String?
   planName             String
   planDescription      String?
-  hsnSacCode           String        @default("998422")
+  hsnSacCode           String              @default("998422")
   baseAmount           Float
-  discountAmount       Float         @default(0)
+  discountAmount       Float               @default(0)
   taxableAmount        Float
-  sgstRate             Float         @default(9)
-  cgstRate             Float         @default(9)
+  sgstRate             Float               @default(9)
+  cgstRate             Float               @default(9)
   sgstAmount           Float
   cgstAmount           Float
   totalGstAmount       Float
@@ -980,14 +985,14 @@ model Invoice {
   acknowledgementNo    String?
   acknowledgementDate  DateTime?
   irnNumber            String?
-  status               InvoiceStatus @default(GENERATED)
+  status               InvoiceStatus       @default(GENERATED)
   paidAt               DateTime?
   paidAmount           Float?
   paymentReference     String?
   notes                String?
   createdById          String
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
   paymentDiscount      Float?
   paymentMode          String?
   paymentRemark        String?
@@ -995,16 +1000,16 @@ model Invoice {
   tdsAmount            Float?
   transactionDate      DateTime?
   // Total amount paid across all payments
-  totalPaidAmount      Float         @default(0)
+  totalPaidAmount      Float               @default(0)
   // Total credit notes issued against this invoice
-  totalCreditAmount    Float         @default(0)
+  totalCreditAmount    Float               @default(0)
   // Remaining balance to be paid (calculated: grandTotal - totalCreditAmount - totalPaidAmount)
   remainingAmount      Float?
-  createdBy            User          @relation("InvoicesCreatedBy", fields: [createdById], references: [id])
-  lead                 Lead          @relation("LeadInvoices", fields: [leadId], references: [id], onDelete: Restrict)
-  payments             InvoicePayment[] @relation("InvoicePayments")
-  creditNotes          CreditNote[]  @relation("InvoiceCreditNotes")
-  adjustedCreditNotes  CreditNote[]  @relation("CreditNoteAdjustments")
+  createdBy            User                @relation("InvoicesCreatedBy", fields: [createdById], references: [id])
+  lead                 Lead                @relation("LeadInvoices", fields: [leadId], references: [id], onDelete: Restrict)
+  payments             InvoicePayment[]    @relation("InvoicePayments")
+  creditNotes          CreditNote[]        @relation("InvoiceCreditNotes")
+  adjustedCreditNotes  CreditNote[]        @relation("CreditNoteAdjustments")
   collectionCalls      CollectionCallLog[] @relation("InvoiceCollectionCalls")
 
   @@index([leadId])
@@ -1022,8 +1027,8 @@ model InvoicePayment {
   receiptNumber        String    @unique
   paymentDate          DateTime  @default(now())
   amount               Float
-  paymentMode          String    // CHEQUE, NEFT, ONLINE, TDS
-  bankAccount          String?   // Bank account or payment gateway used
+  paymentMode          String // CHEQUE, NEFT, ONLINE, TDS
+  bankAccount          String? // Bank account or payment gateway used
   provisionalReceiptNo String?
   tdsAmount            Float     @default(0)
   transactionDate      DateTime?
@@ -1031,8 +1036,8 @@ model InvoicePayment {
   createdById          String
   createdAt            DateTime  @default(now())
 
-  invoice              Invoice   @relation("InvoicePayments", fields: [invoiceId], references: [id])
-  createdBy            User      @relation("PaymentsCreatedBy", fields: [createdById], references: [id])
+  invoice   Invoice @relation("InvoicePayments", fields: [invoiceId], references: [id])
+  createdBy User    @relation("PaymentsCreatedBy", fields: [createdById], references: [id])
 
   @@index([invoiceId])
   @@index([receiptNumber])
@@ -1045,7 +1050,7 @@ model AdvancePayment {
   receiptNumber        String    @unique
   leadId               String
   amount               Float
-  paymentMode          String    // CHEQUE, NEFT, ONLINE, CASH
+  paymentMode          String // CHEQUE, NEFT, ONLINE, CASH
   bankAccount          String?
   provisionalReceiptNo String?
   transactionDate      DateTime?
@@ -1053,8 +1058,8 @@ model AdvancePayment {
   createdById          String
   createdAt            DateTime  @default(now())
 
-  lead                 Lead      @relation("AdvancePayments", fields: [leadId], references: [id])
-  createdBy            User      @relation("AdvancePaymentsCreatedBy", fields: [createdById], references: [id])
+  lead      Lead @relation("AdvancePayments", fields: [leadId], references: [id])
+  createdBy User @relation("AdvancePaymentsCreatedBy", fields: [createdById], references: [id])
 
   @@index([leadId])
   @@index([receiptNumber])
@@ -1062,43 +1067,43 @@ model AdvancePayment {
 
 // Credit Note - reduces the legal demand on an invoice
 model CreditNote {
-  id                   String              @id @default(uuid())
-  creditNoteNumber     String              @unique
-  invoiceId            String
-  creditNoteDate       DateTime            @default(now())
+  id               String   @id @default(uuid())
+  creditNoteNumber String   @unique
+  invoiceId        String
+  creditNoteDate   DateTime @default(now())
 
   // Amounts (must mirror invoice tax structure)
-  baseAmount           Float               // Base credit amount
-  sgstRate             Float               @default(9)
-  cgstRate             Float               @default(9)
-  sgstAmount           Float               // SGST credit
-  cgstAmount           Float               // CGST credit
-  totalGstAmount       Float               // Total GST credit
-  totalAmount          Float               // Total credit (base + GST)
+  baseAmount     Float // Base credit amount
+  sgstRate       Float @default(9)
+  cgstRate       Float @default(9)
+  sgstAmount     Float // SGST credit
+  cgstAmount     Float // CGST credit
+  totalGstAmount Float // Total GST credit
+  totalAmount    Float // Total credit (base + GST)
 
   // Reason and status
-  reason               CreditNoteReason
-  status               CreditNoteStatus    @default(ISSUED)
-  remarks              String?
+  reason  CreditNoteReason
+  status  CreditNoteStatus @default(ISSUED)
+  remarks String?
 
   // If adjusted against another invoice
   adjustedAgainstInvoiceId String?
-  adjustedAt           DateTime?
+  adjustedAt               DateTime?
 
   // If refunded
-  refundedAt           DateTime?
-  refundReference      String?
-  refundMode           String?             // CHEQUE, NEFT, etc.
+  refundedAt      DateTime?
+  refundReference String?
+  refundMode      String? // CHEQUE, NEFT, etc.
 
   // Audit
-  createdById          String
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relations
-  invoice              Invoice             @relation("InvoiceCreditNotes", fields: [invoiceId], references: [id])
-  createdBy            User                @relation("CreditNotesCreatedBy", fields: [createdById], references: [id])
-  adjustedAgainstInvoice Invoice?          @relation("CreditNoteAdjustments", fields: [adjustedAgainstInvoiceId], references: [id])
+  invoice                Invoice  @relation("InvoiceCreditNotes", fields: [invoiceId], references: [id])
+  createdBy              User     @relation("CreditNotesCreatedBy", fields: [createdById], references: [id])
+  adjustedAgainstInvoice Invoice? @relation("CreditNoteAdjustments", fields: [adjustedAgainstInvoiceId], references: [id])
 
   @@index([invoiceId])
   @@index([creditNoteNumber])
@@ -1109,37 +1114,37 @@ model CreditNote {
 // Customer Ledger - Single source of truth for financial transactions
 // This is APPEND-ONLY. No updates. No deletes.
 model LedgerEntry {
-  id                String            @id @default(uuid())
-  customerId        String            // leadId - one ledger per customer
+  id         String @id @default(uuid())
+  customerId String // leadId - one ledger per customer
 
   // Entry details
-  entryDate         DateTime          // Accounting date (when transaction occurred)
-  entryType         LedgerEntryType   // INVOICE, PAYMENT, CREDIT_NOTE, REFUND
+  entryDate DateTime // Accounting date (when transaction occurred)
+  entryType LedgerEntryType // INVOICE, PAYMENT, CREDIT_NOTE, REFUND
 
   // Reference to source document
-  referenceType     String            // "INVOICE" | "PAYMENT" | "CREDIT_NOTE"
-  referenceId       String            // UUID of source record
-  referenceNumber   String            // Human-readable: Invoice No / Receipt No / CN No
+  referenceType   String // "INVOICE" | "PAYMENT" | "CREDIT_NOTE"
+  referenceId     String // UUID of source record
+  referenceNumber String // Human-readable: Invoice No / Receipt No / CN No
 
   // Debit/Credit amounts (CRITICAL - follow accounting rules)
   // Debit = Customer owes more | Credit = Customer owes less
-  debitAmount       Float             @default(0)
-  creditAmount      Float             @default(0)
+  debitAmount  Float @default(0)
+  creditAmount Float @default(0)
 
   // Running balance computed on read, stored for performance
   // runningBalance = previous.runningBalance + debitAmount - creditAmount
-  runningBalance    Float             @default(0)
+  runningBalance Float @default(0)
 
   // Human-readable description for customer statements
-  description       String
+  description String
 
   // Audit trail
-  createdById       String?
-  createdAt         DateTime          @default(now())
+  createdById String?
+  createdAt   DateTime @default(now())
 
   // Relations
-  customer          Lead              @relation("CustomerLedger", fields: [customerId], references: [id])
-  createdBy         User?             @relation("LedgerEntriesCreatedBy", fields: [createdById], references: [id])
+  customer  Lead  @relation("CustomerLedger", fields: [customerId], references: [id])
+  createdBy User? @relation("LedgerEntriesCreatedBy", fields: [createdById], references: [id])
 
   // Indexes for fast retrieval
   @@index([customerId])
@@ -1152,26 +1157,26 @@ model LedgerEntry {
 }
 
 enum LedgerEntryType {
-  INVOICE       // Invoice generated - DEBIT
-  PAYMENT       // Payment received - CREDIT
-  CREDIT_NOTE   // Credit note issued - CREDIT
-  REFUND        // Refund processed - DEBIT
+  INVOICE // Invoice generated - DEBIT
+  PAYMENT // Payment received - CREDIT
+  CREDIT_NOTE // Credit note issued - CREDIT
+  REFUND // Refund processed - DEBIT
 }
 
 // SAM Assignment - One executive per customer (one-to-one)
 model SAMAssignment {
-  id              String   @id @default(uuid())
-  customerId      String   @unique  // One executive per customer
-  samExecutiveId  String
-  assignedById    String
-  assignedAt      DateTime @default(now())
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id             String   @id @default(uuid())
+  customerId     String   @unique // One executive per customer
+  samExecutiveId String
+  assignedById   String
+  assignedAt     DateTime @default(now())
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  customer        Lead     @relation("SAMCustomer", fields: [customerId], references: [id])
-  samExecutive    User     @relation("SAMExecutiveAssignments", fields: [samExecutiveId], references: [id])
-  assignedBy      User     @relation("SAMAssignedBy", fields: [assignedById], references: [id])
+  customer     Lead @relation("SAMCustomer", fields: [customerId], references: [id])
+  samExecutive User @relation("SAMExecutiveAssignments", fields: [samExecutiveId], references: [id])
+  assignedBy   User @relation("SAMAssignedBy", fields: [assignedById], references: [id])
 
   @@index([customerId])
   @@index([samExecutiveId])
@@ -1179,20 +1184,20 @@ model SAMAssignment {
 
 // SAM Assignment History - Audit trail for customer assignment changes
 model SAMAssignmentHistory {
-  id              String   @id @default(uuid())
-  customerId      String
-  samExecutiveId  String
-  assignedById    String
-  assignedAt      DateTime
-  removedAt       DateTime?
-  reason          String?
-  originalArc     Float?
-  finalArc        Float?
-  createdAt       DateTime @default(now())
+  id             String    @id @default(uuid())
+  customerId     String
+  samExecutiveId String
+  assignedById   String
+  assignedAt     DateTime
+  removedAt      DateTime?
+  reason         String?
+  originalArc    Float?
+  finalArc       Float?
+  createdAt      DateTime  @default(now())
 
-  customer        Lead     @relation("SAMAssignmentHistoryCustomer", fields: [customerId], references: [id])
-  samExecutive    User     @relation("SAMAssignmentHistoryExecutive", fields: [samExecutiveId], references: [id])
-  assignedBy      User     @relation("SAMAssignmentHistoryAssignedBy", fields: [assignedById], references: [id])
+  customer     Lead @relation("SAMAssignmentHistoryCustomer", fields: [customerId], references: [id])
+  samExecutive User @relation("SAMAssignmentHistoryExecutive", fields: [samExecutiveId], references: [id])
+  assignedBy   User @relation("SAMAssignmentHistoryAssignedBy", fields: [assignedById], references: [id])
 
   @@index([customerId])
   @@index([samExecutiveId])
@@ -1200,32 +1205,32 @@ model SAMAssignmentHistory {
 
 // SAM Meeting - MOM (Minutes of Meeting) recorded by SAM executives
 model SAMMeeting {
-  id                  String           @id @default(uuid())
-  customerId          String
-  samExecutiveId      String
-  title               String
-  meetingDate         DateTime
-  meetingType         SAMMeetingType   @default(ONLINE)
-  location            String?
-  meetingLink         String?
-  status              SAMMeetingStatus @default(COMPLETED)
+  id             String           @id @default(uuid())
+  customerId     String
+  samExecutiveId String
+  title          String
+  meetingDate    DateTime
+  meetingType    SAMMeetingType   @default(ONLINE)
+  location       String?
+  meetingLink    String?
+  status         SAMMeetingStatus @default(COMPLETED)
 
   // Participants
-  clientParticipants  String?
-  gazonParticipants   String?
+  clientParticipants String?
+  gazonParticipants  String?
 
   // MOM (Minutes of Meeting) fields
-  attendees           String?
-  discussion          String?
-  actionItems         Json?
-  followUpDate        DateTime?
+  attendees    String?
+  discussion   String?
+  actionItems  Json?
+  followUpDate DateTime?
 
-  momEmailSentAt      DateTime?
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+  momEmailSentAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  customer            Lead             @relation("SAMCustomerMeetings", fields: [customerId], references: [id])
-  samExecutive        User             @relation("SAMExecutiveMeetings", fields: [samExecutiveId], references: [id])
+  customer     Lead @relation("SAMCustomerMeetings", fields: [customerId], references: [id])
+  samExecutive User @relation("SAMExecutiveMeetings", fields: [samExecutiveId], references: [id])
 
   @@index([customerId])
   @@index([samExecutiveId])
@@ -1250,20 +1255,20 @@ enum SAMMeetingStatus {
 }
 
 enum ServiceType {
-  ILL           // Internet Leased Line
-  P2P           // Point to Point
-  MPLS          // MPLS VPN
-  BROADBAND     // Broadband
-  FIBER         // Fiber to Home/Office
-  WIRELESS      // Wireless
+  ILL // Internet Leased Line
+  P2P // Point to Point
+  MPLS // MPLS VPN
+  BROADBAND // Broadband
+  FIBER // Fiber to Home/Office
+  WIRELESS // Wireless
 }
 
 enum SAMVisitType {
-  REGULAR       // Regular scheduled visit
-  ESCALATION    // Visit due to escalation/complaint
-  SALES         // Sales/upsell visit
-  INSTALLATION  // Installation support visit
-  MAINTENANCE   // Maintenance visit
+  REGULAR // Regular scheduled visit
+  ESCALATION // Visit due to escalation/complaint
+  SALES // Sales/upsell visit
+  INSTALLATION // Installation support visit
+  MAINTENANCE // Maintenance visit
 }
 
 enum SAMVisitStatus {
@@ -1275,37 +1280,37 @@ enum SAMVisitStatus {
 
 // SAM Visit - Customer visits by SAM executives
 model SAMVisit {
-  id              String           @id @default(uuid())
-  customerId      String
-  samExecutiveId  String
-  visitDate       DateTime
-  visitType       SAMVisitType     @default(REGULAR)
-  status          SAMVisitStatus   @default(SCHEDULED)
-  purpose         String?          // Purpose of visit
-  location        String?          // Visit location (if different from customer address)
+  id             String         @id @default(uuid())
+  customerId     String
+  samExecutiveId String
+  visitDate      DateTime
+  visitType      SAMVisitType   @default(REGULAR)
+  status         SAMVisitStatus @default(SCHEDULED)
+  purpose        String? // Purpose of visit
+  location       String? // Visit location (if different from customer address)
 
   // Visit Outcome (filled after visit)
-  outcome         String?          // What was achieved
-  customerFeedback String?         // Customer feedback/concerns
-  issuesIdentified String?         // Any issues identified
-  actionRequired  String?          // Follow-up actions needed
+  outcome          String? // What was achieved
+  customerFeedback String? // Customer feedback/concerns
+  issuesIdentified String? // Any issues identified
+  actionRequired   String? // Follow-up actions needed
 
   // Next Visit Planning
-  nextVisitDate   DateTime?        // Planned next visit
-  nextVisitPurpose String?         // Purpose of next visit
+  nextVisitDate    DateTime? // Planned next visit
+  nextVisitPurpose String? // Purpose of next visit
 
   // Attachments and notes
-  attachments     Json?            // Array of attachment URLs
-  notes           String?          // Additional notes
+  attachments Json? // Array of attachment URLs
+  notes       String? // Additional notes
 
   // Timestamps
-  completedAt     DateTime?        // When visit was marked complete
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  completedAt DateTime? // When visit was marked complete
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   // Relations
-  customer        Lead             @relation("SAMCustomerVisits", fields: [customerId], references: [id])
-  samExecutive    User             @relation("SAMExecutiveVisits", fields: [samExecutiveId], references: [id])
+  customer     Lead @relation("SAMCustomerVisits", fields: [customerId], references: [id])
+  samExecutive User @relation("SAMExecutiveVisits", fields: [samExecutiveId], references: [id])
 
   @@index([customerId])
   @@index([samExecutiveId])
@@ -1315,39 +1320,39 @@ model SAMVisit {
 
 // SAM Customer Communication - Tracks all customer communications
 model CustomerCommunication {
-  id                String                  @id @default(uuid())
+  id                String            @id @default(uuid())
   customerId        String
-  samExecutiveId    String?                 // Null if auto-generated
+  samExecutiveId    String? // Null if auto-generated
   communicationType CommunicationType
 
   // Communication details
-  subject           String
-  content           String                  // Message content
-  channel           CommunicationChannel    @default(EMAIL)
+  subject String
+  content String // Message content
+  channel CommunicationChannel @default(EMAIL)
 
   // For outage notifications
-  ticketNumber      String?                 // Reference ticket number
-  isOutageRelated   Boolean                 @default(false)
-  etaRestoration    DateTime?               // Estimated time of restoration
+  ticketNumber    String? // Reference ticket number
+  isOutageRelated Boolean   @default(false)
+  etaRestoration  DateTime? // Estimated time of restoration
 
   // Email details (if sent via email)
-  sentTo            String[]                // Email addresses
-  ccTo              String[]                @default([])
+  sentTo String[] // Email addresses
+  ccTo   String[] @default([])
 
   // Status
-  status            CommunicationStatus     @default(DRAFT)
-  sentAt            DateTime?
+  status CommunicationStatus @default(DRAFT)
+  sentAt DateTime?
 
   // Attachments
-  attachments       Json?                   // Array of attachment URLs
+  attachments Json? // Array of attachment URLs
 
   // Metadata
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  customer          Lead                    @relation("CustomerCommunications", fields: [customerId], references: [id])
-  samExecutive      User?                   @relation("SAMCommunications", fields: [samExecutiveId], references: [id])
+  customer     Lead  @relation("CustomerCommunications", fields: [customerId], references: [id])
+  samExecutive User? @relation("SAMCommunications", fields: [samExecutiveId], references: [id])
 
   @@index([customerId])
   @@index([samExecutiveId])
@@ -1357,14 +1362,14 @@ model CustomerCommunication {
 }
 
 enum CommunicationType {
-  INITIAL_OUTAGE          // First notification about outage
-  INTERIM_UPDATE          // Update during outage
-  ETR_UPDATE              // ETA restoration update
-  RESTORATION_CONFIRMED   // Service restored notification
-  GENERAL_UPDATE          // General communication
-  SERVICE_NOTIFICATION    // Service changes notification
-  BILLING_REMINDER        // Payment reminder
-  CONTRACT_RENEWAL        // Contract renewal notification
+  INITIAL_OUTAGE // First notification about outage
+  INTERIM_UPDATE // Update during outage
+  ETR_UPDATE // ETA restoration update
+  RESTORATION_CONFIRMED // Service restored notification
+  GENERAL_UPDATE // General communication
+  SERVICE_NOTIFICATION // Service changes notification
+  BILLING_REMINDER // Payment reminder
+  CONTRACT_RENEWAL // Contract renewal notification
 }
 
 enum CommunicationChannel {
@@ -1481,14 +1486,14 @@ enum LeadType {
 // attribute the lead to the correct source without ambiguous inference.
 // Every creation path in lead/campaign controllers writes one of these.
 enum LeadCreationSource {
-  BULK_UPLOAD_BDM      // BDM/TL uploaded campaign data, later converted by ISR
-  BULK_UPLOAD_ADMIN    // Admin/Master uploaded campaign data, later converted by ISR
-  ISR_SELF_DATA        // ISR added their own contact, then converted it
-  BDM_DIRECT_LEAD      // BDM clicked "Add Lead" on the New Lead Assigned page
-  BDM_OPPORTUNITY      // BDM clicked "Create Opportunity" (skips qualification)
-  COLD_LEAD            // BDM parked a cold lead from a lukewarm meeting
-  SAM_REFERRAL         // SAM referred an existing customer to a new opportunity
-  UNKNOWN              // Backfill default for legacy leads with ambiguous history
+  BULK_UPLOAD_BDM // BDM/TL uploaded campaign data, later converted by ISR
+  BULK_UPLOAD_ADMIN // Admin/Master uploaded campaign data, later converted by ISR
+  ISR_SELF_DATA // ISR added their own contact, then converted it
+  BDM_DIRECT_LEAD // BDM clicked "Add Lead" on the New Lead Assigned page
+  BDM_OPPORTUNITY // BDM clicked "Create Opportunity" (skips qualification)
+  COLD_LEAD // BDM parked a cold lead from a lukewarm meeting
+  SAM_REFERRAL // SAM referred an existing customer to a new opportunity
+  UNKNOWN // Backfill default for legacy leads with ambiguous history
 }
 
 enum InterestLevel {
@@ -1598,42 +1603,42 @@ enum CreditNoteReason {
 }
 
 enum CreditNoteStatus {
-  PENDING_APPROVAL  // Awaiting admin approval
-  REJECTED          // Rejected by admin
-  ISSUED            // Approved and applied
-  ADJUSTED          // Used against future invoice
-  REFUNDED          // Money returned to customer
+  PENDING_APPROVAL // Awaiting admin approval
+  REJECTED // Rejected by admin
+  ISSUED // Approved and applied
+  ADJUSTED // Used against future invoice
+  REFUNDED // Money returned to customer
 }
 
 // Document sequence counter for generating unique document numbers
 // Format: PREFIX/DD/MM/YY-XXXX (e.g., GLL/27/01/26-0001)
 // Counter never resets - global per document type
 model DocumentSequence {
-  id            String   @id @default(uuid())
-  documentType  String   @unique  // INVOICE, RECEIPT, CREDIT_NOTE
-  prefix        String             // GLL, RCP, CN
-  lastNumber    Int      @default(0)
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(uuid())
+  documentType String   @unique // INVOICE, RECEIPT, CREDIT_NOTE
+  prefix       String // GLL, RCP, CN
+  lastNumber   Int      @default(0)
+  updatedAt    DateTime @updatedAt
 
   @@index([documentType])
 }
 
 // Collection Call Log - tracks collection calls made by accounts team
 model CollectionCallLog {
-  id              String              @id @default(uuid())
-  invoiceId       String
-  leadId          String
-  userId          String
-  startTime       DateTime
-  endTime         DateTime?
-  duration        Int?                // Duration in seconds
-  outcome         CollectionCallOutcome
-  promiseDate     DateTime?           // For "PROMISE_TO_PAY" outcome
-  remark          String?
-  createdAt       DateTime            @default(now())
+  id          String                @id @default(uuid())
+  invoiceId   String
+  leadId      String
+  userId      String
+  startTime   DateTime
+  endTime     DateTime?
+  duration    Int? // Duration in seconds
+  outcome     CollectionCallOutcome
+  promiseDate DateTime? // For "PROMISE_TO_PAY" outcome
+  remark      String?
+  createdAt   DateTime              @default(now())
 
-  invoice         Invoice             @relation("InvoiceCollectionCalls", fields: [invoiceId], references: [id])
-  user            User                @relation("CollectionCallsMade", fields: [userId], references: [id])
+  invoice Invoice @relation("InvoiceCollectionCalls", fields: [invoiceId], references: [id])
+  user    User    @relation("CollectionCallsMade", fields: [userId], references: [id])
 
   @@index([invoiceId])
   @@index([leadId])
@@ -1655,53 +1660,53 @@ enum CollectionCallOutcome {
 
 // Plan Upgrade/Downgrade History - tracks all plan changes for billing and audit
 model PlanUpgradeHistory {
-  id                    String   @id @default(uuid())
-  leadId                String
+  id     String @id @default(uuid())
+  leadId String
 
   // Action type (UPGRADE or DOWNGRADE)
-  actionType            String   @default("UPGRADE") // UPGRADE or DOWNGRADE
+  actionType String @default("UPGRADE") // UPGRADE or DOWNGRADE
 
   // Previous plan details (snapshot at time of change)
-  previousPlanName      String
-  previousBandwidth     Int
+  previousPlanName        String
+  previousBandwidth       Int
   previousUploadBandwidth Int?
-  previousArc           Float
-  previousValidityDays  Int
-  previousBillingType   String
-  previousPlanStartDate DateTime
-  previousPlanEndDate   DateTime
+  previousArc             Float
+  previousValidityDays    Int
+  previousBillingType     String
+  previousPlanStartDate   DateTime
+  previousPlanEndDate     DateTime
 
   // New plan details
-  newPlanName           String
-  newBandwidth          Int
-  newUploadBandwidth    Int?
-  newArc                Float     // New total ARC (old +/- change)
-  additionalArc         Float?    // Additional ARC added during upgrade
-  degradeArc            Float?    // ARC subtracted during downgrade
+  newPlanName        String
+  newBandwidth       Int
+  newUploadBandwidth Int?
+  newArc             Float // New total ARC (old +/- change)
+  additionalArc      Float? // Additional ARC added during upgrade
+  degradeArc         Float? // ARC subtracted during downgrade
 
   // Change timing
-  upgradeDate           DateTime    // Date change takes effect
+  upgradeDate DateTime // Date change takes effect
 
   // Pro-rated billing calculation
-  daysOnOldPlan         Int         // Days from plan start to change date
-  daysOnNewPlan         Int         // Days from change date to billing period end
-  oldPlanAmount         Float       // Pro-rated amount for old plan period
-  newPlanAmount         Float       // Pro-rated amount for new plan period
-  totalAmount           Float       // Combined amount for billing period
-  originalAmount        Float       // What it would have been without change
-  differenceAmount      Float       // Additional/credit amount due to change
+  daysOnOldPlan    Int // Days from plan start to change date
+  daysOnNewPlan    Int // Days from change date to billing period end
+  oldPlanAmount    Float // Pro-rated amount for old plan period
+  newPlanAmount    Float // Pro-rated amount for new plan period
+  totalAmount      Float // Combined amount for billing period
+  originalAmount   Float // What it would have been without change
+  differenceAmount Float // Additional/credit amount due to change
 
   // For downgrades - link to credit note
-  creditNoteId          String?     // Credit note created for downgrade
+  creditNoteId String? // Credit note created for downgrade
 
   // Metadata
-  notes                 String?
-  createdById           String
-  createdAt             DateTime    @default(now())
+  notes       String?
+  createdById String
+  createdAt   DateTime @default(now())
 
   // Relations
-  lead                  Lead        @relation("PlanUpgrades", fields: [leadId], references: [id], onDelete: Cascade)
-  createdBy             User        @relation("PlanUpgradesCreated", fields: [createdById], references: [id])
+  lead      Lead @relation("PlanUpgrades", fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy User @relation("PlanUpgradesCreated", fields: [createdById], references: [id])
 
   @@index([leadId])
   @@index([createdAt])
@@ -1710,67 +1715,67 @@ model PlanUpgradeHistory {
 }
 
 model VendorPurchaseOrder {
-  id                    String           @id @default(uuid())
-  poNumber              String           @unique
-  poDate                DateTime         @default(now())
-  validityMonths        Int
-  vendorCategory        VendorCategory
+  id             String         @id @default(uuid())
+  poNumber       String         @unique
+  poDate         DateTime       @default(now())
+  validityMonths Int
+  vendorCategory VendorCategory
 
   // Linked entities
-  vendorId              String
-  leadId                String
+  vendorId String
+  leadId   String
 
   // Denormalized lead details for display
-  customerName          String
-  popLocation           String?
-  installationLocation  String?
+  customerName         String
+  popLocation          String?
+  installationLocation String?
 
   // Fiber-specific fields
-  distance              Float?
-  rate                  Float?
+  distance Float?
+  rate     Float?
 
   // Commission/Channel Partner specific fields
-  commissionPercentage  Float?
-  arcAmount             Float?
-  bandwidthSpeed        String?
+  commissionPercentage Float?
+  arcAmount            Float?
+  bandwidthSpeed       String?
 
   // Third Party specific fields
-  paymentTerms          String?
-  lockInPeriod          Int?
-  noticePeriod          Int?
+  paymentTerms String?
+  lockInPeriod Int?
+  noticePeriod Int?
 
   // Amount calculation
-  baseAmount            Float
-  gstApplicable         Boolean          @default(false)
-  gstPercentage         Float?
-  gstAmount             Float?
-  totalAmount           Float
+  baseAmount    Float
+  gstApplicable Boolean @default(false)
+  gstPercentage Float?
+  gstAmount     Float?
+  totalAmount   Float
 
-  termsAndConditions    String?
+  termsAndConditions String?
 
   // Approval
-  status                VendorPOStatus   @default(PENDING_APPROVAL)
-  approvedById          String?
-  approvedAt            DateTime?
-  rejectedById          String?
-  rejectedAt            DateTime?
-  rejectionReason       String?
+  status          VendorPOStatus @default(PENDING_APPROVAL)
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectedById    String?
+  rejectedAt      DateTime?
+  rejectionReason String?
 
   // Email tracking
-  emailSentAt           DateTime?
-  emailSentTo           String?
+  emailSentAt DateTime?
+  emailSentTo String?
 
   // Audit
-  createdById           String
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relations
-  vendor                Vendor           @relation("VendorPOs", fields: [vendorId], references: [id])
-  lead                  Lead             @relation("LeadVendorPOs", fields: [leadId], references: [id])
-  createdBy             User             @relation("VendorPOsCreated", fields: [createdById], references: [id])
-  approvedBy            User?            @relation("VendorPOsApproved", fields: [approvedById], references: [id])
-  rejectedBy            User?            @relation("VendorPOsRejected", fields: [rejectedById], references: [id])
+  vendor     Vendor @relation("VendorPOs", fields: [vendorId], references: [id])
+  lead       Lead   @relation("LeadVendorPOs", fields: [leadId], references: [id])
+  createdBy  User   @relation("VendorPOsCreated", fields: [createdById], references: [id])
+  approvedBy User?  @relation("VendorPOsApproved", fields: [approvedById], references: [id])
+  rejectedBy User?  @relation("VendorPOsRejected", fields: [rejectedById], references: [id])
 
   @@index([poNumber])
   @@index([vendorId])
@@ -1846,21 +1851,20 @@ enum CustomerEnquiryStatus {
 // Status Change Audit Trail - tracks all status transitions across entities
 model StatusChangeLog {
   id          String   @id @default(uuid())
-  entityType  String   // "LEAD", "INVOICE", "DELIVERY_REQUEST", "VENDOR"
+  entityType  String // "LEAD", "INVOICE", "DELIVERY_REQUEST", "VENDOR"
   entityId    String
-  field       String   // "status", "opsApprovalStatus", "feasibilityStatus"
+  field       String // "status", "opsApprovalStatus", "feasibilityStatus"
   oldValue    String?
   newValue    String
   changedById String?
   changedAt   DateTime @default(now())
   reason      String?
 
-  changedBy   User?    @relation("StatusChangeLogs", fields: [changedById], references: [id], onDelete: SetNull)
+  changedBy User? @relation("StatusChangeLogs", fields: [changedById], references: [id], onDelete: SetNull)
 
   @@index([entityType, entityId])
   @@index([changedById])
   @@index([changedAt])
-
   @@map("status_change_logs")
 }
 
@@ -1884,130 +1888,129 @@ enum AuditEventStatus {
 }
 
 model AuditEvent {
-  id              String              @id @default(uuid())
+  id String @id @default(uuid())
 
-  eventType       String
-  action          AuditEventAction
+  eventType String
+  action    AuditEventAction
 
-  entityType      String?
-  entityId        String?
-  entityLabel     String?
+  entityType  String?
+  entityId    String?
+  entityLabel String?
 
-  actorId         String?
-  actorName       String?
-  actorRole       String?
-  actorType       AuditEventActorType
+  actorId   String?
+  actorName String?
+  actorRole String?
+  actorType AuditEventActorType
 
-  changes         Json?
-  description     String?
-  reason          String?
+  changes     Json?
+  description String?
+  reason      String?
 
-  ipAddress       String?
-  userAgent       String?
-  requestId       String?
-  routePath       String?
-  httpMethod      String?
+  ipAddress  String?
+  userAgent  String?
+  requestId  String?
+  routePath  String?
+  httpMethod String?
 
-  status          AuditEventStatus    @default(SUCCESS)
-  errorMessage    String?
+  status       AuditEventStatus @default(SUCCESS)
+  errorMessage String?
 
-  snapshot        Json?
+  snapshot Json?
 
-  schemaVersion   Int                 @default(1)
-  createdAt       DateTime            @default(now())
+  schemaVersion Int      @default(1)
+  createdAt     DateTime @default(now())
 
-  actor           User?               @relation("AuditEvents", fields: [actorId], references: [id], onDelete: SetNull)
+  actor User? @relation("AuditEvents", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([createdAt(sort: Desc)])
   @@index([actorId, createdAt])
   @@index([entityType, entityId, createdAt])
   @@index([eventType, createdAt])
   @@index([ipAddress, createdAt])
-
   @@map("audit_events")
 }
 
 model ComplaintCloseOption {
-  id        String                    @id @default(uuid())
+  id        String                   @id @default(uuid())
   type      ComplaintCloseOptionType
   label     String
-  isActive  Boolean                   @default(true)
-  sortOrder Int                       @default(0)
-  createdAt DateTime                  @default(now())
-  updatedAt DateTime                  @updatedAt
+  isActive  Boolean                  @default(true)
+  sortOrder Int                      @default(0)
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
 
   @@unique([type, label])
   @@index([type, isActive])
 }
 
 model ComplaintCategory {
-  id            String                 @id @default(uuid())
-  name          String                 @unique
-  description   String?
-  isActive      Boolean                @default(true)
-  subCategories ComplaintSubCategory[]
-  complaints    Complaint[]
+  id                        String                     @id @default(uuid())
+  name                      String                     @unique
+  description               String?
+  isActive                  Boolean                    @default(true)
+  subCategories             ComplaintSubCategory[]
+  complaints                Complaint[]
   customerComplaintRequests CustomerComplaintRequest[]
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
 }
 
 model ComplaintSubCategory {
-  id              String              @id @default(uuid())
-  categoryId      String
-  category        ComplaintCategory   @relation(fields: [categoryId], references: [id])
-  name            String
-  description     String?
-  defaultTATHours Int                 @default(24)
-  isActive        Boolean             @default(true)
-  complaints      Complaint[]
+  id                        String                     @id @default(uuid())
+  categoryId                String
+  category                  ComplaintCategory          @relation(fields: [categoryId], references: [id])
+  name                      String
+  description               String?
+  defaultTATHours           Int                        @default(24)
+  isActive                  Boolean                    @default(true)
+  complaints                Complaint[]
   customerComplaintRequests CustomerComplaintRequest[]
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
 
   @@unique([categoryId, name])
   @@index([categoryId, isActive])
 }
 
 model Complaint {
-  id              String               @id @default(uuid())
-  complaintNumber String               @unique
-  leadId          String
-  lead            Lead                 @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  categoryId      String?
-  category        ComplaintCategory?    @relation(fields: [categoryId], references: [id])
-  subCategoryId   String?
-  subCategory     ComplaintSubCategory? @relation(fields: [subCategoryId], references: [id])
-  status          ComplaintStatus      @default(OPEN)
-  priority        ComplaintPriority    @default(MEDIUM)
-  description     String
-  complaintDate   DateTime             @default(now())
-  tatHours        Int
-  tatDeadline     DateTime
-  notes           String?
-  resolutionNotes String?
-  resolvedAt      DateTime?
-  closedAt        DateTime?
-  closedById           String?
-  closedBy             User?                @relation("ComplaintsClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
-  reasonForOutage      String?
-  resolution           String?
-  resolutionType       String?
-  closeRemark          String?
-  serviceImpact        Boolean?
-  ispImpactFrom        DateTime?
-  ispImpactTo          DateTime?
-  customerImpactFrom   DateTime?
-  customerImpactTo     DateTime?
-  reopenCount     Int                  @default(0)
-  metadata        Json?
-  createdById     String
-  createdBy       User                 @relation("ComplaintsCreatedBy", fields: [createdById], references: [id])
-  assignments     ComplaintAssignment[]
-  attachments     ComplaintAttachment[]
+  id                        String                     @id @default(uuid())
+  complaintNumber           String                     @unique
+  leadId                    String
+  lead                      Lead                       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  categoryId                String?
+  category                  ComplaintCategory?         @relation(fields: [categoryId], references: [id])
+  subCategoryId             String?
+  subCategory               ComplaintSubCategory?      @relation(fields: [subCategoryId], references: [id])
+  status                    ComplaintStatus            @default(OPEN)
+  priority                  ComplaintPriority          @default(MEDIUM)
+  description               String
+  complaintDate             DateTime                   @default(now())
+  tatHours                  Int
+  tatDeadline               DateTime
+  notes                     String?
+  resolutionNotes           String?
+  resolvedAt                DateTime?
+  closedAt                  DateTime?
+  closedById                String?
+  closedBy                  User?                      @relation("ComplaintsClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+  reasonForOutage           String?
+  resolution                String?
+  resolutionType            String?
+  closeRemark               String?
+  serviceImpact             Boolean?
+  ispImpactFrom             DateTime?
+  ispImpactTo               DateTime?
+  customerImpactFrom        DateTime?
+  customerImpactTo          DateTime?
+  reopenCount               Int                        @default(0)
+  metadata                  Json?
+  createdById               String
+  createdBy                 User                       @relation("ComplaintsCreatedBy", fields: [createdById], references: [id])
+  assignments               ComplaintAssignment[]
+  attachments               ComplaintAttachment[]
   customerComplaintRequests CustomerComplaintRequest[]
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
 
   @@index([status, createdAt])
   @@index([leadId, status])
@@ -2027,9 +2030,9 @@ model ComplaintAssignment {
   isActive     Boolean   @default(true)
   assignedAt   DateTime  @default(now())
 
+  @@unique([complaintId, userId])
   @@index([userId, isActive])
   @@index([complaintId, isActive])
-  @@unique([complaintId, userId])
 }
 
 model ComplaintAttachment {
@@ -2048,21 +2051,21 @@ model ComplaintAttachment {
 }
 
 model CustomerComplaintRequest {
-  id              String                            @id @default(uuid())
-  requestNumber   String                            @unique
-  leadId          String
-  lead            Lead                              @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  categoryId      String?
-  category        ComplaintCategory?                 @relation(fields: [categoryId], references: [id])
-  subCategoryId   String?
-  subCategory     ComplaintSubCategory?              @relation(fields: [subCategoryId], references: [id])
-  description     String
-  status          CustomerComplaintRequestStatus    @default(PENDING)
-  complaintId     String?
-  complaint       Complaint?                        @relation(fields: [complaintId], references: [id], onDelete: SetNull)
-  attachments     CustomerComplaintRequestAttachment[]
-  createdAt       DateTime                          @default(now())
-  updatedAt       DateTime                          @updatedAt
+  id            String                               @id @default(uuid())
+  requestNumber String                               @unique
+  leadId        String
+  lead          Lead                                 @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  categoryId    String?
+  category      ComplaintCategory?                   @relation(fields: [categoryId], references: [id])
+  subCategoryId String?
+  subCategory   ComplaintSubCategory?                @relation(fields: [subCategoryId], references: [id])
+  description   String
+  status        CustomerComplaintRequestStatus       @default(PENDING)
+  complaintId   String?
+  complaint     Complaint?                           @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+  attachments   CustomerComplaintRequestAttachment[]
+  createdAt     DateTime                             @default(now())
+  updatedAt     DateTime                             @updatedAt
 
   @@index([leadId, status])
   @@index([status, createdAt])
@@ -2070,36 +2073,36 @@ model CustomerComplaintRequest {
 }
 
 model CustomerComplaintRequestAttachment {
-  id          String                      @id @default(uuid())
-  requestId   String
-  request     CustomerComplaintRequest    @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  fileName    String
-  fileUrl     String
-  fileType    String
-  fileSize    Int
-  createdAt   DateTime                    @default(now())
+  id        String                   @id @default(uuid())
+  requestId String
+  request   CustomerComplaintRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fileName  String
+  fileUrl   String
+  fileType  String
+  fileSize  Int
+  createdAt DateTime                 @default(now())
 
   @@index([requestId])
 }
 
 model CustomerEnquiry {
-  id                String                @id @default(uuid())
-  enquiryNumber     String                @unique
-  referredByLeadId  String
-  referredByLead    Lead                  @relation("CustomerEnquiries", fields: [referredByLeadId], references: [id], onDelete: Cascade)
-  companyName       String
-  contactName       String
-  phone             String
-  email             String?
-  address           String?
-  city              String?
-  state             String?
-  requirements      String?
-  status            CustomerEnquiryStatus @default(SUBMITTED)
-  createdLeadId     String?               @unique
-  createdLead       Lead?                 @relation("EnquiryCreatedFrom", fields: [createdLeadId], references: [id], onDelete: SetNull)
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
+  id               String                @id @default(uuid())
+  enquiryNumber    String                @unique
+  referredByLeadId String
+  referredByLead   Lead                  @relation("CustomerEnquiries", fields: [referredByLeadId], references: [id], onDelete: Cascade)
+  companyName      String
+  contactName      String
+  phone            String
+  email            String?
+  address          String?
+  city             String?
+  state            String?
+  requirements     String?
+  status           CustomerEnquiryStatus @default(SUBMITTED)
+  createdLeadId    String?               @unique
+  createdLead      Lead?                 @relation("EnquiryCreatedFrom", fields: [createdLeadId], references: [id], onDelete: SetNull)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 
   @@index([referredByLeadId, status])
   @@index([status, createdAt])
@@ -2113,49 +2116,49 @@ enum ServiceOrderType {
 }
 
 enum ServiceOrderStatus {
-  PENDING_APPROVAL                  // legacy — preserved for in-flight orders until migrated
-  APPROVED                          // legacy — preserved for in-flight DISCONNECTION orders until migrated
+  PENDING_APPROVAL // legacy — preserved for in-flight orders until migrated
+  APPROVED // legacy — preserved for in-flight DISCONNECTION orders until migrated
   REJECTED
-  PENDING_DELIVERY_APPROVAL         // new initial gate for UPGRADE / DOWNGRADE
-  PENDING_SALES_DIRECTOR_APPROVAL   // new initial gate for RATE_REVISION / DISCONNECTION; second gate for UPGRADE / DOWNGRADE
+  PENDING_DELIVERY_APPROVAL // new initial gate for UPGRADE / DOWNGRADE
+  PENDING_SALES_DIRECTOR_APPROVAL // new initial gate for RATE_REVISION / DISCONNECTION; second gate for UPGRADE / DOWNGRADE
   PENDING_DOCS_REVIEW
   DOCS_REJECTED
   PENDING_NOC
-  PENDING_SAM_ACTIVATION            // legacy — preserved until in-flight orders are migrated
+  PENDING_SAM_ACTIVATION // legacy — preserved until in-flight orders are migrated
   PENDING_ACCOUNTS
-  PENDING_ADMIN_DATE_APPROVAL       // Accounts proposed a new effectiveDate; awaiting SUPER_ADMIN
+  PENDING_ADMIN_DATE_APPROVAL // Accounts proposed a new effectiveDate; awaiting SUPER_ADMIN
   COMPLETED
   CANCELLED
 }
 
 model ServiceOrder {
-  id                    String               @id @default(uuid())
-  orderNumber           String               @unique
-  customerId            String
-  orderType             ServiceOrderType
-  status                ServiceOrderStatus   @default(PENDING_DOCS_REVIEW)
-  createdById           String
+  id          String             @id @default(uuid())
+  orderNumber String             @unique
+  customerId  String
+  orderType   ServiceOrderType
+  status      ServiceOrderStatus @default(PENDING_DOCS_REVIEW)
+  createdById String
 
   // Current plan snapshot (captured at creation)
-  currentPlanName       String?
-  currentBandwidth      Int?
-  currentArc            Float?
+  currentPlanName  String?
+  currentBandwidth Int?
+  currentArc       Float?
 
   // New plan details (UPGRADE/DOWNGRADE only)
-  newBandwidth          Int?
-  newArc                Float?
+  newBandwidth Int?
+  newArc       Float?
 
   // Effective date (when the change should take effect)
-  effectiveDate         DateTime?
+  effectiveDate DateTime?
 
   // Customer's mail-received date — when SAM confirms the customer
   // consented in writing. Set on creation by SAM (or manually for
   // CRM-internal orders). Surfaced on the detail UI for both approvers.
-  mailReceivedDate      DateTime?
+  mailReceivedDate DateTime?
 
   // Disconnection fields
-  disconnectionDate     DateTime?
-  disconnectionReason   String?
+  disconnectionDate          DateTime?
+  disconnectionReason        String?
   disconnectionCategoryId    String?
   disconnectionSubCategoryId String?
 
@@ -2163,82 +2166,82 @@ model ServiceOrder {
   disconnectionSubCategory DisconnectionSubCategory? @relation(fields: [disconnectionSubCategoryId], references: [id])
 
   // Attachments: Json array of { url, publicId, originalName } (legacy free-form)
-  attachments           Json?
+  attachments Json?
 
   // SAM-side document URLs (Cloudinary HTTPS, .pdf/.eml/.msg). Sent as
   // siblings on POST /service-orders by the SAM software so the docs
   // review UI can render them as two labeled buttons.
-  approvalFileUrl       String?              // "View customer approval"
-  poFileUrl             String?              // "View Purchase Order"
+  approvalFileUrl String? // "View customer approval"
+  poFileUrl       String? // "View Purchase Order"
 
   // Approval
   // Legacy approvedBy fields remain populated by Sales Director approval —
   // old reports read them. salesDirectorApprovedBy is the new explicit
   // counterpart for the same gate.
-  approvedById          String?
-  approvedAt            DateTime?
-  rejectionReason       String?
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectionReason String?
 
   // Records WHICH stage rejected the order — useful for filtering / display
   // even though the terminal state stays `REJECTED`. Examples:
   // 'PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL',
   // 'PENDING_DOCS_REVIEW' (mirrors docsRejectedReason path), etc.
-  rejectedFromStatus        String?
+  rejectedFromStatus String?
 
   // Delivery team's approval gate (UPGRADE/DOWNGRADE only). Tracks who
   // approved at this stage and when.
-  deliveryApprovedById      String?
-  deliveryApprovedAt        DateTime?
-  deliveryApprovedBy        User?      @relation("DeliveryApprovedServiceOrders", fields: [deliveryApprovedById], references: [id], onDelete: SetNull)
+  deliveryApprovedById String?
+  deliveryApprovedAt   DateTime?
+  deliveryApprovedBy   User?     @relation("DeliveryApprovedServiceOrders", fields: [deliveryApprovedById], references: [id], onDelete: SetNull)
 
   // Sales Director's approval gate (universal). Distinct from the legacy
   // approvedBy/approvedById fields, which we keep populated for backward
   // compat (Sales Director approval IS what fills those today).
   salesDirectorApprovedById String?
   salesDirectorApprovedAt   DateTime?
-  salesDirectorApprovedBy   User?      @relation("SalesDirectorApprovedServiceOrders", fields: [salesDirectorApprovedById], references: [id], onDelete: SetNull)
+  salesDirectorApprovedBy   User?     @relation("SalesDirectorApprovedServiceOrders", fields: [salesDirectorApprovedById], references: [id], onDelete: SetNull)
 
   // Optional: Accounts user proposes a new effectiveDate before completion.
   // Triggers PENDING_ADMIN_DATE_APPROVAL until SUPER_ADMIN approves.
   proposedEffectiveDate     DateTime?
   proposedEffectiveDateById String?
   proposedEffectiveDateAt   DateTime?
-  proposedEffectiveDateBy   User?      @relation("ProposedEffectiveDateServiceOrders", fields: [proposedEffectiveDateById], references: [id], onDelete: SetNull)
+  proposedEffectiveDateBy   User?     @relation("ProposedEffectiveDateServiceOrders", fields: [proposedEffectiveDateById], references: [id], onDelete: SetNull)
 
   // Processing (Accounts/NOC completion)
-  processedById         String?
-  processedAt           DateTime?
-  processNotes          String?
+  processedById String?
+  processedAt   DateTime?
+  processNotes  String?
 
-  notes                 String?
+  notes String?
 
   // Docs Review stage
-  docsReviewedById        String?
-  docsReviewedAt          DateTime?
-  docsRejectionReason     String?
-  docsReviewedBy          User?       @relation("ServiceOrderDocsReviewed", fields: [docsReviewedById], references: [id])
+  docsReviewedById    String?
+  docsReviewedAt      DateTime?
+  docsRejectionReason String?
+  docsReviewedBy      User?     @relation("ServiceOrderDocsReviewed", fields: [docsReviewedById], references: [id])
 
   // NOC stage
-  nocSpeedTestUrl         String?
-  nocSpeedTestUploadedAt  DateTime?
-  nocProcessedById        String?
-  nocProcessedAt          DateTime?
-  nocNotes                String?
-  nocProcessedBy          User?       @relation("ServiceOrderNocProcessed", fields: [nocProcessedById], references: [id])
+  nocSpeedTestUrl        String?
+  nocSpeedTestUploadedAt DateTime?
+  nocProcessedById       String?
+  nocProcessedAt         DateTime?
+  nocNotes               String?
+  nocProcessedBy         User?     @relation("ServiceOrderNocProcessed", fields: [nocProcessedById], references: [id])
 
   // SAM Activation stage
-  activationDate          DateTime?
-  activationSetById       String?
-  activationSetAt         DateTime?
-  activationSetBy         User?       @relation("ServiceOrderActivationSet", fields: [activationSetById], references: [id])
+  activationDate    DateTime?
+  activationSetById String?
+  activationSetAt   DateTime?
+  activationSetBy   User?     @relation("ServiceOrderActivationSet", fields: [activationSetById], references: [id])
 
-  createdAt             DateTime             @default(now())
-  updatedAt             DateTime             @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  customer              Lead                 @relation("ServiceOrderCustomer", fields: [customerId], references: [id], onDelete: Cascade)
-  createdBy             User                 @relation("ServiceOrdersCreated", fields: [createdById], references: [id])
-  approvedBy            User?                @relation("ServiceOrdersApproved", fields: [approvedById], references: [id])
-  processedBy           User?                @relation("ServiceOrdersProcessed", fields: [processedById], references: [id])
+  customer    Lead  @relation("ServiceOrderCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy   User  @relation("ServiceOrdersCreated", fields: [createdById], references: [id])
+  approvedBy  User? @relation("ServiceOrdersApproved", fields: [approvedById], references: [id])
+  processedBy User? @relation("ServiceOrdersProcessed", fields: [processedById], references: [id])
 
   @@index([customerId])
   @@index([createdById])
@@ -2252,25 +2255,25 @@ model ServiceOrder {
 
 // Disconnection reason categories for service orders
 model DisconnectionCategory {
-  id            String                     @id @default(uuid())
-  name          String                     @unique
-  sortOrder     Int                        @default(0)
-  isActive      Boolean                    @default(true)
-  createdAt     DateTime                   @default(now())
+  id        String   @id @default(uuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   subCategories DisconnectionSubCategory[]
   serviceOrders ServiceOrder[]
 }
 
 model DisconnectionSubCategory {
-  id            String                  @id @default(uuid())
-  categoryId    String
-  name          String
-  sortOrder     Int                     @default(0)
-  isActive      Boolean                 @default(true)
-  createdAt     DateTime                @default(now())
+  id         String   @id @default(uuid())
+  categoryId String
+  name       String
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
 
-  category      DisconnectionCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  category      DisconnectionCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   serviceOrders ServiceOrder[]
 
   @@index([categoryId])
@@ -2306,60 +2309,60 @@ enum NexusMessageRole {
 }
 
 model NexusKnowledge {
-  id          String          @id @default(uuid())
+  id          String        @id @default(uuid())
   title       String
-  content     String          @db.Text
-  audience    NexusAudience   @default(BOTH)
-  roles       String[]        @default([])
-  tags        String[]        @default([])
-  isActive    Boolean         @default(true)
+  content     String        @db.Text
+  audience    NexusAudience @default(BOTH)
+  roles       String[]      @default([])
+  tags        String[]      @default([])
+  isActive    Boolean       @default(true)
   createdById String?
-  createdBy   User?           @relation("NexusKnowledgeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdBy   User?         @relation("NexusKnowledgeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   @@index([audience, isActive])
   @@index([isActive])
 }
 
 model NexusConversation {
-  id              String             @id @default(uuid())
-  userId          String?
-  user            User?              @relation("NexusConversationUser", fields: [userId], references: [id], onDelete: Cascade)
-  customerUserId  String?
-  audience        NexusAudience
-  startedAt       DateTime           @default(now())
-  lastMessageAt   DateTime           @default(now())
-  messages        NexusMessage[]
+  id             String         @id @default(uuid())
+  userId         String?
+  user           User?          @relation("NexusConversationUser", fields: [userId], references: [id], onDelete: Cascade)
+  customerUserId String?
+  audience       NexusAudience
+  startedAt      DateTime       @default(now())
+  lastMessageAt  DateTime       @default(now())
+  messages       NexusMessage[]
 
   @@index([userId, lastMessageAt])
   @@index([customerUserId, lastMessageAt])
 }
 
 model NexusMessage {
-  id             String             @id @default(uuid())
+  id             String            @id @default(uuid())
   conversationId String
-  conversation   NexusConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   NexusConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           NexusMessageRole
-  content        String             @db.Text
-  fromCache      Boolean            @default(false)
+  content        String            @db.Text
+  fromCache      Boolean           @default(false)
   tokensUsed     Int?
-  knowledgeIds   String[]           @default([])
-  createdAt      DateTime           @default(now())
+  knowledgeIds   String[]          @default([])
+  createdAt      DateTime          @default(now())
 
   @@index([conversationId, createdAt])
   @@index([role, createdAt, fromCache])
 }
 
 model NexusCache {
-  id              String          @id @default(uuid())
-  normalizedQuery String          @unique
+  id              String        @id @default(uuid())
+  normalizedQuery String        @unique
   audience        NexusAudience
-  answer          String          @db.Text
-  knowledgeIds    String[]        @default([])
-  hitCount        Int             @default(1)
-  lastHitAt       DateTime        @default(now())
-  createdAt       DateTime        @default(now())
+  answer          String        @db.Text
+  knowledgeIds    String[]      @default([])
+  hitCount        Int           @default(1)
+  lastHitAt       DateTime      @default(now())
+  createdAt       DateTime      @default(now())
 
   @@index([audience, lastHitAt])
   @@index([knowledgeIds])
@@ -2374,20 +2377,20 @@ model NexusCache {
 // ============================================================
 
 model LeadDeletionAudit {
-  id                   String   @id @default(uuid())
-  leadId               String   // orphaned reference — lead no longer exists
-  leadNumber           String?
-  companyName          String?
-  contactName          String?
-  phone                String?
-  email                String?
-  customerUsername     String?
-  alsoDeletedCampaignData Boolean @default(false)
-  deletedById          String
-  deletedBy            User     @relation("LeadDeletionsPerformed", fields: [deletedById], references: [id])
-  deletedAt            DateTime @default(now())
-  reason               String   @db.Text
-  snapshot             Json     // { counts per table, key identifiers }
+  id                      String   @id @default(uuid())
+  leadId                  String // orphaned reference — lead no longer exists
+  leadNumber              String?
+  companyName             String?
+  contactName             String?
+  phone                   String?
+  email                   String?
+  customerUsername        String?
+  alsoDeletedCampaignData Boolean  @default(false)
+  deletedById             String
+  deletedBy               User     @relation("LeadDeletionsPerformed", fields: [deletedById], references: [id])
+  deletedAt               DateTime @default(now())
+  reason                  String   @db.Text
+  snapshot                Json // { counts per table, key identifiers }
 
   @@index([deletedAt])
   @@index([deletedById])
@@ -2415,8 +2418,8 @@ enum SamWebhookStatus {
 model SamWebhookLog {
   id                 String           @id @default(uuid())
   eventId            String           @unique
-  leadId             String           // orphaned reference — survives lead deletion
-  payload            Json             // frozen at insert; signed and sent on every attempt
+  leadId             String // orphaned reference — survives lead deletion
+  payload            Json // frozen at insert; signed and sent on every attempt
   status             SamWebhookStatus @default(PENDING)
   attemptCount       Int              @default(0)
   nextAttemptAt      DateTime         @default(now())
@@ -2453,25 +2456,79 @@ enum AuditEntityType {
   LEAD
   CAMPAIGN
   CAMPAIGN_DATA
+  COMMERCIAL_CHANGE
 }
 
 model AuditLog {
-  id          String          @id @default(uuid())
-  entityType  AuditEntityType
-  entityId    String
-  action      AuditAction
-  changes     Json?           // { fieldName: { from, to } } for UPDATE
-  snapshot    Json?           // full row for CREATE / DELETE
-  context     Json?           // { reason, cascadedFrom, endpoint, ... }
-  userId      String?
-  userRole    String?
-  userName    String?
-  userEmail   String?
-  createdAt   DateTime        @default(now())
+  id         String          @id @default(uuid())
+  entityType AuditEntityType
+  entityId   String
+  action     AuditAction
+  changes    Json? // { fieldName: { from, to } } for UPDATE
+  snapshot   Json? // full row for CREATE / DELETE
+  context    Json? // { reason, cascadedFrom, endpoint, ... }
+  userId     String?
+  userRole   String?
+  userName   String?
+  userEmail  String?
+  createdAt  DateTime        @default(now())
 
   @@index([entityType, entityId])
   @@index([userId])
   @@index([createdAt])
   @@index([action])
   @@index([entityType, createdAt])
+}
+
+// ============================================================
+// Commercial-change (quick-disconnect) approval requests raised by the
+// downstream SAM service. SAM raises → CRM admin approves/rejects from the
+// Quick Disconnects inbox → CRM fires `quickDisconnect.decided` back to SAM.
+//
+// inboundEventId   = dedupe key for the inbound SAM webhook (idempotent replay).
+// commercialChangeId = SAM's UUID for the change. Distinct from `id` (our PK).
+// outboundEventId  = fresh UUID we generate at decision time; persisted on the
+//                    row + on the SamWebhookLog so the retry cron stays linked.
+// ============================================================
+
+enum CommercialChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model CommercialChange {
+  id                 String @id @default(uuid())
+  commercialChangeId String @unique
+  inboundEventId     String @unique
+  leadId             String
+  lead               Lead   @relation(fields: [leadId], references: [id])
+
+  // Snapshot at request time. Captured so the History tab + audit log stay
+  // faithful to what SAM saw, even if the lead's current plan / ARC drifts.
+  requestedArc       Float?
+  requestedPlanName  String?
+  requestedBandwidth Int?
+
+  raisedBySamUserId String
+  raisedBySamEmail  String?
+  reason            String   @db.Text
+  raisedAt          DateTime
+
+  status       CommercialChangeStatus @default(PENDING)
+  decidedById  String?
+  decidedBy    User?                  @relation("CommercialChangeDecided", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt    DateTime?
+  decisionNote String?                @db.Text
+
+  // Outbound webhook linkage — lets us surface delivery status on the
+  // detail UI without joining via raw SamWebhookLog queries.
+  outboundEventId String?
+  outboundLogId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([leadId])
 }

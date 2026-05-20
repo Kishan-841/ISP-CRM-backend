@@ -12649,3 +12649,277 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
       },
     });
 });
+
+// ============================================================
+// Team Performance — BDM Team Leader oversight surface.
+//
+// Two endpoints, both gated to BDM_TEAM_LEADER + SUPER_ADMIN + MASTER:
+//   - /team-performance/summary  → per-BDM stat array (one card per direct
+//                                   report) so the TL can compare at a glance
+//   - /team-performance/leads    → paginated leads list, scoped to the team,
+//                                   optionally narrowed to a single BDM
+// ============================================================
+
+// Lead-lifecycle bucket helpers for the team-performance cards. The Lead
+// status enum is: NEW, QUALIFIED, FOLLOW_UP, DROPPED, FEASIBLE, NOT_FEASIBLE,
+// MEETING_SCHEDULED. There's no "CONVERTED" status — a lead is considered
+// converted when it has an active plan (actualPlanIsActive = true), tracked
+// separately below.
+const TP_PIPELINE_STATUSES = ['NEW', 'QUALIFIED', 'FEASIBLE', 'MEETING_SCHEDULED', 'FOLLOW_UP'];
+const TP_DROPPED_STATUSES = ['DROPPED', 'NOT_FEASIBLE'];
+
+// Resolve the TL's "team" — the TL themselves PLUS their direct reports.
+// Admins/MASTER can pass ?teamLeaderId=<id> to inspect any team. Returns
+// { teamLeaderId, memberIds } or { error } when the caller isn't allowed
+// to see a team.
+async function resolveTeamMemberIds(req) {
+  const isAdmin = isAdminOrTestUser(req.user);
+  const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+  if (!isTL && !isAdmin) {
+    return { error: { status: 403, message: 'Only Team Leaders can view team performance.' } };
+  }
+
+  let teamLeaderId = req.user.id;
+  if (isAdmin && req.query.teamLeaderId) {
+    teamLeaderId = String(req.query.teamLeaderId);
+    const tl = await prisma.user.findUnique({
+      where: { id: teamLeaderId },
+      select: { id: true, role: true, isActive: true },
+    });
+    if (!tl || tl.role !== 'BDM_TEAM_LEADER') {
+      return { error: { status: 400, message: 'teamLeaderId is not a Team Leader.' } };
+    }
+  }
+
+  const members = await prisma.user.findMany({
+    where: { teamLeaderId, isActive: true, role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] } },
+    select: { id: true, name: true, email: true, role: true },
+    orderBy: { name: 'asc' },
+  });
+
+  return {
+    teamLeaderId,
+    // Include the TL themselves so any leads they personally own still
+    // surface in the unified table — a TL is usually also a working BDM.
+    memberIds: [teamLeaderId, ...members.map(m => m.id)],
+    members,
+  };
+}
+
+// GET /api/leads/team-performance/summary
+// Returns { teamLeaderId, members: [...], stats: { byMember: [...], total: {...} } }
+export const getTeamPerformanceSummary = asyncHandler(async function getTeamPerformanceSummary(req, res) {
+  const team = await resolveTeamMemberIds(req);
+  if (team.error) return res.status(team.error.status).json({ message: team.error.message });
+
+  // Pull TL + members together so we can render an "All Team" card AND a
+  // card per member (including the TL themselves).
+  const tlUser = await prisma.user.findUnique({
+    where: { id: team.teamLeaderId },
+    select: { id: true, name: true, email: true, role: true },
+  });
+  const allMembers = [tlUser, ...team.members.filter(m => m.id !== team.teamLeaderId)];
+
+  // One indexed groupBy beats N count() round trips. We bucket by status and
+  // also sum arcAmount so the cards can show pipeline value at a glance.
+  // "Converted" needs a separate count() because it's a boolean flag, not a
+  // status enum value.
+  const [grouped, convertedCounts] = await Promise.all([
+    prisma.lead.groupBy({
+      by: ['assignedToId', 'status'],
+      where: { assignedToId: { in: team.memberIds } },
+      _count: { _all: true },
+      _sum: { arcAmount: true },
+    }),
+    prisma.lead.groupBy({
+      by: ['assignedToId'],
+      where: { assignedToId: { in: team.memberIds }, actualPlanIsActive: true },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const convertedByMember = Object.fromEntries(
+    convertedCounts.map(r => [r.assignedToId, r._count._all])
+  );
+
+  // Roll the groupBy result up into per-member buckets matching the card UI.
+  const byMember = allMembers.map(m => {
+    const rows = grouped.filter(g => g.assignedToId === m.id);
+    let totalLeads = 0;
+    let qualified = 0;
+    let inPipeline = 0;
+    let dropped = 0;
+    let totalArc = 0;
+    for (const r of rows) {
+      const count = r._count._all;
+      const arc = Number(r._sum.arcAmount) || 0;
+      totalLeads += count;
+      totalArc += arc;
+      if (r.status === 'QUALIFIED') qualified += count;
+      if (TP_PIPELINE_STATUSES.includes(r.status)) inPipeline += count;
+      if (TP_DROPPED_STATUSES.includes(r.status)) dropped += count;
+    }
+    const converted = convertedByMember[m.id] || 0;
+    const conversionRate = totalLeads > 0 ? Number(((converted / totalLeads) * 100).toFixed(1)) : 0;
+    return {
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      role: m.role,
+      totalLeads,
+      qualified,
+      inPipeline,
+      converted,
+      dropped,
+      totalArc,
+      conversionRate,
+    };
+  });
+
+  const total = byMember.reduce((acc, m) => {
+    acc.totalLeads += m.totalLeads;
+    acc.qualified  += m.qualified;
+    acc.inPipeline += m.inPipeline;
+    acc.converted  += m.converted;
+    acc.dropped    += m.dropped;
+    acc.totalArc   += m.totalArc;
+    return acc;
+  }, { totalLeads: 0, qualified: 0, inPipeline: 0, converted: 0, dropped: 0, totalArc: 0 });
+  total.conversionRate = total.totalLeads > 0 ? Number(((total.converted / total.totalLeads) * 100).toFixed(1)) : 0;
+
+  res.json({
+    teamLeaderId: team.teamLeaderId,
+    members: allMembers,
+    byMember,
+    total,
+  });
+});
+
+// GET /api/leads/team-performance/leads
+//   ?bdmId=<userId>            narrow to one team member ('all' = entire team)
+//   &status=<LeadStatus>       optional filter
+//   &search=<text>             company / contact / leadNumber substring
+//   &page= &limit=             pagination
+export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerformanceLeads(req, res) {
+  const team = await resolveTeamMemberIds(req);
+  if (team.error) return res.status(team.error.status).json({ message: team.error.message });
+
+  const { page, limit, skip } = parsePagination(req.query, 25);
+  const { bdmId, status, search } = req.query;
+
+  // Default = entire team. If a specific bdmId is passed it MUST be a member
+  // of this TL's team — otherwise we'd leak other teams' data via a guessed id.
+  let assignedIn = team.memberIds;
+  if (bdmId && bdmId !== 'all') {
+    if (!team.memberIds.includes(bdmId)) {
+      return res.status(403).json({ message: 'bdmId is not part of this team.' });
+    }
+    assignedIn = [bdmId];
+  }
+
+  const where = { assignedToId: { in: assignedIn } };
+  if (status) where.status = status;
+  if (search?.trim()) {
+    where.OR = buildSearchFilter(search.trim(), [
+      'leadNumber',
+      'campaignData.company',
+      'campaignData.name',
+      'campaignData.email',
+      { field: 'campaignData.phone' },
+    ]);
+  }
+
+  // Pull every field deriveCurrentStage walks so the human-readable pipeline
+  // label ("Docs Collection", "At NOC", "Active Customer", etc.) lines up
+  // with what Customer 360 shows. Lead.status alone says "FEASIBLE" for
+  // everything past feasibility, which is unhelpful for TL oversight.
+  const [rows, total] = await Promise.all([
+    prisma.lead.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        leadNumber: true,
+        status: true,
+        arcAmount: true,
+        createdAt: true,
+        updatedAt: true,
+        isColdLead: true,
+        // Fields consumed by deriveCurrentStage:
+        deliveryStatus: true,
+        deliveryVendorSetupDone: true,
+        customerUsername: true,
+        actualPlanIsActive: true,
+        actualPlanName: true,
+        demoPlanIsActive: true,
+        customerAcceptanceAt: true,
+        speedTestUploadedAt: true,
+        installationCompletedAt: true,
+        installationStartedAt: true,
+        nocConfiguredAt: true,
+        nocAssignedToId: true,
+        pushedToInstallationAt: true,
+        accountsStatus: true,
+        docsVerifiedAt: true,
+        docsRejectedReason: true,
+        documents: true,
+        superAdmin2ApprovalStatus: true,
+        opsApprovalStatus: true,
+        quotationAttachments: true,
+        feasibilityReviewedAt: true,
+        feasibilityAssignedToId: true,
+        assignedToId: true,
+        // Owner-name relations used by stage labels
+        assignedTo: { select: { id: true, name: true, email: true } },
+        feasibilityAssignedTo: { select: { name: true } },
+        nocAssignedTo: { select: { name: true } },
+        samAssignment: { select: { samExecutive: { select: { name: true } } } },
+        campaignData: { select: { company: true, name: true, firstName: true, lastName: true, email: true, phone: true } },
+      },
+    }),
+    prisma.lead.count({ where }),
+  ]);
+
+  // Compute "days in stage" cheaply with updatedAt — for an oversight page
+  // this is close enough; a more precise per-stage timestamp would require
+  // joining StatusChangeLog and we're optimising for "is this lead stale".
+  const now = Date.now();
+  const items = rows.map(r => {
+    const updatedMs = r.updatedAt ? new Date(r.updatedAt).getTime() : now;
+    const daysInStage = Math.max(0, Math.floor((now - updatedMs) / (24 * 60 * 60 * 1000)));
+    const { stage, owner } = deriveCurrentStage(r);
+    return {
+      id: r.id,
+      leadNumber: r.leadNumber,
+      company: r.campaignData?.company || '',
+      contactName: r.campaignData?.name || `${r.campaignData?.firstName || ''} ${r.campaignData?.lastName || ''}`.trim(),
+      email: r.campaignData?.email || '',
+      phone: r.campaignData?.phone || '',
+      // Raw status kept so the dropdown filter can still operate on the
+      // server side; UI displays `currentStage` instead.
+      status: r.status,
+      currentStage: stage,
+      currentOwner: owner,
+      arcAmount: r.arcAmount,
+      actualPlanName: r.actualPlanName,
+      actualPlanIsActive: r.actualPlanIsActive,
+      isColdLead: r.isColdLead,
+      lastActivityAt: r.updatedAt,
+      daysInStage,
+      bdm: r.assignedTo ? { id: r.assignedTo.id, name: r.assignedTo.name, email: r.assignedTo.email } : null,
+      createdAt: r.createdAt,
+    };
+  });
+
+  res.json({
+    items,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+});

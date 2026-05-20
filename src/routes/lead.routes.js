@@ -33,6 +33,8 @@ import {
   deleteMOM,
   getBDMFollowUps,
   getBDMDashboardStats,
+  getTeamPerformanceSummary,
+  getTeamPerformanceLeads,
   getBDMSidebarCounts,
   getBDMReports,
   getBDMDeliveryCompleted,
@@ -167,6 +169,11 @@ router.get('/cp-leads', getCPLeads);
 
 // Get BDM dashboard stats
 router.get('/bdm/dashboard-stats', getBDMDashboardStats);
+
+// Team Performance — TL oversight surface. Both endpoints gate on the
+// controller (TL sees own team, admin can pass ?teamLeaderId=<id>).
+router.get('/team-performance/summary', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'), getTeamPerformanceSummary);
+router.get('/team-performance/leads', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'), getTeamPerformanceLeads);
 
 // Get BDM sidebar counts (lightweight for sidebar badges)
 router.get('/bdm/sidebar-counts', getBDMSidebarCounts);

@@ -36,6 +36,8 @@ import proxyRoutes from './routes/proxy.routes.js';
 import { nexusRouter, customerNexusRouter } from './routes/nexus.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import auditRoutes from './routes/audit.routes.js';
+import commercialChangeRoutes from './routes/commercialChange.routes.js';
+import samWebhookInboundRoutes from './routes/samWebhookInbound.routes.js';
 import { auth } from './middleware/auth.js';
 import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
@@ -140,7 +142,16 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+// `verify` stashes the literal request bytes on req.rawBody so signed
+// inbound webhooks (e.g. SAM → /api/webhooks/sam/...) can re-derive the HMAC
+// without re-serialising req.body (key order would diverge and break the
+// signature for any non-trivial payload).
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  },
+}));
 app.use('/api', generalLimiter);
 
 // Serve uploaded documents — requires authentication
@@ -177,9 +188,13 @@ app.use('/api/nexus', nexusRouter);
 app.use('/api/customer/nexus', customerNexusRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/commercial-changes', commercialChangeRoutes);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);
+// Inbound webhook receivers — no staff auth; each handler verifies its own
+// signature header against SAM_WEBHOOK_SECRET before reading the payload.
+app.use('/api/webhooks/sam', samWebhookInboundRoutes);
 
 // Initialize Socket.io
 initializeSocket(httpServer);
