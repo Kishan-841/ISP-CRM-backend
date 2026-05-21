@@ -2183,8 +2183,14 @@ export const getISRDashboardStats = asyncHandler(async function getISRDashboardS
     // Get all data for assigned campaigns. Admin's global view sees all
     // rows; everything else (including admin targeting a specific ISR) is
     // scoped to that user's assigned data.
+    //
+    // Exclude BDM self-generated rows (`isSelfGenerated=true`) — those come
+    // from Create Opportunity, not ISR calling, and would inflate the
+    // dashboard's counts while never being actual ISR work. Drill-in filters
+    // the same way so the tile total matches the row count.
     const whereClause = {
       campaignId: { in: campaignIds },
+      isSelfGenerated: { not: true },
       ...(useGlobalAdminView ? {} : { assignedToId: userId })
     };
 
@@ -4779,8 +4785,12 @@ export const getIsrDataByBucket = asyncHandler(async function getIsrDataByBucket
       dateScope = null;
   }
 
-  // Build the WHERE clause.
-  const where = {};
+  // Build the WHERE clause. Exclude BDM self-generated rows — those come
+  // from the Create Opportunity flow (synthetic "[BDM Self Lead]" campaigns)
+  // and have nothing to do with ISR calling. Including them surfaced rows
+  // with no call log and a faded INTERESTED chip in the drill-in, which is
+  // misleading. Matches the same filter the dashboard counts now apply.
+  const where = { isSelfGenerated: { not: true } };
   if (bucketStatus[bucket] !== null) where.status = bucketStatus[bucket];
   if (dateScope) where.updatedAt = dateScope;
   if (search && search.length >= 2) {
