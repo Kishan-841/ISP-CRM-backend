@@ -129,12 +129,20 @@ export const createSamLead = asyncHandler(async function createSamLead(req, res)
     return res.status(404).json({ message: 'Selected BDM is no longer assignable. Reload the BDM list and try again.' });
   }
 
-  // Single global [SAM Dispatch] campaign — keeps the campaign list from
-  // growing one row per SAM-created lead while still attaching SAM leads
-  // to a real Campaign so dashboards / reports treat them like other data.
-  const SAM_CAMPAIGN_NAME = '[SAM Dispatch]';
+  // Per-BDM [SAM Dispatch] campaign — mirrors the pattern createDirectLead
+  // uses for [BDM Self Lead]. Each BDM owns their own SAM-dispatch campaign
+  // so:
+  //   (a) it shows up in their All Data tab (the WHERE filter checks
+  //       createdById = me OR assignments.some.userId = me, so ownership
+  //       is what makes the campaign visible to them).
+  //   (b) one BDM can't see another BDM's SAM-sourced leads when drilling
+  //       into the campaign — each BDM's view is naturally scoped.
+  // SAM-operator attribution still lives on the Lead row itself
+  // (samCreatedById/Name/Email/At), independent of which BDM owns the
+  // campaign. Two distinct concerns.
+  const samCampaignName = `[SAM Dispatch] ${bdm.name}`;
   let samCampaign = await prisma.campaign.findFirst({
-    where: { name: SAM_CAMPAIGN_NAME, type: 'SELF' },
+    where: { name: samCampaignName, type: 'SELF', createdById: bdm.id },
     select: { id: true },
   });
   if (!samCampaign) {
@@ -157,14 +165,21 @@ export const createSamLead = asyncHandler(async function createSamLead(req, res)
         samCampaign = await prisma.campaign.create({
           data: {
             code,
-            name: SAM_CAMPAIGN_NAME,
+            name: samCampaignName,
             description: 'Leads dispatched from SAM via the Create Lead form',
             type: 'SELF',
             status: 'ACTIVE',
             dataSource: 'SAM Integration',
-            createdById: req.user.id,
+            // BDM owns it — see comment above. Visibility flows from ownership.
+            createdById: bdm.id,
           },
           select: { id: true },
+        });
+        // Self-assign so the BDM also passes the assignments.some filter on
+        // surfaces that use that path (some dashboards/reports check
+        // assignments rather than createdById).
+        await prisma.campaignAssignment.create({
+          data: { userId: bdm.id, campaignId: samCampaign.id },
         });
         break;
       } catch (err) {

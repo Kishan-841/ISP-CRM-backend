@@ -1213,7 +1213,13 @@ export const getCampaignData = asyncHandler(async function getCampaignData(req, 
             select: {
               id: true,
               status: true,
-              createdAt: true
+              createdAt: true,
+              // Lead-level SAM-dispatch attribution. Frontend renders the
+              // "SAM" pill + tooltip on the row when these are present.
+              creationSource: true,
+              samCreatedByName: true,
+              samCreatedByEmail: true,
+              samCreatedAt: true,
             }
           },
           assignedByBdm: {
