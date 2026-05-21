@@ -53,6 +53,57 @@ export const VISIBLE_BUCKETS = Object.freeze([
   BUCKETS.DELIVERY,
 ]);
 
+// Delivery sub-stage cascade. Called only when `lead.pushedToInstallationAt`
+// is set. Reads three signals: `lead.deliveryStatus` (lead-level), the active
+// non-completed `lead.deliveryRequest` (the DeliveryRequest row, flattened by
+// the caller), and `lead.deliveryVendorSetupDone`. The order matches the
+// delivery queue's `getLeadStage` helper — most-advanced state first.
+function deriveDeliveryStage(lead) {
+  const ds = lead.deliveryStatus;
+  const req = lead.deliveryRequest || null;
+
+  if (ds === 'COMPLETED') return { stage: 'Delivery Completed', owner: 'Delivery Team' };
+  if (lead.speedTestUploadedAt || ds === 'CUSTOMER_ACCEPTANCE') {
+    return { stage: 'Customer Acceptance', owner: 'Delivery Team' };
+  }
+  if (lead.installationCompletedAt || ds === 'SPEED_TEST') {
+    return { stage: 'Speed Test', owner: 'Delivery Team' };
+  }
+  if (ds === 'DEMO_PLAN_PENDING') {
+    return { stage: 'Demo Plan', owner: 'Accounts Team' };
+  }
+  if (lead.installationStartedAt || ds === 'INSTALLING') {
+    return { stage: 'Installation', owner: 'Delivery Team' };
+  }
+  if (ds === 'ACTIVATION_READY' || lead.nocConfiguredAt) {
+    return { stage: 'NOC Completed', owner: 'Delivery Team' };
+  }
+  if (lead.nocAssignedToId) {
+    return { stage: 'At NOC', owner: lead.nocAssignedTo?.name || 'NOC Team' };
+  }
+  if (ds === 'PUSHED_TO_NOC' || req?.pushedToNocAt) {
+    return { stage: 'At NOC', owner: 'NOC Team' };
+  }
+  if (ds === 'MATERIAL_REJECTED') {
+    return { stage: 'Material Rejected', owner: 'Delivery Team' };
+  }
+  if (req?.status === 'ASSIGNED') {
+    return { stage: 'Material Received', owner: 'Delivery Team' };
+  }
+  if (req && ['APPROVED', 'AREA_HEAD_APPROVED', 'SUPER_ADMIN_APPROVED'].includes(req.status)) {
+    return { stage: 'Material Approved', owner: 'Store Manager' };
+  }
+  if (req?.status === 'PENDING_APPROVAL' || ds === 'MATERIAL_REQUESTED') {
+    return { stage: 'Delivery Approval', owner: 'Area Head / Super Admin' };
+  }
+  if (!lead.deliveryVendorSetupDone) {
+    return { stage: 'Vendor Setup', owner: 'Delivery Team' };
+  }
+  // Vendor setup done, no delivery request created yet — delivery team needs
+  // to raise a material request.
+  return { stage: 'Material Request — Pending', owner: 'Delivery Team' };
+}
+
 export function deriveCurrentStage(lead) {
   // Terminal states first — short-circuit the cascade so a lead that was
   // dropped or marked not-feasible doesn't accidentally get classified
@@ -80,53 +131,13 @@ export function deriveCurrentStage(lead) {
   if (lead.customerAcceptanceAt) {
     return { stage: 'Awaiting Plan Activation', owner: 'Accounts Team' };
   }
-  if (lead.speedTestUploadedAt) {
-    return { stage: 'Customer Acceptance', owner: 'Delivery Team' };
-  }
-  if (lead.installationCompletedAt) {
-    return { stage: 'Speed Test', owner: 'Delivery Team' };
-  }
-  if (lead.installationStartedAt) {
-    return { stage: 'Installation', owner: 'Delivery Team' };
-  }
 
-  // Delivery queue
-  if (lead.deliveryStatus === 'COMPLETED') {
-    return { stage: 'Awaiting Installation', owner: 'Delivery Team' };
-  }
-  if (lead.deliveryStatus === 'DISPATCHED') {
-    return { stage: 'Dispatched', owner: 'Delivery Team' };
-  }
-  if (lead.deliveryStatus === 'ASSIGNED') {
-    return { stage: 'Delivery — Assigned to Store', owner: 'Store Manager' };
-  }
-  if (['APPROVED', 'AREA_HEAD_APPROVED', 'SUPER_ADMIN_APPROVED'].includes(lead.deliveryStatus)) {
-    return { stage: 'Delivery — Approved', owner: 'Delivery Team' };
-  }
-  if (lead.deliveryStatus === 'PENDING_APPROVAL') {
-    return { stage: 'Delivery Approval', owner: 'Area Head / Super Admin' };
-  }
-
-  // NOC
-  if (lead.nocConfiguredAt) {
-    return { stage: 'NOC → Delivery', owner: 'Delivery Team' };
-  }
-  if (lead.nocAssignedToId) {
-    return { stage: 'NOC', owner: lead.nocAssignedTo?.name || 'NOC Team' };
-  }
-  // Delivery has handed material off to NOC, NOC engineer not yet assigned.
-  if (lead.deliveryStatus === 'PUSHED_TO_NOC') {
-    return { stage: 'NOC', owner: 'NOC Team' };
-  }
-  // OPS has pushed to installation but NOC hasn't taken over yet — the lead
-  // is sitting with the delivery team. The very first delivery step is
-  // vendor setup; after that the lead waits for the next delivery action
-  // (material request, etc.).
+  // Delivery pipeline — the lead has been pushed to installation. The cascade
+  // walks the delivery sub-stages in reverse-chronological order so the most
+  // advanced state wins.
   if (lead.pushedToInstallationAt) {
-    if (!lead.deliveryVendorSetupDone) {
-      return { stage: 'Delivery — Vendor Setup', owner: 'Delivery Team' };
-    }
-    return { stage: 'Delivery', owner: 'Delivery Team' };
+    const deliveryStage = deriveDeliveryStage(lead);
+    if (deliveryStage) return deliveryStage;
   }
 
   // Accounts / docs
@@ -229,24 +240,26 @@ const STAGE_TO_BUCKET = {
 
   // NOC's queue: delivery has pushed material to NOC and is awaiting an
   // engineer to be assigned, or an engineer is mid-config.
-  'NOC': BUCKETS.NOC,
+  'At NOC': BUCKETS.NOC,
 
-  // Store's queue: NOC handed off to Delivery, Delivery requested materials,
-  // Store Manager has to allocate / dispatch stock.
-  'Delivery — Assigned to Store': BUCKETS.STORE,
+  // Store's queue: material request approved, Store Manager has to allocate
+  // serial numbers / dispatch stock.
+  'Material Approved': BUCKETS.STORE,
 
-  // Delivery team's queue: pre-NOC vendor setup, the post-NOC physical
-  // chain, and everything in between.
-  'Delivery — Vendor Setup': BUCKETS.DELIVERY,
-  'Delivery': BUCKETS.DELIVERY,
-  'NOC → Delivery': BUCKETS.DELIVERY,
+  // Delivery team's queue: vendor setup, awaiting material request, request
+  // in approval (sits with Area Head but the lead is still the delivery
+  // team's responsibility to chase), material received, NOC done, and
+  // everything from installation through customer acceptance.
+  'Vendor Setup': BUCKETS.DELIVERY,
+  'Material Request — Pending': BUCKETS.DELIVERY,
   'Delivery Approval': BUCKETS.DELIVERY,
-  'Delivery — Approved': BUCKETS.DELIVERY,
-  'Dispatched': BUCKETS.DELIVERY,
-  'Awaiting Installation': BUCKETS.DELIVERY,
+  'Material Received': BUCKETS.DELIVERY,
+  'Material Rejected': BUCKETS.DELIVERY,
+  'NOC Completed': BUCKETS.DELIVERY,
   'Installation': BUCKETS.DELIVERY,
   'Speed Test': BUCKETS.DELIVERY,
   'Customer Acceptance': BUCKETS.DELIVERY,
+  'Delivery Completed': BUCKETS.DELIVERY,
 
   'Dropped': BUCKETS.DROPPED,
   'Not Feasible': BUCKETS.DROPPED,

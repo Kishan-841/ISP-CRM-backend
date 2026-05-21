@@ -45,6 +45,7 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
         nocConfiguredAt: true,
         nocAssignedToId: true,
         pushedToInstallationAt: true,
+        deliveryVendorSetupDone: true,
         accountsStatus: true,
         docsVerifiedAt: true,
         docsRejectedReason: true,
@@ -55,6 +56,15 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
         feasibilityReviewedAt: true,
         feasibilityAssignedToId: true,
         assignedToId: true,
+        // Active (non-completed) delivery request — feeds the delivery
+        // sub-stage cascade (PENDING_APPROVAL → Delivery Approval, ASSIGNED →
+        // Material Received, etc.). Flattened to lead.deliveryRequest below.
+        deliveryRequests: {
+          where: { status: { notIn: ['COMPLETED'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { status: true, pushedToNocAt: true },
+        },
         // Relations for the owner name
         assignedTo: { select: { name: true } },
         feasibilityAssignedTo: { select: { name: true } },
@@ -81,6 +91,7 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
   ]);
 
   const items = leads.map((lead) => {
+    lead.deliveryRequest = lead.deliveryRequests?.[0] || null;
     const { stage, owner } = deriveCurrentStage(lead);
     return {
       id: lead.id,

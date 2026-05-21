@@ -12577,6 +12577,14 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
         feasibilityReviewedAt: true,
         feasibilityAssignedToId: true,
         assignedToId: true,
+        // Active (non-completed) delivery request — feeds the delivery
+        // sub-stage cascade. Flattened to lead.deliveryRequest below.
+        deliveryRequests: {
+          where: { status: { notIn: ['COMPLETED'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { status: true, pushedToNocAt: true },
+        },
         // Owner-name relations
         assignedTo: { select: { id: true, name: true, role: true } },
         feasibilityAssignedTo: { select: { id: true, name: true } },
@@ -12601,6 +12609,7 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
 
     // Derive stage + bucket for every lead in one pass.
     const annotated = leads.map((lead) => {
+      lead.deliveryRequest = lead.deliveryRequests?.[0] || null;
       const derived = deriveCurrentStage(lead);
       const bucket = bucketFromLead(lead, derived);
       return { lead, derived, bucket };
@@ -12879,6 +12888,14 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
         feasibilityReviewedAt: true,
         feasibilityAssignedToId: true,
         assignedToId: true,
+        // Active (non-completed) delivery request — feeds the delivery
+        // sub-stage cascade. Flattened to lead.deliveryRequest below.
+        deliveryRequests: {
+          where: { status: { notIn: ['COMPLETED'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { status: true, pushedToNocAt: true },
+        },
         // Owner-name relations used by stage labels
         assignedTo: { select: { id: true, name: true, email: true } },
         feasibilityAssignedTo: { select: { name: true } },
@@ -12895,6 +12912,7 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
   // joining StatusChangeLog and we're optimising for "is this lead stale".
   const now = Date.now();
   const items = rows.map(r => {
+    r.deliveryRequest = r.deliveryRequests?.[0] || null;
     const updatedMs = r.updatedAt ? new Date(r.updatedAt).getTime() : now;
     const daysInStage = Math.max(0, Math.floor((now - updatedMs) / (24 * 60 * 60 * 1000)));
     const { stage, owner } = deriveCurrentStage(r);
