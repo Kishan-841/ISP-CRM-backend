@@ -288,3 +288,108 @@ export const createSamLead = asyncHandler(async function createSamLead(req, res)
     samLeadId,
   });
 });
+
+// GET /api/integrations/sam/leads
+//
+// Lists every Lead originally created via the SAM-dispatch flow so the SAM
+// platform can show its operators (and SAM_HEAD / ADMIN) what happened to
+// each one — most importantly *which BDM currently owns it* after any
+// CRM-side reassignment.
+//
+// Query:
+//   samCreatedById  optional — filter to leads created by one SAM operator
+//                   (the "My Leads" view passes this; the team-wide view
+//                   omits it)
+//   page            optional, 1-indexed, default 1
+//   limit           optional, default 50, max 200
+//
+// Returns the rows sorted by Lead.updatedAt DESC so SAM's "most recent
+// activity" sort is the natural default with no extra processing needed.
+export const listSamLeads = asyncHandler(async function listSamLeads(req, res) {
+  if (!hasAnyRole(req.user, ['SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'MASTER'])) {
+    return res.status(403).json({ message: 'Access denied.' });
+  }
+
+  const { samCreatedById } = req.query;
+
+  // Parse + clamp pagination defensively so a malformed `limit=abc` 400s
+  // here instead of getting silently coerced to NaN by Prisma.
+  const rawPage = Number(req.query.page);
+  const rawLimit = Number(req.query.limit);
+  if (req.query.page !== undefined && (!Number.isInteger(rawPage) || rawPage < 1)) {
+    return res.status(400).json({ message: 'page must be a positive integer.' });
+  }
+  if (req.query.limit !== undefined && (!Number.isInteger(rawLimit) || rawLimit < 1)) {
+    return res.status(400).json({ message: 'limit must be a positive integer.' });
+  }
+  const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1;
+  const limit = Math.min(200, Number.isInteger(rawLimit) && rawLimit >= 1 ? rawLimit : 50);
+  const skip = (page - 1) * limit;
+
+  const where = { creationSource: 'SAM_DISPATCH' };
+  if (samCreatedById) {
+    where.samCreatedById = String(samCreatedById);
+  }
+
+  const [total, rows] = await Promise.all([
+    prisma.lead.count({ where }),
+    prisma.lead.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        leadNumber: true,
+        samLeadId: true,
+        status: true,
+        samCreatedById: true,
+        samCreatedByName: true,
+        samCreatedAt: true,
+        updatedAt: true,
+        // The current owner — may differ from the originally-assigned BDM
+        // if CRM reassigned the lead (TL bulk-reassign, transfer-all, etc.).
+        // This is the headline field for SAM's "where is my lead now" view.
+        assignedTo: { select: { id: true, name: true, email: true, role: true } },
+        campaignData: {
+          select: { company: true, name: true, firstName: true, lastName: true, phone: true, email: true },
+        },
+      },
+    }),
+  ]);
+
+  const leads = rows.map(lead => {
+    const cd = lead.campaignData || {};
+    const contactName =
+      cd.name || `${cd.firstName || ''} ${cd.lastName || ''}`.trim() || null;
+    return {
+      id: lead.id,
+      leadNumber: lead.leadNumber,
+      samLeadId: lead.samLeadId,
+      companyName: cd.company || null,
+      contactName,
+      phone: cd.phone || null,
+      email: cd.email || null,
+      status: lead.status,
+      currentOwner: lead.assignedTo
+        ? {
+            id: lead.assignedTo.id,
+            name: lead.assignedTo.name,
+            email: lead.assignedTo.email,
+            type: roleToSamType(lead.assignedTo.role),
+          }
+        : null,
+      samCreatedById: lead.samCreatedById,
+      samCreatedByName: lead.samCreatedByName,
+      samCreatedAt: lead.samCreatedAt,
+      lastUpdatedAt: lead.updatedAt,
+    };
+  });
+
+  res.json({
+    leads,
+    total,
+    page,
+    pageSize: limit,
+  });
+});
