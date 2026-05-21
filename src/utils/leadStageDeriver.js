@@ -53,6 +53,75 @@ export const VISIBLE_BUCKETS = Object.freeze([
   BUCKETS.DELIVERY,
 ]);
 
+// BDM-phase cascade — covers everything from feasibility through accounts
+// verification. The triggers mirror the canonical OPPORTUNITY_STAGE_FILTERS
+// in lead.controller.js so the deriver's labels match what the Opportunity
+// Pipeline tabs show. Walked most-advanced first so a lead at Accounts
+// Verification doesn't get mis-labeled as "Docs Upload" because its older
+// flags are still set.
+function deriveBdmStage(lead) {
+  const ops = lead.opsApprovalStatus;
+  const sa2 = lead.superAdmin2ApprovalStatus;
+  const sharedVia = lead.sharedVia || '';
+  const pushedToDocsVerification = sharedVia.includes('docs_verification');
+  const isShared = sharedVia.includes('email') || sharedVia.includes('whatsapp');
+
+  // Accounts — most advanced
+  if (lead.accountsStatus === 'ACCOUNTS_APPROVED') {
+    return { stage: 'Awaiting OPS Push', owner: 'OPS Team' };
+  }
+  if (lead.accountsStatus === 'ACCOUNTS_REJECTED') {
+    return { stage: 'Accounts Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (lead.docsVerifiedAt && !lead.docsRejectedReason) {
+    return { stage: 'Accounts Verification', owner: 'Accounts Team' };
+  }
+  if (lead.docsRejectedReason) {
+    return { stage: 'Docs Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+
+  // Docs Verification — BDM has pushed to docs team
+  if (pushedToDocsVerification && !lead.docsVerifiedAt) {
+    return { stage: 'Docs Verification', owner: 'Docs Team' };
+  }
+
+  // Customer-action steps (BDM owns chasing the customer through these)
+  if (lead.loginCompletedAt) {
+    return { stage: 'Docs Upload', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (isShared) {
+    return { stage: 'Awaiting Customer Login', owner: lead.assignedTo?.name || 'BDM' };
+  }
+
+  // Approval — SA2 first (it gates Share with Customer)
+  if (sa2 === 'REJECTED') {
+    return { stage: 'SA2 Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (sa2 === 'PENDING') {
+    return { stage: 'Sales Director Approval', owner: 'Sales Director' };
+  }
+  // Fully approved (SA2 = APPROVED, or null = not required), not yet shared.
+  if (ops === 'APPROVED' && (sa2 === 'APPROVED' || sa2 == null)) {
+    return { stage: 'Share with Customer', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (ops === 'PENDING') {
+    return { stage: 'OPS Approval', owner: 'OPS Team' };
+  }
+  if (ops === 'REJECTED') {
+    return { stage: 'OPS Rejected', owner: lead.assignedTo?.name || 'BDM' };
+  }
+
+  // Quote drafting — feasibility done, OPS hasn't seen a quote yet.
+  if (lead.feasibilityReviewedAt) {
+    return { stage: 'Quotation Pending', owner: lead.assignedTo?.name || 'BDM' };
+  }
+  if (lead.feasibilityAssignedToId) {
+    return { stage: 'Feasibility', owner: lead.feasibilityAssignedTo?.name || 'Feasibility Team' };
+  }
+
+  return null;
+}
+
 // Delivery sub-stage cascade. Called only when `lead.pushedToInstallationAt`
 // is set. Reads three signals: `lead.deliveryStatus` (lead-level), the active
 // non-completed `lead.deliveryRequest` (the DeliveryRequest row, flattened by
@@ -140,61 +209,9 @@ export function deriveCurrentStage(lead) {
     if (deliveryStage) return deliveryStage;
   }
 
-  // Accounts / docs
-  if (lead.accountsStatus === 'ACCOUNTS_APPROVED') {
-    return { stage: 'Awaiting OPS Push', owner: 'OPS Team' };
-  }
-  if (lead.accountsStatus === 'ACCOUNTS_REJECTED') {
-    return { stage: 'Accounts Rejected', owner: lead.assignedTo?.name || 'BDM' };
-  }
-  if (lead.docsVerifiedAt && !lead.docsRejectedReason) {
-    return { stage: 'Accounts Verification', owner: 'Accounts Team' };
-  }
-  if (lead.docsRejectedReason) {
-    return { stage: 'Docs Rejected', owner: lead.assignedTo?.name || 'BDM' };
-  }
-  const docsUploaded =
-    lead.documents &&
-    typeof lead.documents === 'object' &&
-    !Array.isArray(lead.documents) &&
-    Object.keys(lead.documents).length > 0;
-  if (docsUploaded && !lead.docsVerifiedAt) {
-    return { stage: 'Docs Verification', owner: 'Docs Team' };
-  }
-
-  // SA2 / OPS quotation approvals
-  if (lead.superAdmin2ApprovalStatus === 'APPROVED' && !docsUploaded) {
-    return { stage: 'Docs Collection', owner: lead.assignedTo?.name || 'BDM' };
-  }
-  if (lead.superAdmin2ApprovalStatus === 'REJECTED') {
-    return { stage: 'SA2 Rejected', owner: lead.assignedTo?.name || 'BDM' };
-  }
-  if (lead.superAdmin2ApprovalStatus === 'PENDING') {
-    return { stage: 'Sales Director Approval', owner: 'Sales Director' };
-  }
-  if (lead.opsApprovalStatus === 'APPROVED' && !lead.superAdmin2ApprovalStatus) {
-    return { stage: 'Sales Director Approval', owner: 'Sales Director' };
-  }
-  if (lead.opsApprovalStatus === 'PENDING') {
-    return { stage: 'OPS Approval', owner: 'OPS Team' };
-  }
-  if (lead.opsApprovalStatus === 'REJECTED') {
-    return { stage: 'OPS Rejected', owner: lead.assignedTo?.name || 'BDM' };
-  }
-
-  // Quotation / feasibility
-  const hasQuotation = Array.isArray(lead.quotationAttachments)
-    ? lead.quotationAttachments.length > 0
-    : !!lead.quotationAttachments;
-  if (hasQuotation) {
-    return { stage: 'Quotation Ready', owner: lead.assignedTo?.name || 'BDM' };
-  }
-  if (lead.feasibilityReviewedAt) {
-    return { stage: 'Quotation', owner: lead.assignedTo?.name || 'BDM' };
-  }
-  if (lead.feasibilityAssignedToId) {
-    return { stage: 'Feasibility', owner: lead.feasibilityAssignedTo?.name || 'Feasibility Team' };
-  }
+  // BDM phase — quotation, approvals, share-with-customer, docs, accounts.
+  const bdmStage = deriveBdmStage(lead);
+  if (bdmStage) return bdmStage;
 
   // Pre-feasibility BDM / status-based
   if (lead.status === 'FOLLOW_UP') return { stage: 'Follow-up', owner: lead.assignedTo?.name || 'BDM' };
@@ -213,9 +230,10 @@ const STAGE_TO_BUCKET = {
   'BDM': BUCKETS.BDM,
   'Qualified': BUCKETS.BDM,
   'Follow-up': BUCKETS.BDM,
-  'Quotation': BUCKETS.BDM,
-  'Quotation Ready': BUCKETS.BDM,
-  'Docs Collection': BUCKETS.BDM,
+  'Quotation Pending': BUCKETS.BDM,
+  'Share with Customer': BUCKETS.BDM,
+  'Awaiting Customer Login': BUCKETS.BDM,
+  'Docs Upload': BUCKETS.BDM,
   'Docs Rejected': BUCKETS.BDM,
   'OPS Rejected': BUCKETS.BDM,
   'SA2 Rejected': BUCKETS.BDM,
