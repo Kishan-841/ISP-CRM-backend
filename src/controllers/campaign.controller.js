@@ -4257,17 +4257,68 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
       })
     ]);
 
+    // For [SAM Dispatch] * campaigns, the Lead model carries SAM-operator
+    // attribution (samCreatedByName/Email/At) — the campaign itself is owned
+    // by the BDM (for visibility), but the data inside it was created by a
+    // SAM operator. Surface the most-recent SAM operator at the campaign
+    // level so the All Data list can show "Created By: <SAM operator>"
+    // instead of the BDM, and the TYPE chip can render as "SAM".
+    const samCampaignIds = campaigns.filter(c => c.name?.startsWith('[SAM Dispatch]')).map(c => c.id);
+    const samProvidersByCampaignId = {};
+    if (samCampaignIds.length > 0) {
+      const rows = await prisma.lead.findMany({
+        where: {
+          creationSource: 'SAM_DISPATCH',
+          campaignData: { campaignId: { in: samCampaignIds } },
+        },
+        select: {
+          samCreatedByName: true,
+          samCreatedByEmail: true,
+          samCreatedAt: true,
+          campaignData: { select: { campaignId: true } },
+        },
+        orderBy: { samCreatedAt: 'desc' },
+      });
+      // Most recent first → keep the first occurrence per campaign so each
+      // campaign reports its latest dispatcher. Collect unique operators as
+      // a side note for the UI tooltip.
+      for (const r of rows) {
+        const cid = r.campaignData?.campaignId;
+        if (!cid) continue;
+        if (!samProvidersByCampaignId[cid]) {
+          samProvidersByCampaignId[cid] = {
+            latest: { name: r.samCreatedByName, email: r.samCreatedByEmail, at: r.samCreatedAt },
+            uniqueOperators: new Set(),
+          };
+        }
+        if (r.samCreatedByEmail) samProvidersByCampaignId[cid].uniqueOperators.add(r.samCreatedByEmail);
+      }
+    }
+
     // Map to clean response
-    const mappedData = campaigns.map(c => ({
-      id: c.id,
-      name: c.name,
-      code: c.code,
-      type: c.type,
-      createdAt: c.createdAt,
-      createdBy: c.createdBy || null,
-      assignedTo: c.assignments.map(a => a.user),
-      dataCount: c._count.campaignData,
-    }));
+    const mappedData = campaigns.map(c => {
+      const samInfo = samProvidersByCampaignId[c.id];
+      return {
+        id: c.id,
+        name: c.name,
+        code: c.code,
+        type: c.type,
+        createdAt: c.createdAt,
+        createdBy: c.createdBy || null,
+        assignedTo: c.assignments.map(a => a.user),
+        dataCount: c._count.campaignData,
+        // Present only for SAM Dispatch campaigns. Frontend uses this to
+        // override the TYPE chip + Created By column.
+        samProvider: samInfo
+          ? {
+              name: samInfo.latest.name,
+              email: samInfo.latest.email,
+              at: samInfo.latest.at,
+              operatorCount: samInfo.uniqueOperators.size,
+            }
+          : null,
+      };
+    });
 
     res.json(paginatedResponse({ data: mappedData, total, page, limit, dataKey: 'data' }));
 });
