@@ -38,6 +38,7 @@ import adminRoutes from './routes/admin.routes.js';
 import auditRoutes from './routes/audit.routes.js';
 import commercialChangeRoutes from './routes/commercialChange.routes.js';
 import samWebhookInboundRoutes from './routes/samWebhookInbound.routes.js';
+import samIntegrationRoutes from './routes/samIntegration.routes.js';
 import { auth } from './middleware/auth.js';
 import { initializeSocket } from './sockets/index.js';
 import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
@@ -189,6 +190,7 @@ app.use('/api/customer/nexus', customerNexusRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/commercial-changes', commercialChangeRoutes);
+app.use('/api/integrations/sam', samIntegrationRoutes);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);

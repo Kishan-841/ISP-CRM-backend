@@ -815,6 +815,14 @@ const formatLeadResponse = (lead) => ({
   // Self-generated info
   isSelfGenerated: lead.campaignData.isSelfGenerated || false,
   dataCreatedBy: lead.campaignData.createdBy || lead.createdBy,
+  // Origin (set once at lead creation) — frontends use this to render the
+  // SAM badge / "Created from SAM by …" callout when value is SAM_DISPATCH.
+  creationSource: lead.creationSource,
+  samLeadId: lead.samLeadId || null,
+  samCreatedById: lead.samCreatedById || null,
+  samCreatedByName: lead.samCreatedByName || null,
+  samCreatedByEmail: lead.samCreatedByEmail || null,
+  samCreatedAt: lead.samCreatedAt || null,
   // Campaign info
   campaign: lead.campaignData.campaign,
   // Users

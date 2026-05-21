@@ -387,6 +387,16 @@ model Lead {
   // events. Replaces the old inference block that couldn't distinguish
   // "Add Lead" from "Create Opportunity" (both set isSelfGenerated=true).
   creationSource               LeadCreationSource         @default(UNKNOWN)
+  // SAM-dispatch attribution — populated only when creationSource = SAM_DISPATCH.
+  // samLeadId is SAM's UUID, used as the idempotency key on POST /api/integrations
+  // /sam/leads so duplicate clicks return the original row instead of creating two.
+  // The createdBy fields are denormalised from SAM's payload because we don't
+  // have a User record for the SAM operator on this side — they're informational.
+  samLeadId                    String?                    @unique
+  samCreatedById               String?
+  samCreatedByName             String?
+  samCreatedByEmail            String?
+  samCreatedAt                 DateTime?
   // Simplified feasibility review fields (vendor setup moved to delivery)
   feasibilityVendorType        String? // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
   tentativeCapex               Float? // Feasibility team's CAPEX estimate
@@ -1493,6 +1503,7 @@ enum LeadCreationSource {
   BDM_OPPORTUNITY // BDM clicked "Create Opportunity" (skips qualification)
   COLD_LEAD // BDM parked a cold lead from a lukewarm meeting
   SAM_REFERRAL // SAM referred an existing customer to a new opportunity
+  SAM_DISPATCH // SAM operator filled the Create Lead form and assigned it directly to a BDM (no ISR funnel)
   UNKNOWN // Backfill default for legacy leads with ambiguous history
 }
 
