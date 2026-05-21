@@ -1392,6 +1392,14 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
         meetingOutcome: true,
         sharedVia: true,
         linkedinUrl: true,
+        // Origin + SAM-operator attribution. The BDM queue UI renders an
+        // orange "SAM" chip with the SAM operator's name when present;
+        // otherwise the chip cascade falls through to the existing
+        // self-generated / customer-referral / generic branches.
+        creationSource: true,
+        samCreatedByName: true,
+        samCreatedByEmail: true,
+        samCreatedAt: true,
         assignedTo: { select: { id: true, name: true } },
         campaignData: {
           select: {
@@ -1494,7 +1502,14 @@ export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
       isCustomerReferral: !!lead.enquiryCreatedFrom,
       referredByCompany: lead.enquiryCreatedFrom?.referredByLead?.campaignData?.company || null,
       // Vendor / Channel Partner info
-      vendor: lead.vendor
+      vendor: lead.vendor,
+      // SAM-dispatch origin & attribution — the BDM queue UI picks these up
+      // to render the orange SAM chip with the SAM operator's name instead
+      // of falling through to the generic "self-generated" badge.
+      creationSource: lead.creationSource,
+      samCreatedByName: lead.samCreatedByName || null,
+      samCreatedByEmail: lead.samCreatedByEmail || null,
+      samCreatedAt: lead.samCreatedAt || null,
     }));
 
     res.json(paginatedResponse({ data: formattedLeads, total: queueTotal, page, limit, dataKey: 'leads', extra: { stats, campaigns } }));
