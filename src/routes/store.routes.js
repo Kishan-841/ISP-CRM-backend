@@ -180,34 +180,35 @@ router.put('/po-approval/:id', requireRole('SUPER_ADMIN'), updatePurchaseOrder);
 // Delete a PO (only Super Admin can delete)
 router.delete('/po-approval/:id', requireRole('SUPER_ADMIN'), deletePurchaseOrder);
 
-// ========== GOODS RECEIPT VERIFICATION ROUTES (Admin only) ==========
+// ========== GOODS RECEIPT VERIFICATION ROUTES ==========
+// Store Manager owns the inward flow; Admin/Super Admin retain access too.
 
-const adminAccess = requireRole('ADMIN', 'SUPER_ADMIN');
+const receiptAccess = requireRole('STORE_MANAGER', 'ADMIN', 'SUPER_ADMIN');
 
 // Get receipt verification stats
-router.get('/goods-receipt/stats', adminAccess, getReceiptStats);
+router.get('/goods-receipt/stats', receiptAccess, getReceiptStats);
 
 // Get POs pending receipt verification
-router.get('/goods-receipt/pending', adminAccess, getPendingReceiptPOs);
+router.get('/goods-receipt/pending', receiptAccess, getPendingReceiptPOs);
 
 // Get all receipt verified POs (history)
-router.get('/goods-receipt/verified', adminAccess, getReceiptVerifiedPOs);
+router.get('/goods-receipt/verified', receiptAccess, getReceiptVerifiedPOs);
 
 // Verify goods receipt
-router.post('/goods-receipt/:id/verify', adminAccess, verifyGoodsReceipt);
+router.post('/goods-receipt/:id/verify', receiptAccess, verifyGoodsReceipt);
 
 // Upload signed PO document
-router.post('/goods-receipt/upload-signed-po', adminAccess, uploadToCloudinary.single('file'), uploadSignedPO);
+router.post('/goods-receipt/upload-signed-po', receiptAccess, uploadToCloudinary.single('file'), uploadSignedPO);
 
 // ========== FOLLOW-UP RECEIPT ROUTES (For Partially Received POs) ==========
 
 // Get all partially received POs awaiting next batch
-router.get('/goods-receipt/partial', adminAccess, getPartiallyReceivedPOs);
+router.get('/goods-receipt/partial', receiptAccess, getPartiallyReceivedPOs);
 
 // Update partially received PO with new batch
-router.post('/goods-receipt/:id/update-batch', adminAccess, updatePartialReceipt);
+router.post('/goods-receipt/:id/update-batch', receiptAccess, updatePartialReceipt);
 
 // Get receipt batch history for a PO
-router.get('/goods-receipt/:id/batch-history', adminAccess, getReceiptBatchHistory);
+router.get('/goods-receipt/:id/batch-history', receiptAccess, getReceiptBatchHistory);
 
 export default router;

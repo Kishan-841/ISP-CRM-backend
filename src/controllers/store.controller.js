@@ -2053,34 +2053,45 @@ export const generatePOSerialTemplate = asyncHandler(async function generatePOSe
     // Create worksheet data
     const wsData = [['Item ID', 'PO Number', 'Product Model', 'Category', 'Brand', 'Unit #', 'Serial Number']];
 
+    // Only generate rows for serials still missing — receivedQuantity may
+    // have been partially serialised via the goods-receipt batch flow
+    // already, so we ask the user to fill in only the gap.
     items.forEach(item => {
-      const actualQty = item.receivedQuantity ?? item.quantity;
+      const receivedQty = item.receivedQuantity ?? item.quantity;
+      const alreadySerialised = (item.serialNumbers || []).length;
       const isFiber = item.product.category === 'FIBER' || item.product.unit === 'mtrs';
 
       if (isFiber) {
+        if (alreadySerialised > 0) return;
         wsData.push([
           item.id,
           item.purchaseOrder.poNumber,
           item.product.modelNumber,
           item.product.category,
           item.product.brandName,
-          `${actualQty} mtrs`,
+          `${receivedQty} mtrs`,
           ''
         ]);
       } else {
-        for (let i = 1; i <= actualQty; i++) {
+        const missing = receivedQty - alreadySerialised;
+        if (missing <= 0) return;
+        for (let i = 1; i <= missing; i++) {
           wsData.push([
             item.id,
             item.purchaseOrder.poNumber,
             item.product.modelNumber,
             item.product.category,
             item.product.brandName,
-            `${i} of ${actualQty}`,
+            `${alreadySerialised + i} of ${receivedQty}`,
             ''
           ]);
         }
       }
     });
+
+    if (wsData.length === 1) {
+      return res.status(400).json({ message: 'All received units in this PO are already serialised' });
+    }
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(wsData);
@@ -2145,42 +2156,86 @@ export const uploadPOSerialsAndAddToStore = asyncHandler(async function uploadPO
       return res.status(400).json({ message: 'No valid items found for this PO' });
     }
 
-    // Validate serial number counts
+    // Validate serial counts against MISSING serials (receivedQuantity minus
+    // serials already captured via goods-receipt batch flow). Also dedupe
+    // across the file and against the item's existing list — same guarantees
+    // as the per-batch upload path.
     const errors = [];
+    const seenAcrossFile = new Set();
     items.forEach(item => {
       const isFiber = item.product.category === 'FIBER' || item.product.unit === 'mtrs';
-      if (!isFiber) {
-        const expectedQty = item.receivedQuantity ?? item.quantity;
-        const actualSerials = serialsByItem[item.id]?.length || 0;
-        if (actualSerials !== expectedQty) {
-          errors.push(`${item.product.modelNumber}: Expected ${expectedQty} serial numbers, got ${actualSerials}`);
-        }
+      if (isFiber) return;
+      const receivedQty = item.receivedQuantity ?? item.quantity;
+      const alreadySerialised = (item.serialNumbers || []).length;
+      const expectedMissing = receivedQty - alreadySerialised;
+      const incoming = (serialsByItem[item.id] || []).map(s => String(s).trim()).filter(Boolean);
+
+      if (incoming.length !== expectedMissing) {
+        errors.push(`${item.product.modelNumber}: Expected ${expectedMissing} serial number(s) (${alreadySerialised} of ${receivedQty} already on file), got ${incoming.length}`);
+        return;
       }
+      const localDupes = incoming.filter((s, i) => incoming.indexOf(s) !== i);
+      if (localDupes.length > 0) {
+        errors.push(`${item.product.modelNumber}: duplicate serial(s) in upload — ${[...new Set(localDupes)].join(', ')}`);
+        return;
+      }
+      const collisions = incoming.filter(s => (item.serialNumbers || []).includes(s));
+      if (collisions.length > 0) {
+        errors.push(`${item.product.modelNumber}: serial(s) already recorded for this item — ${collisions.join(', ')}`);
+        return;
+      }
+      for (const s of incoming) {
+        if (seenAcrossFile.has(s)) {
+          errors.push(`${item.product.modelNumber}: serial "${s}" appears against more than one item in this upload`);
+        }
+        seenAcrossFile.add(s);
+      }
+      serialsByItem[item.id] = incoming;
     });
 
     if (errors.length > 0) {
       return res.status(400).json({ message: 'Serial number count mismatch', errors });
     }
 
-    // Update items
-    const updatePromises = items.map(item =>
-      prisma.storePurchaseOrderItem.update({
+    // Append new serials to the item's running list. Only flip to IN_STORE
+    // when the item is fully received AND every received unit has a serial,
+    // matching the batch-flow rule. Partial deliveries stay PURCHASED.
+    const updatePromises = items.map(item => {
+      const isFiber = item.product.category === 'FIBER' || item.product.unit === 'mtrs';
+      const newSerials = serialsByItem[item.id] || [];
+      const mergedSerials = isFiber
+        ? (item.serialNumbers || [])
+        : [...(item.serialNumbers || []), ...newSerials];
+      const receivedQty = item.receivedQuantity ?? item.quantity;
+      const fullyReceived = receivedQty >= item.quantity;
+      const allUnitsHaveSerials = isFiber || mergedSerials.length === receivedQty;
+      const shouldMoveToStore = fullyReceived && allUnitsHaveSerials;
+
+      return prisma.storePurchaseOrderItem.update({
         where: { id: item.id },
         data: {
-          serialNumbers: serialsByItem[item.id] || [],
-          status: 'IN_STORE',
-          addedToStoreAt: new Date()
+          ...(!isFiber && newSerials.length > 0 && { serialNumbers: mergedSerials }),
+          ...(shouldMoveToStore && { status: 'IN_STORE', addedToStoreAt: new Date() })
         }
-      })
-    );
+      });
+    });
     await Promise.all(updatePromises);
 
     // Auto-complete PO if all items are now IN_STORE
     await checkAndCompletePOs(items.map(i => i.id));
 
+    const movedCount = items.filter(item => {
+      const isFiber = item.product.category === 'FIBER' || item.product.unit === 'mtrs';
+      const mergedLen = isFiber ? (item.serialNumbers || []).length : (item.serialNumbers || []).length + (serialsByItem[item.id]?.length || 0);
+      const receivedQty = item.receivedQuantity ?? item.quantity;
+      return receivedQty >= item.quantity && (isFiber || mergedLen === receivedQty);
+    }).length;
+
     res.json({
       success: true,
-      message: `${items.length} item(s) added to store with serial numbers`,
+      message: movedCount === items.length
+        ? `${items.length} item(s) added to store with serial numbers`
+        : `Serial numbers recorded. ${movedCount} of ${items.length} item(s) moved to store; the rest stay pending until fully received.`,
       count: items.length
     });
 });
@@ -2199,6 +2254,13 @@ export const addPOItemsToStore = asyncHandler(async function addPOItemsToStore(r
 
     if (items.length === 0) {
       return res.status(400).json({ message: 'No items available to add to store for this PO' });
+    }
+
+    // Refuse if any item is only partially received — flipping it to IN_STORE
+    // here would lose track of the units still awaited from the vendor.
+    const partial = items.find(i => (i.receivedQuantity || 0) < i.quantity);
+    if (partial) {
+      return res.status(400).json({ message: 'Cannot add a partially-received PO without serials. Wait for full receipt, or upload serials for received units instead.' });
     }
 
     const itemIds = items.map(i => i.id);
