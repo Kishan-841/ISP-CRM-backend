@@ -1350,10 +1350,59 @@ export const verifyGoodsReceipt = asyncHandler(async function verifyGoodsReceipt
       });
     }
 
+    // Pre-validate serials BEFORE touching the DB. If anything's off we
+    // surface every failure at once rather than 400ing on the first.
+    // Validations:
+    //   - serials.length must equal receivedQuantity for non-FIBER items
+    //   - no duplicates within the same submission
+    //   - no collisions with existing serials on this product (uniqueness
+    //     is per-product-line, not per-PO — same serial can't enter the
+    //     store twice for the same product even across POs).
+    const serialErrors = [];
+    if (items && Array.isArray(items)) {
+      const seenAcrossSubmission = new Set();
+      for (const item of items) {
+        if (!item.id || !Array.isArray(item.serials) || item.serials.length === 0) continue;
+        const poItem = po.items.find(i => i.id === item.id);
+        if (!poItem) continue;
+        const product = await prisma.storeProduct.findUnique({
+          where: { id: poItem.productId },
+          select: { category: true, unit: true, modelNumber: true },
+        });
+        const isFiber = product?.category === 'FIBER' || product?.unit === 'mtrs';
+        if (isFiber) {
+          serialErrors.push(`${product.modelNumber}: serials not expected for fiber/length items`);
+          continue;
+        }
+        const trimmed = item.serials.map(s => String(s).trim()).filter(Boolean);
+        const expected = item.receivedQuantity ?? poItem.receivedQuantity ?? 0;
+        if (trimmed.length !== expected) {
+          serialErrors.push(`${product.modelNumber}: expected ${expected} serial(s), got ${trimmed.length}`);
+          continue;
+        }
+        const localDupes = trimmed.filter((s, i) => trimmed.indexOf(s) !== i);
+        if (localDupes.length > 0) {
+          serialErrors.push(`${product.modelNumber}: duplicate serial(s) in upload — ${[...new Set(localDupes)].join(', ')}`);
+          continue;
+        }
+        for (const s of trimmed) {
+          if (seenAcrossSubmission.has(s)) {
+            serialErrors.push(`${product.modelNumber}: serial "${s}" appears in another item in this submission`);
+          }
+          seenAcrossSubmission.add(s);
+        }
+        // Stash normalised list for use during update
+        item._normalisedSerials = trimmed;
+      }
+    }
+    if (serialErrors.length > 0) {
+      return res.status(400).json({ message: 'Serial validation failed', errors: serialErrors });
+    }
+
     // Update item-level receipt info if provided
     if (items && Array.isArray(items)) {
       for (const item of items) {
-        if (item.id && (item.receivedQuantity !== undefined || item.receiptRemark || item.receiptStatus)) {
+        if (item.id && (item.receivedQuantity !== undefined || item.receiptRemark || item.receiptStatus || item._normalisedSerials)) {
           // Validate: receivedQuantity cannot exceed ordered quantity
           const poItem = po.items.find(i => i.id === item.id);
           if (poItem && item.receivedQuantity > poItem.quantity) {
@@ -1362,12 +1411,22 @@ export const verifyGoodsReceipt = asyncHandler(async function verifyGoodsReceipt
             });
           }
 
+          // If serials were uploaded for this item, attach them and flip the
+          // item directly to IN_STORE. Skips the separate "Add to Store"
+          // step that operators previously had to do via a different page.
+          const willGoToStore = Array.isArray(item._normalisedSerials) && item._normalisedSerials.length > 0;
+
           await prisma.storePurchaseOrderItem.update({
             where: { id: item.id },
             data: {
               receivedQuantity: item.receivedQuantity,
               receiptRemark: item.receiptRemark || null,
-              receiptStatus: item.receiptStatus || null
+              receiptStatus: item.receiptStatus || null,
+              ...(willGoToStore && {
+                serialNumbers: item._normalisedSerials,
+                status: 'IN_STORE',
+                addedToStoreAt: new Date(),
+              }),
             }
           });
         }
@@ -1676,6 +1735,48 @@ export const updatePartialReceipt = asyncHandler(async function updatePartialRec
     let totalReceivedInBatch = 0;
     let totalDamagedInBatch = 0;
 
+    // Pre-validate batch serials BEFORE any DB writes, same shape as the
+    // initial verify path. Each batch's serials extend (not replace) the
+    // item's existing serialNumbers — partial deliveries accumulate.
+    const batchSerialErrors = [];
+    const seenAcrossBatch = new Set();
+    for (const update of items) {
+      if (!Array.isArray(update.serials) || update.serials.length === 0) continue;
+      const item = po.items.find(i => i.id === update.itemId);
+      if (!item) continue;
+      const isFiber = item.product.category === 'FIBER' || item.product.unit === 'mtrs';
+      if (isFiber) {
+        batchSerialErrors.push(`${item.product.modelNumber}: serials not expected for fiber/length items`);
+        continue;
+      }
+      const trimmed = update.serials.map(s => String(s).trim()).filter(Boolean);
+      const expected = update.receivedInBatch || 0;
+      if (trimmed.length !== expected) {
+        batchSerialErrors.push(`${item.product.modelNumber}: expected ${expected} serial(s) for this batch, got ${trimmed.length}`);
+        continue;
+      }
+      const localDupes = trimmed.filter((s, i) => trimmed.indexOf(s) !== i);
+      if (localDupes.length > 0) {
+        batchSerialErrors.push(`${item.product.modelNumber}: duplicate serial(s) in this batch — ${[...new Set(localDupes)].join(', ')}`);
+        continue;
+      }
+      const collisions = trimmed.filter(s => (item.serialNumbers || []).includes(s));
+      if (collisions.length > 0) {
+        batchSerialErrors.push(`${item.product.modelNumber}: serial(s) already recorded against earlier batch(es) of this PO — ${collisions.join(', ')}`);
+        continue;
+      }
+      for (const s of trimmed) {
+        if (seenAcrossBatch.has(s)) {
+          batchSerialErrors.push(`${item.product.modelNumber}: serial "${s}" appears in another item in this batch`);
+        }
+        seenAcrossBatch.add(s);
+      }
+      update._normalisedSerials = trimmed;
+    }
+    if (batchSerialErrors.length > 0) {
+      return res.status(400).json({ message: 'Serial validation failed', errors: batchSerialErrors });
+    }
+
     for (const update of items) {
       const item = po.items.find(i => i.id === update.itemId);
       if (!item) continue;
@@ -1695,13 +1796,25 @@ export const updatePartialReceipt = asyncHandler(async function updatePartialRec
       totalReceivedInBatch += quantityInBatch;
       totalDamagedInBatch += damagedInBatch;
 
+      // Concat new-batch serials onto the running list; flip to IN_STORE
+      // only when the item is fully received AND every received unit has a
+      // serial. If partial-with-no-serials, keep at PURCHASED so the user
+      // can come back and finish later.
+      const newSerials = update._normalisedSerials || [];
+      const mergedSerials = [...(item.serialNumbers || []), ...newSerials];
+      const fullyReceived = newTotalReceived >= item.quantity;
+      const allUnitsHaveSerials = mergedSerials.length === newTotalReceived;
+      const shouldMoveToStore = fullyReceived && allUnitsHaveSerials;
+
       // Update item received quantity
       await prisma.storePurchaseOrderItem.update({
         where: { id: item.id },
         data: {
           receivedQuantity: newTotalReceived,
           receiptRemark: update.remark || item.receiptRemark,
-          receiptStatus: newTotalReceived >= item.quantity ? 'RECEIVED' : 'PARTIAL'
+          receiptStatus: fullyReceived ? 'RECEIVED' : 'PARTIAL',
+          ...(newSerials.length > 0 && { serialNumbers: mergedSerials }),
+          ...(shouldMoveToStore && { status: 'IN_STORE', addedToStoreAt: new Date() }),
         }
       });
 
