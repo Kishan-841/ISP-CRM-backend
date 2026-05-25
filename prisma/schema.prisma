@@ -22,8 +22,6 @@ model User {
   collectionCalls                    CollectionCallLog[]      @relation("CollectionCallsMade")
   assignedCampaigns                  CampaignAssignment[]
   createdCampaignData                CampaignData[]           @relation("CampaignDataCreatedBy")
-  deliveryRequestsAreaHeadApproved   DeliveryRequest[]        @relation("DeliveryRequestAreaHeadApproved")
-  deliveryRequestsAreaHeadRejected   DeliveryRequest[]        @relation("DeliveryRequestAreaHeadRejected")
   deliveryRequestsAssignedToStore    DeliveryRequest[]        @relation("DeliveryRequestAssignedToStore")
   deliveryRequestsPushedToNoc        DeliveryRequest[]        @relation("DeliveryRequestPushedToNoc")
   deliveryRequestsCreated            DeliveryRequest[]        @relation("DeliveryRequestCreatedBy")
@@ -898,11 +896,6 @@ model DeliveryRequest {
   superAdminRejectedById    String?
   superAdminRejectedAt      DateTime?
   superAdminRejectionReason String?
-  areaHeadApprovedById      String?
-  areaHeadApprovedAt        DateTime?
-  areaHeadRejectedById      String?
-  areaHeadRejectedAt        DateTime?
-  areaHeadRejectionReason   String?
   assignedToStoreManagerId  String?
   assignedAt                DateTime?
   dispatchedAt              DateTime?
@@ -911,8 +904,6 @@ model DeliveryRequest {
   updatedAt                 DateTime              @updatedAt
   pushedToNocAt             DateTime?
   pushedToNocById           String?
-  areaHeadApprovedBy        User?                 @relation("DeliveryRequestAreaHeadApproved", fields: [areaHeadApprovedById], references: [id])
-  areaHeadRejectedBy        User?                 @relation("DeliveryRequestAreaHeadRejected", fields: [areaHeadRejectedById], references: [id])
   assignedToStoreManager    User?                 @relation("DeliveryRequestAssignedToStore", fields: [assignedToStoreManagerId], references: [id])
   lead                      Lead                  @relation("DeliveryRequestLead", fields: [leadId], references: [id], onDelete: Restrict)
   pushedToNocBy             User?                 @relation("DeliveryRequestPushedToNoc", fields: [pushedToNocById], references: [id])
@@ -1414,7 +1405,6 @@ enum Role {
   DELIVERY_TEAM
   STORE_MANAGER
   ADMIN
-  AREA_HEAD
   NOC
   NOC_HEAD
   SUPPORT_TEAM
@@ -1579,8 +1569,6 @@ enum POItemStatus {
 
 enum DeliveryRequestStatus {
   PENDING_APPROVAL
-  SUPER_ADMIN_APPROVED
-  AREA_HEAD_APPROVED
   APPROVED
   REJECTED
   ASSIGNED

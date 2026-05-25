@@ -807,29 +807,6 @@ This builds the customer's relationship history.`,
     content: `TAT (Turnaround Time) is the expected resolution time per subcategory. It starts from complaint creation. If not closed before TAT, the complaint is flagged **Breached**. Critical priority complaints have the tightest TAT — handle them first.`,
   },
 
-  // ------- AREA_HEAD -------
-  {
-    title: 'Area Head: Your regional view',
-    audience: 'STAFF',
-    roles: ['AREA_HEAD'],
-    tags: ['area-head', 'region'],
-    content: `You oversee leads, customers, deliveries, and complaints in your assigned region. Use dashboards filtered to your area to see pipeline, collections, and service health in your territory.`,
-  },
-  {
-    title: 'Area Head: Approving delivery requests',
-    audience: 'STAFF',
-    roles: ['AREA_HEAD'],
-    tags: ['area-head', 'delivery'],
-    content: `Delivery requests in your region need your approval after Super Admin approval. Open **Delivery Requests → Pending Area Head Approval**. Review items, installation address, and customer. Approve or reject with a reason.`,
-  },
-  {
-    title: 'Area Head: Team oversight',
-    audience: 'STAFF',
-    roles: ['AREA_HEAD'],
-    tags: ['area-head', 'team'],
-    content: `Use the Team Dashboard to monitor your regional team's KPIs — new leads, active installations, outstanding collections, complaints open/closed. Escalate to central leadership if region-wide issues emerge.`,
-  },
-
   // ============================================================
   // TIER 4 — CUSTOMER portal audience
   // ============================================================

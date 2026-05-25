@@ -7706,7 +7706,6 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
             status: true,
             createdAt: true,
             pushedToNocAt: true,
-            areaHeadRejectionReason: true,
             superAdminRejectionReason: true,
             items: {
               where: { isAssigned: true },
@@ -7756,7 +7755,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
           return 'pushed_to_noc';
         }
         // Material requested, awaiting approval
-        if (['PENDING_APPROVAL', 'SUPER_ADMIN_APPROVED', 'AREA_HEAD_APPROVED', 'APPROVED'].includes(activeRequest.status)) {
+        if (['PENDING_APPROVAL', 'APPROVED'].includes(activeRequest.status)) {
           return 'material_requested';
         }
       }

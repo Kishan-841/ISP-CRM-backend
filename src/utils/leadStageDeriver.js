@@ -159,11 +159,11 @@ function deriveDeliveryStage(lead) {
   if (req?.status === 'ASSIGNED') {
     return { stage: 'Material Received', owner: 'Delivery Team' };
   }
-  if (req && ['APPROVED', 'AREA_HEAD_APPROVED', 'SUPER_ADMIN_APPROVED'].includes(req.status)) {
+  if (req?.status === 'APPROVED') {
     return { stage: 'Material Approved', owner: 'Store Manager' };
   }
   if (req?.status === 'PENDING_APPROVAL' || ds === 'MATERIAL_REQUESTED') {
-    return { stage: 'Delivery Approval', owner: 'Area Head / Super Admin' };
+    return { stage: 'Delivery Approval', owner: 'Super Admin' };
   }
   if (!lead.deliveryVendorSetupDone) {
     return { stage: 'Vendor Setup', owner: 'Delivery Team' };

@@ -624,11 +624,6 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
         superAdminRejectedBy: { select: { id: true, name: true, role: true } },
         superAdminRejectedAt: true,
         superAdminRejectionReason: true,
-        areaHeadApprovedBy: { select: { id: true, name: true, role: true } },
-        areaHeadApprovedAt: true,
-        areaHeadRejectedBy: { select: { id: true, name: true, role: true } },
-        areaHeadRejectedAt: true,
-        areaHeadRejectionReason: true,
         assignedToStoreManager: { select: { id: true, name: true, role: true } },
         assignedAt: true,
         dispatchedAt: true,
@@ -1226,25 +1221,6 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
       });
     }
 
-    if (dr.areaHeadApprovedAt) {
-      timeline.push({
-        stage: 'DELIVERY_AREA_HEAD_APPROVED',
-        label: 'Area Head Approved Delivery',
-        timestamp: dr.areaHeadApprovedAt,
-        user: dr.areaHeadApprovedBy,
-        details: `Regional approval cleared for ${dr.requestNumber}.`,
-      });
-    } else if (dr.areaHeadRejectedAt) {
-      timeline.push({
-        stage: 'DELIVERY_AREA_HEAD_REJECTED',
-        label: 'Area Head Rejected Delivery',
-        timestamp: dr.areaHeadRejectedAt,
-        user: dr.areaHeadRejectedBy,
-        details: dr.areaHeadRejectionReason || `Rejected delivery request ${dr.requestNumber}.`,
-        isError: true,
-      });
-    }
-
     if (dr.assignedAt && dr.assignedToStoreManager) {
       timeline.push({
         stage: 'DELIVERY_ASSIGNED_TO_STORE',
@@ -1556,8 +1532,6 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     DELIVERY_REQUEST_CREATED: 210,
     DELIVERY_SUPER_ADMIN_APPROVED: 220,
     DELIVERY_SUPER_ADMIN_REJECTED: 220,
-    DELIVERY_AREA_HEAD_APPROVED: 230,
-    DELIVERY_AREA_HEAD_REJECTED: 230,
     DELIVERY_ASSIGNED_TO_STORE: 240,
     DELIVERY_DISPATCHED: 250,
     DELIVERY_COMPLETED: 260,

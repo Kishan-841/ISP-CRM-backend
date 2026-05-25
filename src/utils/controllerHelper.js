@@ -14,7 +14,12 @@ export const asyncHandler = (fn) => async (req, res) => {
     await fn(req, res);
   } catch (error) {
     console.error(`${fn.name || 'Controller'} error:`, error);
-    res.status(500).json({ message: 'Server error.' });
+    // Honor an explicit statusCode thrown by the controller (e.g. a 400/404
+    // guard via `throw Object.assign(new Error(msg), { statusCode })`). For
+    // those we surface the message; genuine unexpected errors stay a generic
+    // 500 so we never leak internals.
+    const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
+    res.status(status).json({ message: status === 500 ? 'Server error.' : (error.message || 'Request failed.') });
   }
 };
 

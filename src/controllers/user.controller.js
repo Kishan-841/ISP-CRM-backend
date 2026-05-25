@@ -1079,14 +1079,6 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     Object.assign(counts, { storeRequests });
   }
 
-  if (userRole === 'AREA_HEAD' || isMaster) {
-    // Area Head counts: delivery requests pending their approval
-    const deliveryRequestPending = await prisma.deliveryRequest.count({
-      where: { status: 'PENDING_APPROVAL' }
-    });
-    Object.assign(counts, { deliveryRequestPending });
-  }
-
   if (userRole === 'NOC' || userRole === 'NOC_HEAD' || isMaster) {
     // NOC Team counts: leads pushed to NOC and customer accounts created
     // First get all lead IDs that have been pushed to NOC

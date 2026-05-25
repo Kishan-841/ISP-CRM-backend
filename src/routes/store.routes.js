@@ -73,7 +73,7 @@ router.use(auth);
 const storeAccess = requireRole('STORE_MANAGER', 'SUPER_ADMIN');
 
 // Delivery Team can also view products for material requests
-const productViewAccess = requireRole('STORE_MANAGER', 'SUPER_ADMIN', 'DELIVERY_TEAM', 'ADMIN', 'AREA_HEAD', 'FEASIBILITY_TEAM');
+const productViewAccess = requireRole('STORE_MANAGER', 'SUPER_ADMIN', 'DELIVERY_TEAM', 'ADMIN', 'FEASIBILITY_TEAM');
 
 // ========== PRODUCT (ITEM) ROUTES ==========
 

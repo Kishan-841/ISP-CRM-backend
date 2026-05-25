@@ -1,6 +1,5 @@
 import prisma from '../config/db.js';
-import { isAdminOrTestUser, hasRole, hasAnyRole } from '../utils/roleHelper.js';
-import { emitSidebarRefresh, emitSidebarRefreshByRole, emitToUser } from '../sockets/index.js';
+import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { createNotification } from '../services/notification.service.js';
 import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
 
@@ -68,7 +67,7 @@ export const createDeliveryRequest = asyncHandler(async function createDeliveryR
     where: {
       leadId,
       status: {
-        in: ['PENDING_APPROVAL', 'SUPER_ADMIN_APPROVED', 'AREA_HEAD_APPROVED', 'APPROVED', 'ASSIGNED', 'DISPATCHED']
+        in: ['PENDING_APPROVAL', 'APPROVED', 'ASSIGNED', 'DISPATCHED']
       }
     }
   });
@@ -147,9 +146,10 @@ export const createDeliveryRequest = asyncHandler(async function createDeliveryR
     company: lead.campaignData?.company
   });
 
-  // Notify Area Head and Super Admin of new delivery request
-  emitSidebarRefreshByRole('AREA_HEAD');
+  // Notify Super Admin (approver) and Store of the new delivery request —
+  // Store now sees it read-only in its "Pending Approval" tab.
   emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('STORE_MANAGER');
 
   res.status(201).json({
     success: true,
@@ -189,9 +189,6 @@ export const getMyDeliveryRequests = asyncHandler(async function getMyDeliveryRe
         select: { id: true, name: true, email: true, role: true }
       },
       superAdminApprovedBy: {
-        select: { id: true, name: true }
-      },
-      areaHeadApprovedBy: {
         select: { id: true, name: true }
       }
     }
@@ -236,12 +233,6 @@ export const getDeliveryRequestDetails = asyncHandler(async function getDelivery
       superAdminRejectedBy: {
         select: { id: true, name: true }
       },
-      areaHeadApprovedBy: {
-        select: { id: true, name: true }
-      },
-      areaHeadRejectedBy: {
-        select: { id: true, name: true }
-      },
       assignedToStoreManager: {
         select: { id: true, name: true }
       },
@@ -267,37 +258,10 @@ export const getDeliveryRequestDetails = asyncHandler(async function getDelivery
 
 // Get pending approval requests
 export const getPendingApprovalRequests = asyncHandler(async function getPendingApprovalRequests(req, res) {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const isTestUser = isAdminOrTestUser(req.user);
-
-  // Determine which requests to show based on role
-  let whereClause = {};
-
-  if (isTestUser || userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
-    // Super Admin/Test User sees all requests that need approval
-    whereClause = {
-      status: {
-        in: ['PENDING_APPROVAL', 'AREA_HEAD_APPROVED']
-      },
-      superAdminApprovedById: null,
-      superAdminRejectedById: null
-    };
-  } else if (userRole === 'AREA_HEAD') {
-    // Area Head sees requests that need their approval
-    whereClause = {
-      status: {
-        in: ['PENDING_APPROVAL', 'SUPER_ADMIN_APPROVED']
-      },
-      areaHeadApprovedById: null,
-      areaHeadRejectedById: null
-    };
-  } else {
-    return res.status(403).json({ message: 'Not authorized to view approval requests' });
-  }
-
+  // Single approval gate: only SUPER_ADMIN (or master/test) approves now that
+  // Area Head is gone. Anything still PENDING_APPROVAL is waiting on them.
   const requests = await prisma.deliveryRequest.findMany({
-    where: whereClause,
+    where: { status: 'PENDING_APPROVAL' },
     orderBy: { createdAt: 'desc' },
     include: {
       items: {
@@ -315,56 +279,36 @@ export const getPendingApprovalRequests = asyncHandler(async function getPending
       },
       superAdminApprovedBy: {
         select: { id: true, name: true }
-      },
-      areaHeadApprovedBy: {
-        select: { id: true, name: true }
       }
     }
   });
 
-  // Get stats
-  const stats = await getApprovalStats(userRole);
+  const stats = await getApprovalStats();
 
   res.json({ success: true, requests, stats });
 });
 
-// Get approval stats
-const getApprovalStats = async (userRole) => {
-  const isSuperOrMaster = userRole === 'SUPER_ADMIN' || userRole === 'MASTER';
-  const baseWhere = isSuperOrMaster
-    ? { superAdminApprovedById: null, superAdminRejectedById: null }
-    : { areaHeadApprovedById: null, areaHeadRejectedById: null };
-
+// Get approval stats (single SUPER_ADMIN gate)
+const getApprovalStats = async () => {
   const [pending, approved, rejected, total] = await Promise.all([
+    prisma.deliveryRequest.count({ where: { status: 'PENDING_APPROVAL' } }),
     prisma.deliveryRequest.count({
-      where: {
-        ...baseWhere,
-        status: { in: ['PENDING_APPROVAL', isSuperOrMaster ? 'AREA_HEAD_APPROVED' : 'SUPER_ADMIN_APPROVED'] }
-      }
+      where: { status: { in: ['APPROVED', 'ASSIGNED', 'DISPATCHED', 'COMPLETED'] } }
     }),
-    prisma.deliveryRequest.count({
-      where: {
-        status: { in: ['APPROVED', 'ASSIGNED', 'DISPATCHED', 'COMPLETED'] }
-      }
-    }),
-    prisma.deliveryRequest.count({
-      where: { status: 'REJECTED' }
-    }),
+    prisma.deliveryRequest.count({ where: { status: 'REJECTED' } }),
     prisma.deliveryRequest.count()
   ]);
 
   return { pending, approved, rejected, total };
 };
 
-// Approve delivery request
+// Approve delivery request — single SUPER_ADMIN gate: PENDING_APPROVAL → APPROVED
 export const approveDeliveryRequest = asyncHandler(async function approveDeliveryRequest(req, res) {
   const userId = req.user.id;
-  const userRole = req.user.role;
-  const isTestUser = isAdminOrTestUser(req.user);
   const { id } = req.params;
 
   // Wrap read-decide-write in serialized transaction to prevent TOCTOU race
-  const { updatedRequest, newStatus, action, previousStatus } = await prisma.$transaction(async (tx) => {
+  const { updatedRequest, previousStatus } = await prisma.$transaction(async (tx) => {
     const request = await tx.deliveryRequest.findUnique({
       where: { id }
     });
@@ -377,55 +321,16 @@ export const approveDeliveryRequest = asyncHandler(async function approveDeliver
       throw Object.assign(new Error('Request has already been rejected'), { statusCode: 400 });
     }
 
-    if (request.status === 'APPROVED') {
-      throw Object.assign(new Error('Request has already been approved'), { statusCode: 400 });
-    }
-
-    let updateData = {};
-    let txNewStatus = request.status;
-    let txAction = '';
-
-    if (isTestUser || userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
-      if (request.superAdminApprovedById) {
-        throw Object.assign(new Error('You have already approved this request'), { statusCode: 400 });
-      }
-
-      updateData = {
-        superAdminApprovedById: userId,
-        superAdminApprovedAt: new Date()
-      };
-
-      if (request.areaHeadApprovedById) {
-        txNewStatus = 'APPROVED';
-      } else {
-        txNewStatus = 'SUPER_ADMIN_APPROVED';
-      }
-      txAction = 'SUPER_ADMIN_APPROVED';
-    } else if (userRole === 'AREA_HEAD') {
-      if (request.areaHeadApprovedById) {
-        throw Object.assign(new Error('You have already approved this request'), { statusCode: 400 });
-      }
-
-      updateData = {
-        areaHeadApprovedById: userId,
-        areaHeadApprovedAt: new Date()
-      };
-
-      if (request.superAdminApprovedById) {
-        txNewStatus = 'APPROVED';
-      } else {
-        txNewStatus = 'AREA_HEAD_APPROVED';
-      }
-      txAction = 'AREA_HEAD_APPROVED';
-    } else {
-      throw Object.assign(new Error('Not authorized to approve requests'), { statusCode: 403 });
+    if (request.status !== 'PENDING_APPROVAL') {
+      throw Object.assign(new Error('Request is not pending approval'), { statusCode: 400 });
     }
 
     const result = await tx.deliveryRequest.update({
       where: { id },
       data: {
-        ...updateData,
-        status: txNewStatus
+        superAdminApprovedById: userId,
+        superAdminApprovedAt: new Date(),
+        status: 'APPROVED'
       },
       include: {
         items: {
@@ -444,26 +349,18 @@ export const approveDeliveryRequest = asyncHandler(async function approveDeliver
       }
     });
 
-    return { updatedRequest: result, newStatus: txNewStatus, action: txAction, previousStatus: request.status };
+    return { updatedRequest: result, previousStatus: request.status };
   }, { isolationLevel: 'Serializable' });
 
   // Audit log and notifications outside transaction
-  await createLog(id, action, userId, {
-    previousStatus,
-    newStatus
-  });
+  await createLog(id, 'APPROVED', userId, { previousStatus, newStatus: 'APPROVED' });
 
-  if (newStatus === 'APPROVED') {
-    emitSidebarRefreshByRole('STORE_MANAGER');
-  }
-  emitSidebarRefreshByRole('AREA_HEAD');
+  emitSidebarRefreshByRole('STORE_MANAGER');
   emitSidebarRefreshByRole('SUPER_ADMIN');
 
   res.json({
     success: true,
-    message: newStatus === 'APPROVED'
-      ? 'Request fully approved! Sent to Store Manager.'
-      : 'Approval recorded. Waiting for other approver.',
+    message: 'Request approved! Sent to Store Manager.',
     request: updatedRequest
   });
 });
@@ -471,8 +368,6 @@ export const approveDeliveryRequest = asyncHandler(async function approveDeliver
 // Reject delivery request
 export const rejectDeliveryRequest = asyncHandler(async function rejectDeliveryRequest(req, res) {
   const userId = req.user.id;
-  const userRole = req.user.role;
-  const isTestUser = isAdminOrTestUser(req.user);
   const { id } = req.params;
   const { reason } = req.body;
 
@@ -496,35 +391,17 @@ export const rejectDeliveryRequest = asyncHandler(async function rejectDeliveryR
     return res.status(400).json({ message: 'Cannot reject an approved/assigned request' });
   }
 
-  let updateData = {};
-  let action = '';
-
-  if (isTestUser || userRole === 'SUPER_ADMIN' || userRole === 'MASTER') {
-    updateData = {
-      superAdminRejectedById: userId,
-      superAdminRejectedAt: new Date(),
-      superAdminRejectionReason: reason
-    };
-    action = 'SUPER_ADMIN_REJECTED';
-  } else if (userRole === 'AREA_HEAD') {
-    updateData = {
-      areaHeadRejectedById: userId,
-      areaHeadRejectedAt: new Date(),
-      areaHeadRejectionReason: reason
-    };
-    action = 'AREA_HEAD_REJECTED';
-  } else {
-    return res.status(403).json({ message: 'Not authorized to reject requests' });
-  }
-
-  // Update request
+  // Update request — single SUPER_ADMIN reject gate
   const updatedRequest = await prisma.deliveryRequest.update({
     where: { id },
     data: {
-      ...updateData,
+      superAdminRejectedById: userId,
+      superAdminRejectedAt: new Date(),
+      superAdminRejectionReason: reason,
       status: 'REJECTED'
     }
   });
+  const action = 'REJECTED';
 
   // Reset lead's delivery status so delivery team sees rejection
   if (request.leadId) {
@@ -590,9 +467,6 @@ export const getAllDeliveryRequests = asyncHandler(async function getAllDelivery
         superAdminApprovedBy: {
           select: { id: true, name: true }
         },
-        areaHeadApprovedBy: {
-          select: { id: true, name: true }
-        },
         assignedToStoreManager: {
           select: { id: true, name: true }
         }
@@ -641,9 +515,6 @@ export const getApprovedRequestsForStore = asyncHandler(async function getApprov
       superAdminApprovedBy: {
         select: { id: true, name: true }
       },
-      areaHeadApprovedBy: {
-        select: { id: true, name: true }
-      },
       assignedToStoreManager: {
         select: { id: true, name: true }
       }
@@ -671,6 +542,33 @@ export const getApprovedRequestsForStore = asyncHandler(async function getApprov
   });
 
   res.json({ success: true, requests, stats: formattedStats });
+});
+
+// Read-only: requests still awaiting SUPER_ADMIN approval, surfaced in the
+// store's "Pending Approval" tab so the store can SEE what's coming but can
+// take no action until it's approved (and shows up in the Approved tab).
+export const getPendingApprovalForStore = asyncHandler(async function getPendingApprovalForStore(req, res) {
+  const requests = await prisma.deliveryRequest.findMany({
+    where: { status: 'PENDING_APPROVAL' },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      items: {
+        include: { product: true }
+      },
+      lead: {
+        include: { campaignData: true }
+      },
+      requestedBy: {
+        select: { id: true, name: true, email: true, role: true }
+      }
+    }
+  });
+
+  res.json({
+    success: true,
+    requests,
+    stats: { pendingApproval: requests.length }
+  });
 });
 
 // Assign items to delivery request (Store Manager)
@@ -1140,8 +1038,6 @@ export const getAvailableInventory = asyncHandler(async function getAvailableInv
 
 // Get stats for dashboard
 export const getDeliveryRequestStats = asyncHandler(async function getDeliveryRequestStats(req, res) {
-  const userRole = req.user.role;
-
   const stats = await prisma.deliveryRequest.groupBy({
     by: ['status'],
     _count: true
@@ -1149,8 +1045,6 @@ export const getDeliveryRequestStats = asyncHandler(async function getDeliveryRe
 
   const formattedStats = {
     pendingApproval: 0,
-    superAdminApproved: 0,
-    areaHeadApproved: 0,
     approved: 0,
     rejected: 0,
     assigned: 0,
@@ -1160,10 +1054,7 @@ export const getDeliveryRequestStats = asyncHandler(async function getDeliveryRe
   };
 
   stats.forEach(s => {
-    const key = s.status.toLowerCase().replace('_', '');
     if (s.status === 'PENDING_APPROVAL') formattedStats.pendingApproval = s._count;
-    else if (s.status === 'SUPER_ADMIN_APPROVED') formattedStats.superAdminApproved = s._count;
-    else if (s.status === 'AREA_HEAD_APPROVED') formattedStats.areaHeadApproved = s._count;
     else if (s.status === 'APPROVED') formattedStats.approved = s._count;
     else if (s.status === 'REJECTED') formattedStats.rejected = s._count;
     else if (s.status === 'ASSIGNED') formattedStats.assigned = s._count;

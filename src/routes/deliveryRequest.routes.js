@@ -7,7 +7,7 @@ import {
   getDeliveryRequestDetails,
   pushToNoc,
 
-  // Approval APIs (Super Admin & Area Head)
+  // Approval APIs (Super Admin)
   getPendingApprovalRequests,
   approveDeliveryRequest,
   rejectDeliveryRequest,
@@ -15,6 +15,7 @@ import {
 
   // Store Manager APIs
   getApprovedRequestsForStore,
+  getPendingApprovalForStore,
   assignItemsToRequest,
   markAsDispatched,
   markAsCompleted,
@@ -53,14 +54,14 @@ const nocAccess = requireRole('NOC', 'SUPER_ADMIN');
 // Get NOC requests
 router.get('/noc/requests', nocAccess, getNocRequests);
 
-// ========== APPROVAL ROUTES (Super Admin & Area Head) ==========
-const approverAccess = requireRole('SUPER_ADMIN', 'AREA_HEAD');
+// ========== APPROVAL ROUTES (Super Admin) ==========
+const approverAccess = requireRole('SUPER_ADMIN');
 
 // Get pending approval requests
 router.get('/approval/pending', approverAccess, getPendingApprovalRequests);
 
 // Get all requests (admin view)
-router.get('/admin/all', requireRole('SUPER_ADMIN', 'ADMIN', 'AREA_HEAD'), getAllDeliveryRequests);
+router.get('/admin/all', requireRole('SUPER_ADMIN', 'ADMIN'), getAllDeliveryRequests);
 
 // Approve request
 router.post('/approval/:id/approve', approverAccess, approveDeliveryRequest);
@@ -73,6 +74,9 @@ const storeAccess = requireRole('STORE_MANAGER', 'SUPER_ADMIN');
 
 // Get approved requests for store manager
 router.get('/store/approved', storeAccess, getApprovedRequestsForStore);
+
+// Read-only: requests still awaiting approval (store "Pending Approval" tab)
+router.get('/store/pending-approval', storeAccess, getPendingApprovalForStore);
 
 // Get available inventory for assignment
 router.get('/store/inventory', storeAccess, getAvailableInventory);
