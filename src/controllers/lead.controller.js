@@ -12504,6 +12504,23 @@ export const setupDeliveryVendor = asyncHandler(async function setupDeliveryVend
       updateData.actualOpex = parseFloat(actualOpex);
     }
 
+    // Persist a vendor-type correction made at setup time. Feasibility's
+    // pick is just a starting point; the delivery team can change it here
+    // (the real type sometimes only firms up at the very end). We write it
+    // back to feasibilityVendorType so every downstream read agrees, not
+    // just the deliveryProducts JSON snapshot.
+    const VALID_VENDOR_TYPES = ['ownNetwork', 'fiberVendor', 'commissionVendor', 'thirdParty', 'telco'];
+    const submittedVendorType = vendorTypeData?.vendorType;
+    if (submittedVendorType && VALID_VENDOR_TYPES.includes(submittedVendorType)) {
+      updateData.feasibilityVendorType = submittedVendorType;
+      // Own network has no external fiber vendor and no commission —
+      // clear any linkage carried over from a previous (e.g. fiber) type.
+      if (submittedVendorType === 'ownNetwork') {
+        updateData.vendorId = null;
+        updateData.vendorCommissionPercentage = null;
+      }
+    }
+
     // Mark vendor setup as done
     updateData.deliveryVendorSetupDone = true;
 
