@@ -954,12 +954,19 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
     const otcApplicable = typeof hasOtc === 'boolean' ? hasOtc : (existing.hasOtc !== false);
     if (otcAmount !== undefined && otcApplicable) updateData.otcAmount = parseFloat(otcAmount) || 0;
     if (quotationAttachments !== undefined) updateData.quotationAttachments = quotationAttachments;
-    // Quotation approval — goes directly to Sales Director (SA2), OPS step removed
+    // Quotation approval — single gate: the Sales Director (SA2). The OPS
+    // step is retired, so submitting a quote auto-passes OPS and sends the
+    // lead straight to the Sales Director's Quotation Approval queue.
+    //
+    // We do NOT stamp opsApprovedById with the submitting BDM — OPS is an
+    // auto-pass, nobody reviewed it, so attributing it to the BDM is false
+    // (that's what made a BDM appear as an approver). Leave it null; the
+    // downstream "share with customer" filter only needs opsApprovalStatus
+    // = APPROVED, not an approver id.
     if (opsApprovalStatus !== undefined && opsApprovalStatus === 'PENDING') {
-      // Auto-approve OPS and send straight to Sales Director
       updateData.opsApprovalStatus = 'APPROVED';
       updateData.opsApprovedAt = new Date();
-      updateData.opsApprovedById = req.user.id;
+      updateData.opsApprovedById = null;
       updateData.superAdmin2ApprovalStatus = 'PENDING';
       updateData.superAdmin2ApprovedAt = null;
       updateData.superAdmin2ApprovedById = null;
@@ -6121,37 +6128,30 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
       ? currentSharedVia
       : (currentSharedVia ? `${currentSharedVia},docs_verification` : 'docs_verification');
 
-    // Prepare update data
-    // OPS + Sales Director (SA2) approvals are quotation-stage gates. On a
-    // DOC re-upload (after Accounts rejected and Docs sent back to BDM) the
-    // quote was already approved upstream — the lead should land directly
-    // in the Docs queue, NOT bounce through OPS + SA2 approval again.
+    // Single approval gate: the Sales Director (SA2) must have GENUINELY
+    // approved this quotation before documents can be pushed to the Docs
+    // Team. We never auto-approve or fabricate an approver here — the old
+    // `|| userId` fallback is exactly what let a BDM appear as the Sales
+    // Director approver and silently skip the approval gate entirely.
     //
-    // Preserve a prior SA2 decision: if SA2 was explicitly REJECTED, don't
-    // silently flip it to APPROVED. In every other case (already APPROVED,
-    // still PENDING, or null because this is the first submit) force to
-    // APPROVED so the lead keeps moving.
-    const preserveSa2Rejection = lead.superAdmin2ApprovalStatus === 'REJECTED';
+    // This guard is also correct for the legitimate re-upload case (Docs
+    // bounced back to BDM after Accounts rejected): such a lead is still
+    // superAdmin2ApprovalStatus = APPROVED, so it passes and we simply
+    // move it back into the Docs queue without re-touching any approval.
+    if (lead.superAdmin2ApprovalStatus !== 'APPROVED') {
+      return res.status(400).json({
+        message: 'This quotation must be approved by the Sales Director before documents can be submitted for verification.',
+        code: 'SALES_DIRECTOR_APPROVAL_REQUIRED',
+      });
+    }
+
     const updateData = {
       // Update sharedVia to move lead to docs verification stage
       sharedVia: newSharedVia,
-      // Auto-approve OPS — Docs Team queue requires opsApprovalStatus=APPROVED
-      opsApprovalStatus: 'APPROVED',
-      opsApprovedAt: lead.opsApprovedAt || new Date(),
-      opsApprovedById: lead.opsApprovedById || userId,
-      opsRejectedReason: null,
-      // Auto-approve SA2 too so the lead isn't re-queued for Sales Director
-      // after a routine doc re-upload. Keep the original approval timestamp
-      // if one exists (accurate audit trail for when the quote was actually
-      // approved). Only overwrite if it's missing.
-      ...(preserveSa2Rejection
-        ? {}
-        : {
-            superAdmin2ApprovalStatus: 'APPROVED',
-            superAdmin2ApprovedAt: lead.superAdmin2ApprovedAt || new Date(),
-            superAdmin2ApprovedById: lead.superAdmin2ApprovedById || userId,
-            superAdmin2RejectedReason: null,
-          }),
+      // OPS + Sales Director approvals are intentionally NOT written here.
+      // They were set genuinely upstream (OPS auto-passed at submit, SA2
+      // approved by a real Sales Director, verified by the guard above),
+      // so we leave them untouched — no approver can be fabricated.
       // Reset docs verification status when pushed
       docsVerifiedAt: null,
       docsVerifiedById: null,
