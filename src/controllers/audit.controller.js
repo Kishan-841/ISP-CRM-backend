@@ -2,6 +2,49 @@ import prisma from '../config/db.js';
 import { asyncHandler } from '../utils/controllerHelper.js';
 import { canViewAuditLog } from '../utils/roleHelper.js';
 
+// Many audited fields store a user UUID (createdById, pushedToNocById,
+// superAdminApprovedById, assignedToId, uploadedBy, …). The raw value is an
+// opaque id; we resolve those to names so the UI can show "Pushed to NOC by
+// <name>" instead of a UUID. Detection mirrors lib/auditFormat.js on the FE.
+const USER_REF_SUFFIX = /(ById|AssignedToId)$/;
+const USER_REF_EXACT = new Set([
+  'assignedToId', 'assignedToStoreManagerId', 'uploadedBy', 'changedById', 'performedById',
+]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUserRefField(field) {
+  return USER_REF_SUFFIX.test(field) || USER_REF_EXACT.has(field);
+}
+
+// Walk an event's changes + snapshot, collecting user-reference UUIDs.
+function collectUserIds(events, sink) {
+  const add = (field, value) => {
+    if (isUserRefField(field) && typeof value === 'string' && UUID_RE.test(value)) sink.add(value);
+  };
+  for (const ev of events) {
+    if (Array.isArray(ev.changes)) {
+      for (const c of ev.changes) { add(c.field, c.oldValue); add(c.field, c.newValue); }
+    }
+    if (ev.snapshot && typeof ev.snapshot === 'object' && !Array.isArray(ev.snapshot)) {
+      for (const [k, v] of Object.entries(ev.snapshot)) add(k, v);
+    }
+  }
+}
+
+// Build { userId: displayName } for every user referenced inside the events.
+async function buildUserMap(events) {
+  const ids = new Set();
+  collectUserIds(events, ids);
+  if (ids.size === 0) return {};
+  const users = await prisma.user.findMany({
+    where: { id: { in: [...ids] } },
+    select: { id: true, name: true, email: true },
+  });
+  const map = {};
+  for (const u of users) map[u.id] = u.name || u.email || u.id;
+  return map;
+}
+
 // When a date range is ≤ this many days OR a specific actor/entity is
 // filtered, we compute the exact COUNT(*). Otherwise we skip it (returning
 // null) because COUNT on a forever-retained table grows unboundedly.
@@ -114,7 +157,8 @@ export const getEvent = asyncHandler(async function getEvent(req, res) {
 
   const row = await prisma.auditEvent.findUnique({ where: { id: req.params.id } });
   if (!row) return res.status(404).json({ message: 'Event not found.' });
-  res.json({ data: row });
+  const userMap = await buildUserMap([row]);
+  res.json({ data: row, userMap });
 });
 
 // GET /api/audit/events/filters — dropdown data for the audit log UI.
@@ -172,5 +216,6 @@ export const getEntityTimeline = asyncHandler(async function getEntityTimeline(r
     take: limit,
   });
 
-  res.json({ data: items });
+  const userMap = await buildUserMap(items);
+  res.json({ data: items, userMap });
 });
