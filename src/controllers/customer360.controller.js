@@ -1592,6 +1592,11 @@ export const getBilling = asyncHandler(async function getBilling(req, res) {
       hasOtc: true,
       advanceAmount: true,
       paymentTerms: true,
+      // Quotation Revised badge on the customer-360 pricing card
+      quotationRevisedAt: true,
+      quotationRevisedReason: true,
+      quotationRevisionCount: true,
+      quotationRevisedBy: { select: { id: true, name: true, email: true } },
       actualPlanName: true,
       actualPlanBandwidth: true,
       actualPlanUploadBandwidth: true,
@@ -1746,6 +1751,10 @@ export const getBilling = asyncHandler(async function getBilling(req, res) {
       otcAmount: lead.otcAmount,
       advanceAmount: lead.advanceAmount,
       paymentTerms: lead.paymentTerms,
+      quotationRevisedAt: lead.quotationRevisedAt,
+      quotationRevisedReason: lead.quotationRevisedReason,
+      quotationRevisionCount: lead.quotationRevisionCount,
+      quotationRevisedBy: lead.quotationRevisedBy,
     },
     currentPlan: {
       name: lead.actualPlanName,
