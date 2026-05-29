@@ -34,8 +34,10 @@ router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 
 router.get('/:userId/dashboard', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserDashboardStats);
 router.get('/:id', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserById);
 
-// Password reveal — restricted to SUPER_ADMIN and MASTER. Audit-logged on each call.
-router.get('/:id/password', requireRole('SUPER_ADMIN', 'MASTER'), getUserPassword);
+// Password reveal — SUPER_ADMIN / MASTER plus SALES_DIRECTOR (Sales Director
+// is the senior commercial owner and needs to recover credentials for any
+// employee they oversee). Every reveal is audit-logged (see getUserPassword).
+router.get('/:id/password', requireRole('SUPER_ADMIN', 'MASTER', 'SALES_DIRECTOR'), getUserPassword);
 
 // Routes below require SUPER_ADMIN or BDM_TEAM_LEADER role
 router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'));
