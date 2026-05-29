@@ -66,6 +66,7 @@ import {
   getSuperAdmin2Queue,
   getSuperAdmin2History,
   superAdmin2Disposition,
+  reviseQuotation,
   getSuperAdmin2SidebarCounts,
   // Accounts Team functions
   getAccountsTeamQueue,
@@ -316,6 +317,11 @@ router.get('/super-admin2/history', getSuperAdmin2History);
 
 // Super Admin 2 disposition (Approve / Reject)
 router.post('/super-admin2/:id/disposition', superAdmin2Disposition);
+
+// Sales Director — revise ARC/OTC on an already-SA2-approved lead. The only
+// way to change pricing post-approval. BDM editing of ARC/OTC is blocked
+// everywhere else (see updateFinancialDetails comment).
+router.post('/:id/revise-quotation', requireRole('SALES_DIRECTOR', 'SUPER_ADMIN'), reviseQuotation);
 
 // ========== END SUPER ADMIN 2 ROUTES ==========
 

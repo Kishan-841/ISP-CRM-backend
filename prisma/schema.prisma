@@ -51,6 +51,7 @@ model User {
   nocPushedToDeliveryLeads           Lead[]                   @relation("NocPushedToDelivery")
   opsApprovedLeads                   Lead[]                   @relation("OpsApprovedBy")
   superAdmin2ApprovedLeads           Lead[]                   @relation("SuperAdmin2ApprovedBy")
+  leadsQuotationRevised              Lead[]                   @relation("LeadQuotationRevisedBy")
   pushedToInstallation               Lead[]                   @relation("PushedToInstallation")
   speedTestUploadedLeads             Lead[]                   @relation("SpeedTestUploadedBy")
   installationStartedLeads           Lead[]                   @relation("LeadInstallStarted")
@@ -348,6 +349,14 @@ model Lead {
   superAdmin2RejectedReason    String?
   // Same pattern for Sales Director — surfaced to the Docs team + BDM.
   superAdmin2ApprovalNotes     String?
+  // Post-approval pricing revision — Sales Director is the ONLY role allowed
+  // to change arcAmount/otcAmount after SA2 approval. Every revision is
+  // stamped here so a "Quotation Revised" badge can surface across the UI
+  // (with the reason as a tooltip), and the count survives multiple revisions.
+  quotationRevisedAt           DateTime?
+  quotationRevisedById         String?
+  quotationRevisedReason       String?
+  quotationRevisionCount       Int                        @default(0)
   loginCompletedAt             DateTime?
   loginCompletedById           String?
   docUploadMethod              String?
@@ -473,6 +482,7 @@ model Lead {
   nocPushedToDeliveryBy        User?                      @relation("NocPushedToDelivery", fields: [nocPushedToDeliveryById], references: [id], onDelete: SetNull)
   opsApprovedBy                User?                      @relation("OpsApprovedBy", fields: [opsApprovedById], references: [id], onDelete: SetNull)
   superAdmin2ApprovedBy        User?                      @relation("SuperAdmin2ApprovedBy", fields: [superAdmin2ApprovedById], references: [id], onDelete: SetNull)
+  quotationRevisedBy           User?                      @relation("LeadQuotationRevisedBy", fields: [quotationRevisedById], references: [id], onDelete: SetNull)
   pushedToInstallationBy       User?                      @relation("PushedToInstallation", fields: [pushedToInstallationById], references: [id], onDelete: SetNull)
   speedTestUploadedBy          User?                      @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
   installationStartedBy        User?                      @relation("LeadInstallStarted", fields: [installationStartedById], references: [id], onDelete: SetNull)

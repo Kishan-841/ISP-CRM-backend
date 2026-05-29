@@ -6546,7 +6546,6 @@ export const updateFinancialDetails = asyncHandler(async function updateFinancia
     const { arcAmount, otcAmount, advanceAmount, paymentTerms, accountsNotes } = req.body;
     const isAccountsTeam = hasRole(req.user, 'ACCOUNTS_TEAM');
     const isAdmin = isAdminOrTestUser(req.user);
-    const isBDM = hasRole(req.user, 'BDM');
 
     const lead = await prisma.lead.findUnique({ where: { id } });
 
@@ -6554,21 +6553,12 @@ export const updateFinancialDetails = asyncHandler(async function updateFinancia
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    // BDM can only update their own rejected leads
-    if (isBDM) {
-      const isOwnLead = lead.createdById === req.user.id || lead.assignedToId === req.user.id;
-      // Check both accountsStatus and accountsRejectedReason for backward compatibility
-      const isRejected = lead.accountsStatus === 'ACCOUNTS_REJECTED' ||
-        (lead.accountsVerifiedAt && lead.accountsRejectedReason);
-
-      if (!isOwnLead) {
-        return res.status(403).json({ message: 'You can only update your own leads.' });
-      }
-      if (!isRejected) {
-        return res.status(403).json({ message: 'You can only update pricing for rejected leads.' });
-      }
-    } else if (!isAccountsTeam && !isAdmin) {
-      return res.status(403).json({ message: 'Only Accounts Team can update financial details.' });
+    // BDMs can no longer edit ARC/OTC anywhere — pricing is locked once the
+    // Sales Director approves the quotation. To change pricing post-approval
+    // the BDM must contact the Sales Director, who uses /revise-quotation
+    // (which records who/why and stamps the lead as "Quotation Revised").
+    if (!isAccountsTeam && !isAdmin) {
+      return res.status(403).json({ message: 'Only Accounts Team can update financial details. To revise pricing, contact the Sales Director.' });
     }
 
     // Validate amounts if provided
@@ -6606,15 +6596,10 @@ export const updateFinancialDetails = asyncHandler(async function updateFinancia
       updateData.accountsNotes = accountsNotes || null;
     }
 
-    // If BDM is updating a rejected lead, resubmit for accounts review
-    const wasRejected = lead.accountsStatus === 'ACCOUNTS_REJECTED' ||
-      (lead.accountsVerifiedAt && lead.accountsRejectedReason);
-    if (isBDM && wasRejected) {
-      updateData.accountsStatus = 'ACCOUNTS_PENDING';
-      updateData.accountsRejectedReason = null;
-      updateData.accountsVerifiedAt = null;
-      updateData.accountsVerifiedById = null;
-    }
+    // (The legacy "BDM updating a rejected lead resubmits to Accounts" branch
+    // was removed when BDM ARC/OTC editing was locked down. Accounts-rejected
+    // leads now need a Sales Director revision via /revise-quotation, after
+    // which the BDM can re-push to verification through the normal path.)
 
     const updated = await prisma.lead.update({
       where: { id },
@@ -6649,6 +6634,69 @@ export const updateFinancialDetails = asyncHandler(async function updateFinancia
       },
       message: 'Financial details updated successfully.'
     });
+});
+
+// Sales Director — revise ARC/OTC after their own quotation approval.
+//   POST /api/leads/:id/revise-quotation   body: { arcAmount, otcAmount, reason }
+//
+// Only role allowed to change pricing post-SA2-approval. Stamps the lead
+// with quotationRevised* fields so a "Quotation Revised" badge can surface
+// across the UI (with the reason as a tooltip). Does NOT touch accounts
+// status or lead stage — by design, per the "Update values only" rule.
+export const reviseQuotation = asyncHandler(async function reviseQuotation(req, res) {
+  const { id } = req.params;
+  const { arcAmount, otcAmount, reason } = req.body;
+
+  if (!reason || typeof reason !== 'string' || reason.trim().length < 3) {
+    return res.status(400).json({ message: 'A revision reason (3+ characters) is required.' });
+  }
+
+  const lead = await prisma.lead.findUnique({ where: { id } });
+  if (!lead) return res.status(404).json({ message: 'Lead not found.' });
+
+  // Pricing can only be revised on a lead the Sales Director already approved.
+  if (lead.superAdmin2ApprovalStatus !== 'APPROVED') {
+    return res.status(400).json({
+      message: 'This quotation has not been approved by the Sales Director yet — there is nothing to revise.',
+    });
+  }
+
+  // Validate amounts (at least one must be present and different from current)
+  const hasArc = arcAmount !== undefined && arcAmount !== null && arcAmount !== '';
+  const hasOtc = otcAmount !== undefined && otcAmount !== null && otcAmount !== '';
+  if (!hasArc && !hasOtc) {
+    return res.status(400).json({ message: 'Provide at least one of ARC or OTC.' });
+  }
+  if (hasArc && isNaN(parseFloat(arcAmount))) {
+    return res.status(400).json({ message: 'Invalid ARC amount.' });
+  }
+  if (hasOtc && isNaN(parseFloat(otcAmount))) {
+    return res.status(400).json({ message: 'Invalid OTC amount.' });
+  }
+
+  const updateData = {
+    quotationRevisedAt: new Date(),
+    quotationRevisedById: req.user.id,
+    quotationRevisedReason: reason.trim(),
+    quotationRevisionCount: (lead.quotationRevisionCount || 0) + 1,
+  };
+  if (hasArc) updateData.arcAmount = parseFloat(arcAmount);
+  // Respect hasOtc — don't reintroduce an OTC trail on a non-OTC customer.
+  if (hasOtc && lead.hasOtc !== false) updateData.otcAmount = parseFloat(otcAmount);
+
+  const updated = await prisma.lead.update({
+    where: { id },
+    data: updateData,
+    include: {
+      campaignData: { select: { company: true, name: true, firstName: true, lastName: true } },
+      quotationRevisedBy: { select: { id: true, name: true, email: true } },
+    },
+  });
+
+  res.json({
+    lead: updated,
+    message: 'Quotation revised successfully.',
+  });
 });
 
 // Accounts Team disposition - Approve or Reject
