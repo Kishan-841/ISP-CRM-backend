@@ -64,20 +64,35 @@ const OPPORTUNITY_STAGE_FILTERS = {
 
   // Login — quote shared with customer, login not completed yet, docs flow
   // hasn't been kicked off.
+  //
+  // IMPORTANT: also require the quote to actually be approved
+  // (opsApprovalStatus='APPROVED' and SA2 approved-or-null, matching the
+  // share_customer gate). Without these, any FEASIBLE lead that ever had an
+  // ad-hoc email sent against it gets bucketed into Login even when no quote
+  // was ever submitted — the original symptom that produced
+  // "lead at Login with empty amount and no journey past Feasibility".
   login: {
     status: 'FEASIBLE',
-    OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }],
+    opsApprovalStatus: 'APPROVED',
     loginCompletedAt: null,
-    NOT: { sharedVia: { contains: 'docs_verification' } },
+    AND: [
+      { OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }] },
+      { NOT: { sharedVia: { contains: 'docs_verification' } } },
+      { OR: [{ superAdmin2ApprovalStatus: 'APPROVED' }, { superAdmin2ApprovalStatus: null }] },
+    ],
   },
 
   // Docs Upload — login complete, BDM/customer can upload documents but
-  // hasn't pushed them to verification yet.
+  // hasn't pushed them to verification yet. Same approval gate as `login`.
   docs_upload: {
     status: 'FEASIBLE',
-    OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }],
+    opsApprovalStatus: 'APPROVED',
     loginCompletedAt: { not: null },
-    NOT: { sharedVia: { contains: 'docs_verification' } },
+    AND: [
+      { OR: [{ sharedVia: { contains: 'email' } }, { sharedVia: { contains: 'whatsapp' } }] },
+      { NOT: { sharedVia: { contains: 'docs_verification' } } },
+      { OR: [{ superAdmin2ApprovalStatus: 'APPROVED' }, { superAdmin2ApprovalStatus: null }] },
+    ],
   },
 
   // Docs Review — pushed to docs verification, either pending or rejected.
@@ -930,7 +945,20 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
     if (status !== undefined) updateData.status = status;
     if (assignedToId !== undefined) updateData.assignedToId = assignedToId;
     if (type !== undefined) updateData.type = type;
-    if (sharedVia !== undefined) updateData.sharedVia = sharedVia;
+    // sharedVia gates the lead's pipeline position (Login / Docs Upload
+    // queues key off it). Adding 'email' or 'whatsapp' is only legal once
+    // the quote is approved — otherwise the lead jumps into Login with no
+    // quote ever submitted. Admin overrides remain allowed; pure clears
+    // (empty/whitespace) are also allowed (admin reject paths use them).
+    if (sharedVia !== undefined) {
+      const introducesShare = /\b(email|whatsapp)\b/i.test(sharedVia || '');
+      if (introducesShare && !isUserAdmin && existing.opsApprovalStatus !== 'APPROVED') {
+        return res.status(400).json({
+          message: 'Cannot mark this lead as shared — the quotation has not been approved yet.'
+        });
+      }
+      updateData.sharedVia = sharedVia;
+    }
     if (linkedinUrl !== undefined) updateData.linkedinUrl = linkedinUrl;
     // Quotation fields
     if (bandwidthRequirement !== undefined) updateData.bandwidthRequirement = bandwidthRequirement;

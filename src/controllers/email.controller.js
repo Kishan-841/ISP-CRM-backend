@@ -92,15 +92,31 @@ export const sendQuotationEmail = asyncHandler(async function sendQuotationEmail
       }
     });
 
-    // If referenceId is a lead, update the sharedVia field
-    // When sending email, reset the flow: remove docs_verification so lead goes to "Docs Upload" stage
+    // If the email is referencing a lead, advance the pipeline state by
+    // stamping sharedVia='email'. CRITICAL: only do this when the lead is
+    // actually at the "share quote with customer" gate — i.e. OPS approved
+    // and Sales Director either approved or not applicable. Otherwise an
+    // ad-hoc follow-up email against a pre-approval lead would silently
+    // push the lead into the Login queue with no quote ever created.
+    // (Mirror the OPPORTUNITY_STAGE_FILTERS.share_customer gate.)
     if (referenceId && referenceType === 'lead') {
       try {
         const lead = await prisma.lead.findUnique({
-          where: { id: referenceId }
+          where: { id: referenceId },
+          select: {
+            sharedVia: true,
+            opsApprovalStatus: true,
+            superAdmin2ApprovalStatus: true,
+          }
         });
 
-        if (lead) {
+        const sa2Cleared =
+          lead?.superAdmin2ApprovalStatus === 'APPROVED' ||
+          lead?.superAdmin2ApprovalStatus === null;
+        const isShareableQuote =
+          lead && lead.opsApprovalStatus === 'APPROVED' && sa2Cleared;
+
+        if (isShareableQuote) {
           const currentSharedVia = lead.sharedVia || '';
           const sharedMethods = currentSharedVia.split(',').filter(Boolean);
 
