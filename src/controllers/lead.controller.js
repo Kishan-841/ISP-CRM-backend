@@ -8273,6 +8273,27 @@ export const updateDeliveryProducts = asyncHandler(async function updateDelivery
       return res.status(400).json({ message: 'This lead has not been pushed to installation.' });
     }
 
+    // Block product edits while a material request is in flight. The store's
+    // Assign Items view (and the approver's review) read DeliveryRequestItem
+    // rows snapshotted at request creation — editing deliveryProducts here
+    // would NOT update that snapshot, so the store would assign the OLD list
+    // while the delivery team believes the NEW one was requested (the DR-0020
+    // mismatch). Edits are allowed again once the request is REJECTED or
+    // COMPLETED; to change materials mid-flight, cancel/reject the request
+    // first and submit a fresh one (which re-snapshots the product list).
+    const activeRequest = await prisma.deliveryRequest.findFirst({
+      where: {
+        leadId: id,
+        status: { in: ['PENDING_APPROVAL', 'APPROVED', 'ASSIGNED', 'DISPATCHED'] }
+      },
+      select: { requestNumber: true, status: true }
+    });
+    if (activeRequest) {
+      return res.status(400).json({
+        message: `Cannot edit products while material request ${activeRequest.requestNumber} is ${activeRequest.status.toLowerCase().replace(/_/g, ' ')}. Cancel that request first, then edit and submit a new one.`
+      });
+    }
+
     // Update lead with new product quantities
     const updateData = {
       deliveryProducts: products,
