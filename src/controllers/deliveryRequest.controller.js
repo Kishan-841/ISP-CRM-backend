@@ -19,6 +19,19 @@ const generateRequestNumber = async () => {
   return `DR-${newNumber.toString().padStart(4, '0')}`;
 };
 
+// For supplementary requests, surface the parent request's already-assigned items so
+// the approver / store can see the "old material (already assigned)" alongside the new.
+const parentRequestInclude = {
+  select: {
+    id: true,
+    requestNumber: true,
+    items: {
+      where: { isAssigned: true },
+      include: { product: true }
+    }
+  }
+};
+
 // Create audit log entry
 const createLog = async (deliveryRequestId, action, performedById, details = null) => {
   await prisma.deliveryRequestLog.create({
@@ -158,6 +171,106 @@ export const createDeliveryRequest = asyncHandler(async function createDeliveryR
   });
 });
 
+// Create a SUPPLEMENTARY ("Add More Material") request against an existing request.
+// Flows through approval + store like a normal request, but is flagged isSupplementary
+// so lead-stage derivation ignores it — the lead stays exactly where it is (e.g. NOC).
+export const createSupplementaryRequest = asyncHandler(async function createSupplementaryRequest(req, res) {
+  const userId = req.user.id;
+  const { parentId } = req.params;
+  const { items, latitude, longitude, deliveryAddress, notes } = req.body;
+
+  // Parent (the original request being topped up) must exist and not be rejected.
+  const parentRequest = await prisma.deliveryRequest.findUnique({
+    where: { id: parentId },
+    include: { lead: { include: { campaignData: true } } }
+  });
+
+  if (!parentRequest) {
+    return res.status(404).json({ message: 'Original delivery request not found' });
+  }
+  if (parentRequest.status === 'REJECTED') {
+    return res.status(400).json({ message: 'Cannot add material to a rejected request' });
+  }
+  // Anchor to the original request, never to another supplementary.
+  const anchorId = parentRequest.isSupplementary ? parentRequest.parentRequestId : parentRequest.id;
+  const leadId = parentRequest.leadId;
+
+  // Only block while a PREVIOUS supplementary is still being processed (awaiting
+  // approval or sitting with the store unassigned). Once ASSIGNED it's done — the
+  // delivery user can add another batch. (ASSIGNED is the supplementary's terminal
+  // state; it's never dispatched/completed like an original request.)
+  const inProgressSupplementary = await prisma.deliveryRequest.findFirst({
+    where: {
+      leadId,
+      isSupplementary: true,
+      status: { in: ['PENDING_APPROVAL', 'APPROVED'] }
+    }
+  });
+  if (inProgressSupplementary) {
+    return res.status(400).json({
+      message: 'A material addition is already in progress for this lead',
+      requestNumber: inProgressSupplementary.requestNumber
+    });
+  }
+
+  // Validate items
+  if (!items || items.length === 0) {
+    return res.status(400).json({ message: 'At least one item is required' });
+  }
+  const productIds = items.map(i => i.productId);
+  const products = await prisma.storeProduct.findMany({
+    where: { id: { in: productIds }, isActive: true }
+  });
+  if (products.length !== productIds.length) {
+    return res.status(400).json({ message: 'Some products are invalid or inactive' });
+  }
+
+  const requestNumber = await generateRequestNumber();
+
+  const supplementary = await prisma.deliveryRequest.create({
+    data: {
+      requestNumber,
+      leadId,
+      requestedById: userId,
+      latitude: latitude || parentRequest.latitude,
+      longitude: longitude || parentRequest.longitude,
+      deliveryAddress: deliveryAddress || parentRequest.deliveryAddress,
+      notes,
+      urgency: 'NORMAL',
+      status: 'PENDING_APPROVAL',
+      isSupplementary: true,
+      parentRequestId: anchorId,
+      items: {
+        create: items.map(item => ({ productId: item.productId, quantity: item.quantity }))
+      }
+    },
+    include: {
+      items: { include: { product: true } },
+      lead: { include: { campaignData: true } },
+      requestedBy: { select: { id: true, name: true, email: true, role: true } }
+    }
+  });
+
+  // IMPORTANT: do NOT touch lead.deliveryStatus — the lead must stay in its current
+  // stage (e.g. at NOC) while the extra material goes through approval + store.
+
+  await createLog(supplementary.id, 'SUPPLEMENTARY_CREATED', userId, {
+    itemCount: items.length,
+    leadId,
+    parentRequestId: anchorId,
+    company: parentRequest.lead?.campaignData?.company
+  });
+
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('STORE_MANAGER');
+
+  res.status(201).json({
+    success: true,
+    message: 'Material addition request created successfully',
+    request: supplementary
+  });
+});
+
 // Get delivery requests for current user (Delivery Team)
 export const getMyDeliveryRequests = asyncHandler(async function getMyDeliveryRequests(req, res) {
   const userId = req.user.id;
@@ -225,7 +338,7 @@ export const getDeliveryRequestDetails = asyncHandler(async function getDelivery
         }
       },
       requestedBy: {
-        select: { id: true, name: true, email: true, role: true, phone: true }
+        select: { id: true, name: true, email: true, role: true }
       },
       superAdminApprovedBy: {
         select: { id: true, name: true }
@@ -243,7 +356,8 @@ export const getDeliveryRequestDetails = asyncHandler(async function getDelivery
             select: { id: true, name: true, role: true }
           }
         }
-      }
+      },
+      parentRequest: parentRequestInclude
     }
   });
 
@@ -279,7 +393,8 @@ export const getPendingApprovalRequests = asyncHandler(async function getPending
       },
       superAdminApprovedBy: {
         select: { id: true, name: true }
-      }
+      },
+      parentRequest: parentRequestInclude
     }
   });
 
@@ -403,8 +518,10 @@ export const rejectDeliveryRequest = asyncHandler(async function rejectDeliveryR
   });
   const action = 'REJECTED';
 
-  // Reset lead's delivery status so delivery team sees rejection
-  if (request.leadId) {
+  // Reset lead's delivery status so delivery team sees rejection — but ONLY for the
+  // original request. Rejecting a supplementary ("Add More Material") must leave the
+  // lead in its current stage (e.g. at NOC); the extra material is simply discarded.
+  if (request.leadId && !request.isSupplementary) {
     await prisma.lead.update({
       where: { id: request.leadId },
       data: { deliveryStatus: 'MATERIAL_REJECTED' }
@@ -517,7 +634,8 @@ export const getApprovedRequestsForStore = asyncHandler(async function getApprov
       },
       assignedToStoreManager: {
         select: { id: true, name: true }
-      }
+      },
+      parentRequest: parentRequestInclude
     }
   });
 
@@ -750,34 +868,43 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
     }
   });
 
-  // Auto-push to NOC: skip MATERIAL_RECEIVED stage, go directly to PUSHED_TO_NOC
-  await prisma.lead.update({
-    where: { id: request.leadId },
-    data: { deliveryStatus: 'PUSHED_TO_NOC' }
-  });
-
-  // Set pushedToNocAt on the delivery request
-  await prisma.deliveryRequest.update({
-    where: { id },
-    data: {
-      pushedToNocAt: new Date(),
-      pushedToNocById: userId
-    }
-  });
-
-  // Notify NOC team that new work is available
-  emitSidebarRefreshByRole('NOC');
-  emitSidebarRefreshByRole('SUPER_ADMIN');
-
-  // Create audit log
   await createLog(id, 'ITEMS_ASSIGNED', userId, {
-    assignmentCount: assignments.length
+    assignmentCount: assignments.length,
+    isSupplementary: request.isSupplementary
   });
-  await createLog(id, 'PUSHED_TO_NOC', userId, {
-    company: request.lead?.campaignData?.company,
-    itemCount: request.items?.length,
-    autoTransition: true
-  });
+
+  if (request.isSupplementary) {
+    // Supplementary ("Add More Material") request: the lead is already past this
+    // stage (e.g. at NOC). Do NOT mutate the lead or re-push to NOC — just leave the
+    // assigned material in the store's Assigned tab. The lead stays exactly where it is.
+    emitSidebarRefreshByRole('STORE_MANAGER');
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+  } else {
+    // Auto-push to NOC: skip MATERIAL_RECEIVED stage, go directly to PUSHED_TO_NOC
+    await prisma.lead.update({
+      where: { id: request.leadId },
+      data: { deliveryStatus: 'PUSHED_TO_NOC' }
+    });
+
+    // Set pushedToNocAt on the delivery request
+    await prisma.deliveryRequest.update({
+      where: { id },
+      data: {
+        pushedToNocAt: new Date(),
+        pushedToNocById: userId
+      }
+    });
+
+    // Notify NOC team that new work is available
+    emitSidebarRefreshByRole('NOC');
+    emitSidebarRefreshByRole('SUPER_ADMIN');
+
+    await createLog(id, 'PUSHED_TO_NOC', userId, {
+      company: request.lead?.campaignData?.company,
+      itemCount: request.items?.length,
+      autoTransition: true
+    });
+  }
 
   res.json({
     success: true,

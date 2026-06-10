@@ -3,6 +3,7 @@ import { auth, requireRole } from '../middleware/auth.js';
 import {
   // Delivery Team APIs
   createDeliveryRequest,
+  createSupplementaryRequest,
   getMyDeliveryRequests,
   getDeliveryRequestDetails,
   pushToNoc,
@@ -41,6 +42,9 @@ const deliveryTeamAccess = requireRole('DELIVERY_TEAM', 'SUPER_ADMIN');
 
 // Create new delivery request
 router.post('/create', deliveryTeamAccess, createDeliveryRequest);
+
+// Add more material (supplementary request) against an existing request
+router.post('/:parentId/add-material', deliveryTeamAccess, createSupplementaryRequest);
 
 // Get my delivery requests
 router.get('/my-requests', deliveryTeamAccess, getMyDeliveryRequests);

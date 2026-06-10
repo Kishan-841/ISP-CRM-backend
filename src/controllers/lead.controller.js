@@ -7535,7 +7535,9 @@ export const getDeliveryReport = asyncHandler(async function getDeliveryReport(r
           }
         },
         deliveryRequests: {
-          where: { status: { notIn: ['REJECTED'] } },
+          // Exclude supplementary ("Add More Material") requests so the lead's
+          // active-request / stage stays driven by the original request.
+          where: { status: { notIn: ['REJECTED'] }, isSupplementary: false },
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: {
@@ -7771,8 +7773,11 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
           }
         },
         deliveryRequests: {
+          // Exclude supplementary ("Add More Material") requests so the lead's
+          // delivery-queue stage stays driven by the original request.
           where: {
-            status: { notIn: ['COMPLETED'] }
+            status: { notIn: ['COMPLETED'] },
+            isSupplementary: false
           },
           orderBy: { createdAt: 'desc' },
           take: 1,
@@ -7904,6 +7909,20 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
     const deliveryTotal = leadsToReturn.length;
     const paginatedLeads = leadsToReturn.slice((page - 1) * limit, page * limit);
 
+    // Which of these leads have an IN-PROGRESS supplementary ("Add More Material")
+    // request — awaiting approval or with the store unassigned. Once ASSIGNED the
+    // addition is done, so the delivery user can add another batch (button returns).
+    const openSupplementary = await prisma.deliveryRequest.findMany({
+      where: {
+        leadId: { in: paginatedLeads.map(l => l.id) },
+        isSupplementary: true,
+        status: { in: ['PENDING_APPROVAL', 'APPROVED'] }
+      },
+      select: { leadId: true, status: true }
+    });
+    const supplementaryByLead = new Map();
+    for (const r of openSupplementary) supplementaryByLead.set(r.leadId, r.status);
+
     // Format response
     const formattedLeads = paginatedLeads.map(lead => {
       let feasibilityInfo = null;
@@ -7999,6 +8018,10 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         createdBy: lead.createdBy,
         products: lead.products.map(lp => lp.product),
         activeDeliveryRequest: lead.deliveryRequests?.[0] || null,
+        // "Add More Material" tracking: is there an open supplementary request, and
+        // what stage is it at (PENDING_APPROVAL / APPROVED / ASSIGNED / DISPATCHED)?
+        hasOpenSupplementary: supplementaryByLead.has(lead.id),
+        supplementaryStatus: supplementaryByLead.get(lead.id) || null,
         // Vendor / Channel Partner info
         vendor: lead.vendor,
         vendorCommissionPercentage: lead.vendorCommissionPercentage,
@@ -8054,7 +8077,9 @@ export const getDeliveryLeadDetails = asyncHandler(async function getDeliveryLea
           where: {
             status: {
               notIn: ['REJECTED', 'COMPLETED']
-            }
+            },
+            // Original request only — supplementary requests don't drive lead stage.
+            isSupplementary: false
           },
           select: {
             id: true,
@@ -8436,7 +8461,8 @@ export const startInstallation = asyncHandler(async function startInstallation(r
       where: { id },
       include: {
         deliveryRequests: {
-          where: { status: { notIn: ['REJECTED', 'COMPLETED'] } },
+          // Original request only — supplementary requests don't drive lead stage.
+          where: { status: { notIn: ['REJECTED', 'COMPLETED'] }, isSupplementary: false },
           orderBy: { createdAt: 'desc' },
           take: 1,
           include: { items: true }
@@ -12709,8 +12735,10 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
         assignedToId: true,
         // Active (non-completed) delivery request — feeds the delivery
         // sub-stage cascade. Flattened to lead.deliveryRequest below.
+        // Excludes supplementary ("Add More Material") requests so a follow-on
+        // material request never pulls the lead out of its current stage (e.g. NOC).
         deliveryRequests: {
-          where: { status: { notIn: ['COMPLETED'] } },
+          where: { status: { notIn: ['COMPLETED'] }, isSupplementary: false },
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: { status: true, pushedToNocAt: true },
@@ -13022,8 +13050,10 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
         assignedToId: true,
         // Active (non-completed) delivery request — feeds the delivery
         // sub-stage cascade. Flattened to lead.deliveryRequest below.
+        // Excludes supplementary ("Add More Material") requests so a follow-on
+        // material request never pulls the lead out of its current stage (e.g. NOC).
         deliveryRequests: {
-          where: { status: { notIn: ['COMPLETED'] } },
+          where: { status: { notIn: ['COMPLETED'] }, isSupplementary: false },
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: { status: true, pushedToNocAt: true },

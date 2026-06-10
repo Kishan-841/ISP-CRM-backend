@@ -914,6 +914,15 @@ model DeliveryRequest {
   updatedAt                 DateTime              @updatedAt
   pushedToNocAt             DateTime?
   pushedToNocById           String?
+  // Supplementary ("Add More Material") request: a follow-on material request raised
+  // by Delivery AFTER the original was assigned (lead may already be at NOC). It flows
+  // through approval + store independently and is deliberately IGNORED by lead-stage
+  // derivation so the lead never leaves its current stage. parentRequest links it to
+  // the original request whose already-assigned items provide context.
+  isSupplementary           Boolean               @default(false)
+  parentRequestId           String?
+  parentRequest             DeliveryRequest?      @relation("SupplementaryMaterial", fields: [parentRequestId], references: [id])
+  childRequests             DeliveryRequest[]     @relation("SupplementaryMaterial")
   assignedToStoreManager    User?                 @relation("DeliveryRequestAssignedToStore", fields: [assignedToStoreManagerId], references: [id])
   lead                      Lead                  @relation("DeliveryRequestLead", fields: [leadId], references: [id], onDelete: Restrict)
   pushedToNocBy             User?                 @relation("DeliveryRequestPushedToNoc", fields: [pushedToNocById], references: [id])
@@ -928,6 +937,8 @@ model DeliveryRequest {
   @@index([status])
   @@index([createdAt])
   @@index([pushedToNocAt, leadId])
+  @@index([parentRequestId])
+  @@index([isSupplementary, leadId])
 }
 
 model DeliveryRequestItem {
@@ -2588,4 +2599,102 @@ model InboundWebhookEvent {
   receivedAt DateTime @default(now())
 
   @@index([eventType, receivedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy Customer Onboarding (Accounts ↔ Delivery)
+//
+// Standalone, isolated table for entering OLD / existing customers purely to
+// showcase their data in the Accounts dashboard. Deliberately NOT linked to
+// Lead / CampaignData / SAMAssignment or any other team — only the Accounts and
+// Delivery logins touch these rows. Names (bdmName, serviceManager,
+// samExecutiveName) are stored as plain-text labels, not FKs. Audit user IDs are
+// plain scalars (no User relation) to keep the table fully self-contained.
+//
+// Flow: Accounts create (no billing) → PENDING_DELIVERY
+//   → Delivery sets deliveryDate → PENDING_BILLING
+//   → Accounts sets billDate + billingCycle → COMPLETED (counts on dashboard).
+//
+// FTB ("first time bill" received amount + date) is a planned next phase; the
+// ftbAmount / ftbReceivedDate fields below are reserved and unused for now.
+// ─────────────────────────────────────────────────────────────────────────────
+enum LegacyCustomerStatus {
+  PENDING_DELIVERY
+  PENDING_BILLING
+  COMPLETED
+}
+
+model LegacyCustomer {
+  id           String @id @default(uuid())
+  customerCode String @unique // LCUST-00001
+
+  // Contact
+  name        String
+  firstName   String?
+  lastName    String?
+  phone       String
+  email       String?
+  companyName String?
+  city        String?
+  state       String?
+
+  // Financial
+  arcAmount Float?
+  otcAmount Float?
+
+  // Tax / legal
+  gstNumber String?
+  legalName String?
+  panNumber String?
+  tanNumber String?
+
+  // Addresses
+  installationAddress String?
+  installationPincode String?
+  billingAddress      String?
+  billingPincode      String?
+
+  // PO
+  poNumber     String?
+  poExpiryDate DateTime?
+
+  // Technical
+  numberOfIPs Int?
+  ipAddresses String[]
+  bandwidth   String?
+  username    String?
+
+  // Incharge contacts
+  techInchargeMobile     String?
+  techInchargeEmail      String?
+  accountsInchargeMobile String?
+  accountsInchargeEmail  String?
+
+  // Plain-text labels (no FK linkage to other logins)
+  bdmName         String?
+  serviceManager  String?
+  samExecutiveName String?
+
+  // Workflow
+  status       LegacyCustomerStatus @default(PENDING_DELIVERY)
+  deliveryDate DateTime? // filled by Delivery
+  billDate     DateTime? // filled by Accounts (second half)
+  billingCycle BillingCycle? // filled by Accounts (second half)
+
+  // FTB — reserved for next phase, unused for now
+  ftbAmount       Float?
+  ftbReceivedDate DateTime?
+
+  // Audit (plain scalars, no User relation)
+  createdById         String?
+  createdAt           DateTime  @default(now())
+  deliveryUpdatedById String?
+  deliveryUpdatedAt   DateTime?
+  billingUpdatedById  String?
+  billingUpdatedAt    DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+  @@index([phone])
+  @@index([status, createdAt])
 }

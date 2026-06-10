@@ -1041,10 +1041,12 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
         where: { status: 'PENDING' }
       })
     ]);
+    // Legacy customers returned from delivery, awaiting billing details.
+    const legacyPendingBilling = await prisma.legacyCustomer.count({ where: { status: 'PENDING_BILLING' } });
     if (isMaster) {
-      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned, customerRequestsPending });
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned, customerRequestsPending, legacyPendingBilling });
     } else {
-      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned, customerRequestsPending });
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned, customerRequestsPending, legacyPendingBilling });
     }
   }
 
@@ -1068,7 +1070,9 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
         }
       })
     ]);
-    Object.assign(counts, { deliveryPending, deliveryOrderApprovalPending });
+    // Legacy customers awaiting a delivery date (Customer Onboarding tab).
+    const legacyPendingDelivery = await prisma.legacyCustomer.count({ where: { status: 'PENDING_DELIVERY' } });
+    Object.assign(counts, { deliveryPending, deliveryOrderApprovalPending, legacyPendingDelivery });
   }
 
   if (userRole === 'STORE_MANAGER' || isMaster) {

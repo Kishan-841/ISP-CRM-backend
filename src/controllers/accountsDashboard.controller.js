@@ -21,16 +21,21 @@ export const getAccountsDashboard = asyncHandler(async function getAccountsDashb
 
   // ===== 1. SUMMARY CARDS =====
   // Use count queries instead of fetching all customers
-  const [totalUsers, activeUsers] = await Promise.all([
+  const [pipelineUsers, activeUsers, legacyCompleted] = await Promise.all([
     prisma.lead.count({
       where: { customerUsername: { not: null } }
     }),
     prisma.lead.count({
       where: { customerUsername: { not: null }, actualPlanIsActive: true }
-    })
+    }),
+    // Completed legacy/old imported customers (standalone Accounts ↔ Delivery flow).
+    prisma.legacyCustomer.count({ where: { status: 'COMPLETED' } })
   ]);
 
-  const deactivatedUsers = totalUsers - activeUsers;
+  // Active/Deactivated reflect pipeline plan status only; completed legacy
+  // customers are added to the Total Users headline count without affecting them.
+  const deactivatedUsers = pipelineUsers - activeUsers;
+  const totalUsers = pipelineUsers + legacyCompleted;
 
   // ===== 2. CUSTOMER BILLING TABLE DATA =====
   // Get detailed customer data with billing info
