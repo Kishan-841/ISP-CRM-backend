@@ -8533,10 +8533,11 @@ export const createCustomerUser = asyncHandler(async function createCustomerUser
     const { username, password } = req.body;
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD');
+    // Customer account creation is restricted to NOC Head only.
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
 
-    if (!isAdmin && !isNOC) {
-      return res.status(403).json({ message: 'Only NOC team can create customer accounts.' });
+    if (!isAdmin && !isNOCHead) {
+      return res.status(403).json({ message: 'Only NOC Head can create customer accounts.' });
     }
 
     // Validate required fields
@@ -8585,37 +8586,22 @@ export const createCustomerUser = asyncHandler(async function createCustomerUser
       return res.status(400).json({ message: 'This lead has not been pushed to NOC yet.' });
     }
 
-    if (lead.customerUserId) {
+    if (lead.customerUsername) {
       return res.status(400).json({ message: 'Customer account already exists for this lead.' });
     }
 
     // Hash the password before storing
     const hashedPassword = await bcrypt.hash(trimmedPassword, 10);
 
-    // Generate customer ID + update atomically inside a serialized transaction
+    // The CUST-XXXXX serial is no longer auto-generated. The customer is identified
+    // by username; customerUserId simply mirrors it so downstream systems that gate
+    // on customerUserId (SAM, service orders, dashboard counts) keep working.
     let updated;
     try {
-    updated = await prisma.$transaction(async (tx) => {
-      const latestCustomer = await tx.lead.findFirst({
-        where: { customerUserId: { not: null } },
-        orderBy: { customerCreatedAt: 'desc' },
-        select: { customerUserId: true }
-      });
-
-      let nextCustomerNumber = 1;
-      if (latestCustomer && latestCustomer.customerUserId) {
-        const match = latestCustomer.customerUserId.match(/CUST-(\d+)/);
-        if (match) {
-          nextCustomerNumber = parseInt(match[1]) + 1;
-        }
-      }
-
-      const customerUserId = `CUST-${String(nextCustomerNumber).padStart(5, '0')}`;
-
-      return tx.lead.update({
+      updated = await prisma.lead.update({
         where: { id },
         data: {
-          customerUserId,
+          customerUserId: trimmedUsername,
           customerUsername: trimmedUsername,
           customerPassword: hashedPassword,
           customerCreatedAt: new Date(),
@@ -8628,7 +8614,6 @@ export const createCustomerUser = asyncHandler(async function createCustomerUser
           }
         }
       });
-    }, { isolationLevel: 'Serializable' });
     } catch (err) {
       if (err.code === 'P2002') {
         return res.status(400).json({ message: 'Username already exists. Please choose a different username.' });
@@ -8719,7 +8704,6 @@ export const createCustomerUser = asyncHandler(async function createCustomerUser
     res.json({
       lead: updated,
       customerDetails: {
-        customerUserId: updated.customerUserId,
         customerUsername: trimmedUsername,
         customerPassword: trimmedPassword
       },
@@ -8750,10 +8734,11 @@ export const assignCustomerIP = asyncHandler(async function assignCustomerIP(req
     const { ipAddress, ipAddresses } = req.body;
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD');
+    // IP assignment is restricted to NOC Head only.
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
 
-    if (!isAdmin && !isNOC) {
-      return res.status(403).json({ message: 'Only NOC team can assign IPs.' });
+    if (!isAdmin && !isNOCHead) {
+      return res.status(403).json({ message: 'Only NOC Head can assign IPs.' });
     }
 
     const lead = await prisma.lead.findUnique({
@@ -8764,7 +8749,7 @@ export const assignCustomerIP = asyncHandler(async function assignCustomerIP(req
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    if (!lead.customerUserId) {
+    if (!lead.customerUsername) {
       return res.status(400).json({ message: 'Customer account must be created first.' });
     }
 
@@ -8781,7 +8766,10 @@ export const assignCustomerIP = asyncHandler(async function assignCustomerIP(req
         where: { id },
         data: {
           customerIpAddresses: validIps,
-          customerIpAssigned: validIps[0] // Keep legacy field for backward compatibility
+          customerIpAssigned: validIps[0], // Keep legacy field for backward compatibility
+          // The lead's IP count now reflects what NOC actually assigned, not the
+          // sales-entered estimate.
+          numberOfIPs: validIps.length
         }
       });
 
@@ -8800,7 +8788,8 @@ export const assignCustomerIP = asyncHandler(async function assignCustomerIP(req
       where: { id },
       data: {
         customerIpAssigned: ipAddress,
-        customerIpAddresses: [ipAddress]
+        customerIpAddresses: [ipAddress],
+        numberOfIPs: 1
       }
     });
 
@@ -8815,10 +8804,11 @@ export const generateCircuitId = asyncHandler(async function generateCircuitId(r
     const { id } = req.params;
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isNOC = hasRole(req.user, 'NOC') || hasRole(req.user, 'NOC_HEAD');
+    // Circuit ID generation is restricted to NOC Head only.
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
 
-    if (!isAdmin && !isNOC) {
-      return res.status(403).json({ message: 'Only NOC team can generate circuit IDs.' });
+    if (!isAdmin && !isNOCHead) {
+      return res.status(403).json({ message: 'Only NOC Head can generate circuit IDs.' });
     }
 
     const lead = await prisma.lead.findUnique({
@@ -8829,7 +8819,7 @@ export const generateCircuitId = asyncHandler(async function generateCircuitId(r
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    if (!lead.customerUserId) {
+    if (!lead.customerUsername) {
       return res.status(400).json({ message: 'Customer account must be created first.' });
     }
 
@@ -8894,6 +8884,44 @@ export const generateCircuitId = asyncHandler(async function generateCircuitId(r
     });
 });
 
+// Edit an existing Circuit ID (NOC Head only). Unlike generateCircuitId, this does
+// NOT change the lead's stage or re-push to delivery — it only corrects the value.
+export const updateCircuitId = asyncHandler(async function updateCircuitId(req, res) {
+    const { id } = req.params;
+    const isAdmin = isAdminOrTestUser(req.user);
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
+
+    if (!isAdmin && !isNOCHead) {
+      return res.status(403).json({ message: 'Only NOC Head can edit circuit IDs.' });
+    }
+
+    const newCircuitId = (req.body.circuitId || '').trim();
+    if (!newCircuitId) {
+      return res.status(400).json({ message: 'Circuit ID is required.' });
+    }
+
+    const lead = await prisma.lead.findUnique({ where: { id }, select: { id: true, circuitId: true } });
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+
+    // Uniqueness check, excluding this lead itself.
+    const clash = await prisma.lead.findFirst({
+      where: { circuitId: newCircuitId, id: { not: id } },
+      select: { id: true }
+    });
+    if (clash) {
+      return res.status(400).json({ message: `Circuit ID "${newCircuitId}" is already in use.` });
+    }
+
+    const updated = await prisma.lead.update({
+      where: { id },
+      data: { circuitId: newCircuitId }
+    });
+
+    res.json({ lead: updated, message: 'Circuit ID updated.' });
+});
+
 // Configure switch port for customer
 export const configureCustomerSwitch = asyncHandler(async function configureCustomerSwitch(req, res) {
     const { id } = req.params;
@@ -8920,7 +8948,7 @@ export const configureCustomerSwitch = asyncHandler(async function configureCust
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    if (!lead.customerUserId) {
+    if (!lead.customerUsername) {
       return res.status(400).json({ message: 'Customer account must be created first.' });
     }
 
@@ -8999,12 +9027,12 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
 
     // Filter by status (new flow: pending -> user_created -> ip_assigned -> completed)
     if (status === 'pending') {
-      whereClause.customerUserId = null;
+      whereClause.customerUsername = null;
     } else if (status === 'customer_created') {
       // User created but no IPs assigned yet
       // Use AND to combine conditions properly
       whereClause.AND = [
-        { customerUserId: { not: null } },
+        { customerUsername: { not: null } },
         {
           OR: [
             { customerIpAddresses: { equals: Prisma.DbNull } },
@@ -9016,7 +9044,7 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
     } else if (status === 'ip_assigned') {
       // IPs assigned but circuit ID not generated yet
       whereClause.AND = [
-        { customerUserId: { not: null } },
+        { customerUsername: { not: null } },
         { customerIpAddresses: { not: { equals: Prisma.DbNull } } },
         { customerIpAddresses: { not: { equals: [] } } },
         { circuitId: null }
@@ -9104,7 +9132,7 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
       allNocLeads = await prisma.lead.findMany({
         where: { id: { in: leadIds } },
         select: {
-          customerUserId: true,
+          customerUsername: true,
           customerIpAddresses: true,
           circuitId: true
         }
@@ -9122,8 +9150,8 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
 
     const stats = {
       total: allNocLeads.length,
-      pending: allNocLeads.filter(l => !l.customerUserId).length,
-      customerCreated: allNocLeads.filter(l => l.customerUserId && !hasIps(l)).length,
+      pending: allNocLeads.filter(l => !l.customerUsername).length,
+      customerCreated: allNocLeads.filter(l => l.customerUsername && !hasIps(l)).length,
       ipAssigned: allNocLeads.filter(l => hasIps(l) && !l.circuitId).length,
       configured: allNocLeads.filter(l => l.circuitId).length
     };
@@ -9183,103 +9211,10 @@ export const getNocQueue = asyncHandler(async function getNocQueue(req, res) {
     });
 });
 
-/**
- * NOC Head: Assign lead to a NOC user
- * POST /leads/noc/:id/assign
- */
-export const nocAssignLead = asyncHandler(async function nocAssignLead(req, res) {
-    const { id } = req.params;
-    const { nocUserId } = req.body;
-    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
-    const isAdmin = isAdminOrTestUser(req.user);
-
-    if (!isNOCHead && !isAdmin) {
-      return res.status(403).json({ message: 'Only NOC Head can assign leads.' });
-    }
-
-    if (!nocUserId) {
-      return res.status(400).json({ message: 'NOC user ID is required.' });
-    }
-
-    const lead = await prisma.lead.findUnique({ where: { id } });
-    if (!lead) return res.status(404).json({ message: 'Lead not found.' });
-
-    const nocUser = await prisma.user.findUnique({ where: { id: nocUserId }, select: { id: true, name: true, role: true } });
-    if (!nocUser || (nocUser.role !== 'NOC' && nocUser.role !== 'NOC_HEAD')) {
-      return res.status(400).json({ message: 'Invalid NOC user.' });
-    }
-
-    const updated = await prisma.lead.update({
-      where: { id },
-      data: { nocAssignedToId: nocUserId, nocAssignedAt: new Date() }
-    });
-
-    emitSidebarRefresh(nocUserId);
-
-    res.json({ message: `Lead assigned to ${nocUser.name}.`, lead: updated });
-});
-
-/**
- * NOC Head: Get NOC team stats
- * GET /leads/noc/team-stats
- */
-export const getNocTeamStats = asyncHandler(async function getNocTeamStats(req, res) {
-    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
-    const isAdmin = isAdminOrTestUser(req.user);
-
-    if (!isNOCHead && !isAdmin) {
-      return res.status(403).json({ message: 'Only NOC Head can view team stats.' });
-    }
-
-    // Get all NOC users
-    const nocUsers = await prisma.user.findMany({
-      where: { role: 'NOC', isActive: true },
-      select: { id: true, name: true, email: true }
-    });
-
-    // Get all NOC-pushed leads
-    const deliveryRequests = await prisma.deliveryRequest.findMany({
-      where: { pushedToNocAt: { not: null } },
-      select: { leadId: true }
-    });
-    const leadIds = deliveryRequests.map(dr => dr.leadId);
-
-    if (leadIds.length === 0) {
-      return res.json({ nocUsers: nocUsers.map(u => ({ ...u, stats: { assigned: 0, pending: 0, customerCreated: 0, ipAssigned: 0, configured: 0 } })), unassigned: 0 });
-    }
-
-    // Get all leads with NOC data
-    const leads = await prisma.lead.findMany({
-      where: { id: { in: leadIds } },
-      select: {
-        id: true,
-        nocAssignedToId: true,
-        customerUserId: true,
-        customerIpAddresses: true,
-        circuitId: true
-      }
-    });
-
-    const hasIps = (lead) => lead.customerIpAddresses && Array.isArray(lead.customerIpAddresses) && lead.customerIpAddresses.length > 0;
-
-    const unassigned = leads.filter(l => !l.nocAssignedToId).length;
-
-    const userStats = nocUsers.map(user => {
-      const userLeads = leads.filter(l => l.nocAssignedToId === user.id);
-      return {
-        ...user,
-        stats: {
-          assigned: userLeads.length,
-          pending: userLeads.filter(l => !l.customerUserId).length,
-          customerCreated: userLeads.filter(l => l.customerUserId && !hasIps(l)).length,
-          ipAssigned: userLeads.filter(l => hasIps(l) && !l.circuitId).length,
-          configured: userLeads.filter(l => !!l.circuitId).length
-        }
-      };
-    });
-
-    res.json({ nocUsers: userStats, unassigned, totalLeads: leads.length });
-});
+// NOTE: Lead-to-NOC-user assignment (nocAssignLead) and the NOC team-stats view
+// (getNocTeamStats) were removed — there is a single NOC operator, so leads are no
+// longer distributed across NOC users. Provisioning (account creation, IP assignment,
+// circuit generation) is NOC_HEAD-only; complaints remain separately assignable.
 
 // Get NOC lead details
 export const getNocLeadDetails = asyncHandler(async function getNocLeadDetails(req, res) {

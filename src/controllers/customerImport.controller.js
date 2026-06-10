@@ -157,8 +157,10 @@ const getOrCreateImportCampaign = async (tx) => {
  * Looks at existing Lead records for the latest customerUserId
  */
 const getNextCustomerSerial = async (tx) => {
+  // Only consider CUST-XXXXX serials. NOC-created customers now use their username
+  // as customerUserId, which must NOT be treated as a serial (it would reset to 1).
   const latest = await tx.lead.findFirst({
-    where: { customerUserId: { not: null } },
+    where: { customerUserId: { startsWith: 'CUST-' } },
     orderBy: { customerCreatedAt: 'desc' },
     select: { customerUserId: true }
   });
