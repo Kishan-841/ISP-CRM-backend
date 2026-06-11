@@ -12826,6 +12826,74 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
 const TP_PIPELINE_STATUSES = ['NEW', 'QUALIFIED', 'FEASIBLE', 'MEETING_SCHEDULED', 'FOLLOW_UP'];
 const TP_DROPPED_STATUSES = ['DROPPED', 'NOT_FEASIBLE'];
 
+// Date window for team-performance (?period=mtd|ytd|alltime|custom&fromDate&toDate),
+// filtering on Lead.createdAt. Mirrors the BDM dashboard's period semantics so the
+// TL's two screens finally agree. Returns a Prisma createdAt filter or null (all time).
+function tpDateFilter(query) {
+  const { period, fromDate, toDate } = query;
+  const now = new Date();
+  if (period === 'mtd') {
+    return { gte: new Date(now.getFullYear(), now.getMonth(), 1) };
+  }
+  if (period === 'ytd') {
+    return { gte: new Date(now.getFullYear(), 0, 1) };
+  }
+  if (period === 'custom' && (fromDate || toDate)) {
+    const f = {};
+    if (fromDate) f.gte = new Date(fromDate);
+    if (toDate) {
+      const end = new Date(toDate);
+      end.setHours(23, 59, 59, 999);
+      f.lte = end;
+    }
+    return f;
+  }
+  return null; // alltime / unset
+}
+
+// Every scalar deriveCurrentStage()/bucketFromLead() walks — shared between the
+// summary's bucket breakdown and the leads table so the two can never disagree.
+const TP_DERIVER_SELECT = {
+  status: true,
+  isColdLead: true,
+  deliveryStatus: true,
+  deliveryVendorSetupDone: true,
+  customerUsername: true,
+  actualPlanIsActive: true,
+  demoPlanIsActive: true,
+  customerAcceptanceAt: true,
+  speedTestUploadedAt: true,
+  installationCompletedAt: true,
+  installationStartedAt: true,
+  nocConfiguredAt: true,
+  nocAssignedToId: true,
+  pushedToInstallationAt: true,
+  accountsStatus: true,
+  docsVerifiedAt: true,
+  docsRejectedReason: true,
+  documents: true,
+  sharedVia: true,
+  loginCompletedAt: true,
+  superAdmin2ApprovalStatus: true,
+  opsApprovalStatus: true,
+  quotationAttachments: true,
+  feasibilityReviewedAt: true,
+  feasibilityAssignedToId: true,
+  deliveryRequests: {
+    where: { status: { notIn: ['COMPLETED'] }, isSupplementary: false },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+    select: { status: true, pushedToNocAt: true },
+  },
+};
+
+// Derive the bucket for one row fetched with TP_DERIVER_SELECT.
+function tpBucketOf(row) {
+  row.deliveryRequest = row.deliveryRequests?.[0] || null;
+  const derived = deriveCurrentStage(row);
+  return { derived, bucket: bucketFromLead(row, derived) };
+}
+
 // Resolve the TL's "team" — the TL themselves PLUS their direct reports.
 // Admins/MASTER can pass ?teamLeaderId=<id> to inspect any team. Returns
 // { teamLeaderId, memberIds } or { error } when the caller isn't allowed
@@ -12882,19 +12950,43 @@ export const getTeamPerformanceSummary = asyncHandler(async function getTeamPerf
   // also sum arcAmount so the cards can show pipeline value at a glance.
   // "Converted" needs a separate count() because it's a boolean flag, not a
   // status enum value.
-  const [grouped, convertedCounts] = await Promise.all([
+  // Optional period window (mtd/ytd/custom) so these cards line up with the
+  // BDM dashboard's period selector. Default = all time (previous behaviour).
+  const createdAtFilter = tpDateFilter(req.query);
+  const baseWhere = { assignedToId: { in: team.memberIds } };
+  if (createdAtFilter) baseWhere.createdAt = createdAtFilter;
+
+  const [grouped, convertedCounts, stageRows] = await Promise.all([
     prisma.lead.groupBy({
       by: ['assignedToId', 'status'],
-      where: { assignedToId: { in: team.memberIds } },
+      where: baseWhere,
       _count: { _all: true },
       _sum: { arcAmount: true },
     }),
     prisma.lead.groupBy({
       by: ['assignedToId'],
-      where: { assignedToId: { in: team.memberIds }, actualPlanIsActive: true },
+      where: { ...baseWhere, actualPlanIsActive: true },
       _count: { _all: true },
     }),
+    // Per-member bucket breakdown (BDM / Feasibility / OPS / ... / Active /
+    // Dropped) via the shared stage deriver — the same logic the leads table
+    // uses, so chip counts always match the drill-down.
+    prisma.lead.findMany({
+      where: baseWhere,
+      select: { assignedToId: true, ...TP_DERIVER_SELECT },
+    }),
   ]);
+
+  // bucketsByMember[memberId][bucketKey] = count
+  const bucketsByMember = {};
+  const bucketsTotal = {};
+  for (const row of stageRows) {
+    const { bucket } = tpBucketOf(row);
+    const mid = row.assignedToId;
+    bucketsByMember[mid] = bucketsByMember[mid] || {};
+    bucketsByMember[mid][bucket] = (bucketsByMember[mid][bucket] || 0) + 1;
+    bucketsTotal[bucket] = (bucketsTotal[bucket] || 0) + 1;
+  }
 
   const convertedByMember = Object.fromEntries(
     convertedCounts.map(r => [r.assignedToId, r._count._all])
@@ -12931,6 +13023,7 @@ export const getTeamPerformanceSummary = asyncHandler(async function getTeamPerf
       dropped,
       totalArc,
       conversionRate,
+      buckets: bucketsByMember[m.id] || {},
     };
   });
 
@@ -12944,6 +13037,8 @@ export const getTeamPerformanceSummary = asyncHandler(async function getTeamPerf
     return acc;
   }, { totalLeads: 0, qualified: 0, inPipeline: 0, converted: 0, dropped: 0, totalArc: 0 });
   total.conversionRate = total.totalLeads > 0 ? Number(((total.converted / total.totalLeads) * 100).toFixed(1)) : 0;
+
+  total.buckets = bucketsTotal;
 
   res.json({
     teamLeaderId: team.teamLeaderId,
@@ -12963,7 +13058,7 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
   if (team.error) return res.status(team.error.status).json({ message: team.error.message });
 
   const { page, limit, skip } = parsePagination(req.query, 25);
-  const { bdmId, status, search } = req.query;
+  const { bdmId, status, search, bucket, source } = req.query;
 
   // Default = entire team. If a specific bdmId is passed it MUST be a member
   // of this TL's team — otherwise we'd leak other teams' data via a guessed id.
@@ -12977,6 +13072,17 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
 
   const where = { assignedToId: { in: assignedIn } };
   if (status) where.status = status;
+  const tpCreatedAt = tpDateFilter(req.query);
+  if (tpCreatedAt) where.createdAt = tpCreatedAt;
+  // Origin filter — "who brought this lead in": an ISR funneling it to the BDM,
+  // the BDM creating it themselves, or a SAM dispatch.
+  if (source === 'isr') {
+    where.createdBy = { role: 'ISR' };
+  } else if (source === 'bdm') {
+    where.createdBy = { role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] } };
+  } else if (source === 'sam') {
+    where.creationSource = { in: ['SAM_DISPATCH', 'SAM_REFERRAL'] };
+  }
   if (search?.trim()) {
     where.OR = buildSearchFilter(search.trim(), [
       'leadNumber',
@@ -12991,76 +13097,84 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
   // label ("Docs Collection", "At NOC", "Active Customer", etc.) lines up
   // with what Customer 360 shows. Lead.status alone says "FEASIBLE" for
   // everything past feasibility, which is unhelpful for TL oversight.
-  const [rows, total] = await Promise.all([
-    prisma.lead.findMany({
+  const leadSelect = {
+    id: true,
+    leadNumber: true,
+    arcAmount: true,
+    createdAt: true,
+    updatedAt: true,
+    actualPlanName: true,
+    assignedToId: true,
+    ...TP_DERIVER_SELECT,
+    // Origin trail: who brought this lead in (ISR / BDM / SAM) and how.
+    creationSource: true,
+    createdBy: { select: { id: true, name: true, role: true } },
+    // Journey milestone timestamps for the TL detail timeline.
+    opsApprovedAt: true,
+    superAdmin2ApprovedAt: true,
+    accountsVerifiedAt: true,
+    customerCreatedAt: true,
+    circuitId: true,
+    demoPlanAssignedAt: true,
+    actualPlanCreatedAt: true,
+    // Owner-name relations used by stage labels
+    assignedTo: { select: { id: true, name: true, email: true } },
+    feasibilityAssignedTo: { select: { name: true } },
+    nocAssignedTo: { select: { name: true } },
+    samAssignment: { select: { samExecutive: { select: { name: true } } } },
+    campaignData: { select: { company: true, name: true, firstName: true, lastName: true, email: true, phone: true } },
+  };
+
+  // Bucket filtering needs the DERIVED stage, which only exists after we run
+  // the deriver — so that path fetches the whole (team-scoped) set, derives,
+  // filters, then paginates in memory (same pattern as the delivery queue).
+  // Without a bucket filter we keep cheap DB-side pagination.
+  let rows;
+  let total;
+  if (bucket && bucket !== 'all') {
+    const allRows = await prisma.lead.findMany({
       where,
       orderBy: { updatedAt: 'desc' },
-      skip,
-      take: limit,
-      select: {
-        id: true,
-        leadNumber: true,
-        status: true,
-        arcAmount: true,
-        createdAt: true,
-        updatedAt: true,
-        isColdLead: true,
-        // Fields consumed by deriveCurrentStage:
-        deliveryStatus: true,
-        deliveryVendorSetupDone: true,
-        customerUsername: true,
-        actualPlanIsActive: true,
-        actualPlanName: true,
-        demoPlanIsActive: true,
-        customerAcceptanceAt: true,
-        speedTestUploadedAt: true,
-        installationCompletedAt: true,
-        installationStartedAt: true,
-        nocConfiguredAt: true,
-        nocAssignedToId: true,
-        pushedToInstallationAt: true,
-        accountsStatus: true,
-        docsVerifiedAt: true,
-        docsRejectedReason: true,
-        documents: true,
-        sharedVia: true,
-        loginCompletedAt: true,
-        superAdmin2ApprovalStatus: true,
-        opsApprovalStatus: true,
-        quotationAttachments: true,
-        feasibilityReviewedAt: true,
-        feasibilityAssignedToId: true,
-        assignedToId: true,
-        // Active (non-completed) delivery request — feeds the delivery
-        // sub-stage cascade. Flattened to lead.deliveryRequest below.
-        // Excludes supplementary ("Add More Material") requests so a follow-on
-        // material request never pulls the lead out of its current stage (e.g. NOC).
-        deliveryRequests: {
-          where: { status: { notIn: ['COMPLETED'] }, isSupplementary: false },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: { status: true, pushedToNocAt: true },
-        },
-        // Owner-name relations used by stage labels
-        assignedTo: { select: { id: true, name: true, email: true } },
-        feasibilityAssignedTo: { select: { name: true } },
-        nocAssignedTo: { select: { name: true } },
-        samAssignment: { select: { samExecutive: { select: { name: true } } } },
-        campaignData: { select: { company: true, name: true, firstName: true, lastName: true, email: true, phone: true } },
-      },
-    }),
-    prisma.lead.count({ where }),
-  ]);
+      select: leadSelect,
+    });
+    const matching = allRows.filter(r => tpBucketOf(r).bucket === bucket);
+    total = matching.length;
+    rows = matching.slice(skip, skip + limit);
+  } else {
+    [rows, total] = await Promise.all([
+      prisma.lead.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+        select: leadSelect,
+      }),
+      prisma.lead.count({ where }),
+    ]);
+  }
+
+  // Human label for the origin trail. createdBy.role tells the TL whether an
+  // ISR funneled this lead in; creationSource disambiguates the pathway.
+  const SOURCE_LABELS = {
+    BULK_UPLOAD_BDM: 'ISR (campaign)',
+    ISR_SELF_DATA: 'ISR (self data)',
+    BDM_DIRECT_LEAD: 'BDM direct',
+    BDM_OPPORTUNITY: 'Opportunity',
+    COLD_LEAD: 'Cold lead',
+    SAM_DISPATCH: 'SAM',
+    SAM_REFERRAL: 'SAM referral',
+    BULK_UPLOAD_ADMIN: 'Imported',
+  };
 
   // Compute "days in stage" cheaply with updatedAt — for an oversight page
   // this is close enough; a more precise per-stage timestamp would require
   // joining StatusChangeLog and we're optimising for "is this lead stale".
   const now = Date.now();
   const items = rows.map(r => {
-    r.deliveryRequest = r.deliveryRequests?.[0] || null;
+    const { derived } = tpBucketOf(r);
     const updatedMs = r.updatedAt ? new Date(r.updatedAt).getTime() : now;
     const daysInStage = Math.max(0, Math.floor((now - updatedMs) / (24 * 60 * 60 * 1000)));
-    const { stage, owner } = deriveCurrentStage(r);
+    const { stage, owner } = derived;
     return {
       id: r.id,
       leadNumber: r.leadNumber,
@@ -13081,6 +13195,29 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
       daysInStage,
       bdm: r.assignedTo ? { id: r.assignedTo.id, name: r.assignedTo.name, email: r.assignedTo.email } : null,
       createdAt: r.createdAt,
+      // Origin trail
+      creationSource: r.creationSource,
+      sourceLabel: SOURCE_LABELS[r.creationSource] || (r.createdBy?.role === 'ISR' ? 'ISR' : r.creationSource || '-'),
+      createdBy: r.createdBy ? { id: r.createdBy.id, name: r.createdBy.name, role: r.createdBy.role } : null,
+      // Journey milestones (null when not reached) — rendered as a timeline
+      // in the TL detail modal.
+      journey: {
+        createdAt: r.createdAt,
+        feasibilityReviewedAt: r.feasibilityReviewedAt,
+        opsApprovedAt: r.opsApprovedAt,
+        superAdmin2ApprovedAt: r.superAdmin2ApprovedAt,
+        loginCompletedAt: r.loginCompletedAt,
+        docsVerifiedAt: r.docsVerifiedAt,
+        accountsVerifiedAt: r.accountsVerifiedAt,
+        pushedToInstallationAt: r.pushedToInstallationAt,
+        customerCreatedAt: r.customerCreatedAt,
+        nocConfiguredAt: r.nocConfiguredAt,
+        circuitId: r.circuitId,
+        installationCompletedAt: r.installationCompletedAt,
+        customerAcceptanceAt: r.customerAcceptanceAt,
+        demoPlanAssignedAt: r.demoPlanAssignedAt,
+        actualPlanCreatedAt: r.actualPlanCreatedAt,
+      },
     };
   });
 
