@@ -91,6 +91,7 @@ import {
   configureCustomerSwitch,
   generateCircuitId,
   updateCircuitId,
+  updateCustomerUsername,
   // NOC Team functions
   getNocQueue,
   getNocLeadDetails,
@@ -518,6 +519,9 @@ router.post('/noc/:id/generate-circuit', generateCircuitId);
 
 // Edit an existing Circuit ID (NOC Head only) — no stage change / re-push
 router.patch('/noc/:id/customer-circuit', updateCircuitId);
+
+// Edit an existing customer username (NOC Head only) — syncs customerUserId
+router.patch('/noc/:id/customer-username', updateCustomerUsername);
 
 // Push to Delivery (after NOC configuration is complete)
 router.post('/noc/:id/push-to-delivery', nocPushToDelivery);

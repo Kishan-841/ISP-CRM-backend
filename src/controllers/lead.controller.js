@@ -8922,6 +8922,54 @@ export const updateCircuitId = asyncHandler(async function updateCircuitId(req, 
     res.json({ lead: updated, message: 'Circuit ID updated.' });
 });
 
+// Edit an existing customer username (NOC Head only). Keeps customerUserId in
+// sync (it mirrors the username since the CUST-XXXXX serial was removed) and
+// changes the customer portal login — no stage change, no re-push.
+export const updateCustomerUsername = asyncHandler(async function updateCustomerUsername(req, res) {
+    const { id } = req.params;
+    const isAdmin = isAdminOrTestUser(req.user);
+    const isNOCHead = hasRole(req.user, 'NOC_HEAD');
+
+    if (!isAdmin && !isNOCHead) {
+      return res.status(403).json({ message: 'Only NOC Head can edit the customer username.' });
+    }
+
+    const newUsername = (req.body.username || '').trim();
+    if (!newUsername) {
+      return res.status(400).json({ message: 'Username is required.' });
+    }
+
+    const lead = await prisma.lead.findUnique({
+      where: { id },
+      select: { id: true, customerUsername: true }
+    });
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found.' });
+    }
+    if (!lead.customerUsername) {
+      return res.status(400).json({ message: 'Customer account must be created first.' });
+    }
+
+    // Uniqueness across BOTH mirrored unique fields, excluding this lead.
+    const clash = await prisma.lead.findFirst({
+      where: {
+        id: { not: id },
+        OR: [{ customerUsername: newUsername }, { customerUserId: newUsername }]
+      },
+      select: { id: true }
+    });
+    if (clash) {
+      return res.status(400).json({ message: `Username "${newUsername}" is already in use.` });
+    }
+
+    const updated = await prisma.lead.update({
+      where: { id },
+      data: { customerUsername: newUsername, customerUserId: newUsername }
+    });
+
+    res.json({ lead: updated, message: 'Username updated. The customer must log in with the new username.' });
+});
+
 // Configure switch port for customer
 export const configureCustomerSwitch = asyncHandler(async function configureCustomerSwitch(req, res) {
     const { id } = req.params;
