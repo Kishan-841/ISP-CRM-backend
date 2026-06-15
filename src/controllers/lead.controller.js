@@ -10076,6 +10076,11 @@ export const getCompletedLeadsQueue = asyncHandler(async function getCompletedLe
       otcAmount: lead.otcAmount,
       hasOtc: lead.hasOtc,
       advanceAmount: lead.advanceAmount,
+      // PO details captured during accounts verification — the Create Plan form
+      // auto-fetches the PO number from here; PO expiry defaults to start + 1 year.
+      poNumber: lead.poNumber,
+      poExpiryDate: lead.poExpiryDate,
+      billDate: lead.billDate,
       // Demo plan details
       demoPlanName: lead.demoPlanName,
       demoPlanBandwidth: lead.demoPlanBandwidth,
