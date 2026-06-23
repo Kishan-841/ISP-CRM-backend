@@ -375,6 +375,7 @@ export const getSummary = asyncHandler(async function getSummary(req, res) {
     where: { id },
     select: {
       id: true,
+      leadNumber: true,
       status: true,
       type: true,
       deliveryStatus: true,
