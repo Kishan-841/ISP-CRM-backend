@@ -693,7 +693,24 @@ export const getPendingApprovalForStore = asyncHandler(async function getPending
 export const assignItemsToRequest = asyncHandler(async function assignItemsToRequest(req, res) {
   const userId = req.user.id;
   const { id } = req.params;
-  const { assignments } = req.body; // Array of { itemId, serialNumbers: [], poItemId, bulkQuantity }
+  // Array of { itemId, bulkQuantity, poItemId } for bulk items, OR
+  // { itemId, sources: [{ poItemId, serialNumbers: [] }] } for serialized items
+  // (a serialized item may be fulfilled from several POs at once). Legacy
+  // payloads with a single { serialNumbers, poItemId } are still accepted.
+  const { assignments } = req.body;
+
+  // Normalize a serialized assignment to a list of { poItemId, serialNumbers }
+  // sources, tolerating both the new `sources` shape and the legacy single-PO
+  // shape. Returns [] for bulk/empty assignments.
+  const getSources = (a) => {
+    if (Array.isArray(a.sources) && a.sources.length > 0) {
+      return a.sources.filter(s => s && s.poItemId && s.serialNumbers?.length > 0);
+    }
+    if (a.serialNumbers?.length > 0 && a.poItemId) {
+      return [{ poItemId: a.poItemId, serialNumbers: a.serialNumbers }];
+    }
+    return [];
+  };
 
   const request = await prisma.deliveryRequest.findUnique({
     where: { id },
@@ -722,7 +739,8 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
     }
 
     const isBulkItem = item.product.category === 'FIBER' || item.product.unit === 'mtrs';
-    const hasSerials = assignment.serialNumbers && assignment.serialNumbers.length > 0;
+    const sources = getSources(assignment);
+    const hasSerials = sources.length > 0;
     const hasBulkQty = assignment.bulkQuantity && assignment.bulkQuantity > 0;
 
     if (isBulkItem || (!hasSerials && hasBulkQty)) {
@@ -754,28 +772,32 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
         });
       }
     } else if (hasSerials) {
-      // Serialized item - check serial numbers count matches quantity
-      if (assignment.serialNumbers.length !== item.quantity) {
+      // Serialized item - the TOTAL serials across every source PO must match
+      // the required quantity.
+      const totalSerials = sources.reduce((sum, s) => sum + s.serialNumbers.length, 0);
+      if (totalSerials !== item.quantity) {
         return res.status(400).json({
-          message: `Serial numbers count (${assignment.serialNumbers.length}) must match quantity (${item.quantity}) for ${item.product.modelNumber}`
+          message: `Serial numbers count (${totalSerials}) must match quantity (${item.quantity}) for ${item.product.modelNumber}`
         });
       }
 
-      // Verify serial numbers exist in inventory and are available
-      const poItem = await prisma.storePurchaseOrderItem.findFirst({
-        where: {
-          id: assignment.poItemId,
-          status: 'IN_STORE',
-          serialNumbers: {
-            hasEvery: assignment.serialNumbers
+      // Every source PO must actually hold the serials claimed against it.
+      for (const source of sources) {
+        const poItem = await prisma.storePurchaseOrderItem.findFirst({
+          where: {
+            id: source.poItemId,
+            status: 'IN_STORE',
+            serialNumbers: {
+              hasEvery: source.serialNumbers
+            }
           }
-        }
-      });
-
-      if (!poItem) {
-        return res.status(400).json({
-          message: `Some serial numbers are not available in inventory for ${item.product.modelNumber}`
         });
+
+        if (!poItem) {
+          return res.status(400).json({
+            message: `Some serial numbers are not available in inventory for ${item.product.modelNumber}`
+          });
+        }
       }
     } else {
       return res.status(400).json({
@@ -788,17 +810,23 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
   for (const assignment of assignments) {
     const item = request.items.find(i => i.id === assignment.itemId);
     const isBulkItem = item.product.category === 'FIBER' || item.product.unit === 'mtrs';
-    const hasSerials = assignment.serialNumbers && assignment.serialNumbers.length > 0;
+    const sources = getSources(assignment);
+    const hasSerials = sources.length > 0;
     const hasBulkQty = assignment.bulkQuantity && assignment.bulkQuantity > 0;
     const useQuantityBased = isBulkItem || (!hasSerials && hasBulkQty);
-    const assignedQty = useQuantityBased ? (assignment.bulkQuantity || 0) : assignment.serialNumbers.length;
+    // Flat union of every serial across all source POs — this is what every
+    // downstream reader (dispatch, reports, customer-360) consumes.
+    const allSerials = sources.flatMap(s => s.serialNumbers);
+    const assignedQty = useQuantityBased ? (assignment.bulkQuantity || 0) : allSerials.length;
 
     await prisma.deliveryRequestItem.update({
       where: { id: assignment.itemId },
       data: {
         assignedQuantity: assignedQty,
-        assignedSerialNumbers: assignment.serialNumbers || [],
-        assignedFromPOItemId: assignment.poItemId,
+        assignedSerialNumbers: allSerials,
+        // assignedFromPOItemId is a single field (legacy, not read downstream);
+        // record the bulk PO, or the first source PO for serialized items.
+        assignedFromPOItemId: useQuantityBased ? (assignment.poItemId || null) : (sources[0]?.poItemId || null),
         isAssigned: true,
         assignedAt: new Date()
       }
@@ -826,27 +854,29 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
         });
       }
     } else if (hasSerials) {
-      // Serialized item - remove serial numbers from PO item inventory
-      const poItem = await prisma.storePurchaseOrderItem.findUnique({
-        where: { id: assignment.poItemId }
-      });
-
-      if (poItem) {
-        const remainingSerials = poItem.serialNumbers.filter(
-          sn => !assignment.serialNumbers.includes(sn)
-        );
-
-        await prisma.storePurchaseOrderItem.update({
-          where: { id: assignment.poItemId },
-          data: {
-            serialNumbers: remainingSerials,
-            receivedQuantity: remainingSerials.length,
-            quantity: remainingSerials.length,
-            // POItemStatus only has PURCHASED / IN_STORE. Fully-assigned items
-            // stay in IN_STORE with quantity=0 — callers check quantity, not status.
-            status: 'IN_STORE'
-          }
+      // Serialized item - remove the claimed serials from EACH source PO.
+      for (const source of sources) {
+        const poItem = await prisma.storePurchaseOrderItem.findUnique({
+          where: { id: source.poItemId }
         });
+
+        if (poItem) {
+          const remainingSerials = poItem.serialNumbers.filter(
+            sn => !source.serialNumbers.includes(sn)
+          );
+
+          await prisma.storePurchaseOrderItem.update({
+            where: { id: source.poItemId },
+            data: {
+              serialNumbers: remainingSerials,
+              receivedQuantity: remainingSerials.length,
+              quantity: remainingSerials.length,
+              // POItemStatus only has PURCHASED / IN_STORE. Fully-assigned items
+              // stay in IN_STORE with quantity=0 — callers check quantity, not status.
+              status: 'IN_STORE'
+            }
+          });
+        }
       }
     }
   }
