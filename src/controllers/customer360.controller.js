@@ -1558,7 +1558,12 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     return new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
   });
 
-  const materials = deliveryRequests.flatMap((dr) =>
+  // Rejected requests never delivered any material — exclude them so a
+  // wrong/duplicate request that was rejected (e.g. "Wrong material") doesn't
+  // pollute the materials list alongside the real request's items.
+  const materials = deliveryRequests
+    .filter((dr) => dr.status !== 'REJECTED')
+    .flatMap((dr) =>
     dr.items.map((item) => ({
       deliveryRequest: dr.requestNumber,
       product: item.product?.brandName || item.product?.modelNumber,
