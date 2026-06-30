@@ -1353,19 +1353,11 @@ export const getUserPassword = asyncHandler(async function getUserPassword(req, 
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
-    select: { id: true, email: true, name: true, role: true, password: true, passwordIsHashed: true }
+    select: { id: true, email: true, name: true, password: true, passwordIsHashed: true }
   });
 
   if (!targetUser) {
     return res.status(404).json({ message: 'User not found.' });
-  }
-
-  // Sales Director may only reveal passwords for their own sales line — BDM,
-  // BDM Team Leader and BDM (Channel Partner). SUPER_ADMIN / MASTER remain
-  // unrestricted. (The route lets SALES_DIRECTOR through; this narrows WHICH
-  // users they can reveal.)
-  if (req.user.role === 'SALES_DIRECTOR' && !['BDM', 'BDM_TEAM_LEADER', 'BDM_CP'].includes(targetUser.role)) {
-    return res.status(403).json({ message: 'Sales Director can only view passwords of BDM, BDM Team Leader and BDM (CP) users.' });
   }
 
   if (targetUser.passwordIsHashed) {

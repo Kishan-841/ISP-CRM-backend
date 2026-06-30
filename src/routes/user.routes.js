@@ -18,6 +18,16 @@ const router = Router();
 // All routes require authentication
 router.use(auth);
 
+// SALES_DIRECTOR must never reach employee management or password reveal. Note
+// auth.js grants SALES_DIRECTOR parity wherever SUPER_ADMIN is allowed, so
+// dropping them from the requireRole lists is NOT enough — block them outright.
+const blockSalesDirector = (req, res, next) => {
+  if (req.user.role === 'SALES_DIRECTOR') {
+    return res.status(403).json({ message: 'Access denied.' });
+  }
+  next();
+};
+
 // Sidebar counts - accessible by all authenticated users (before SUPER_ADMIN check)
 router.get('/sidebar-counts', getSidebarCounts);
 
@@ -34,13 +44,14 @@ router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 
 router.get('/:userId/dashboard', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserDashboardStats);
 router.get('/:id', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER', 'OPS_TEAM'), getUserById);
 
-// Password reveal — SUPER_ADMIN / MASTER plus SALES_DIRECTOR (Sales Director
-// is the senior commercial owner and needs to recover credentials for any
-// employee they oversee). Every reveal is audit-logged (see getUserPassword).
-router.get('/:id/password', requireRole('SUPER_ADMIN', 'MASTER', 'SALES_DIRECTOR'), getUserPassword);
+// Password reveal — SUPER_ADMIN / MASTER only. Every reveal is audit-logged
+// (see getUserPassword). SALES_DIRECTOR is explicitly blocked.
+router.get('/:id/password', blockSalesDirector, requireRole('SUPER_ADMIN', 'MASTER'), getUserPassword);
 
-// Routes below require SUPER_ADMIN or BDM_TEAM_LEADER role
-router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'));
+// Employee management — SUPER_ADMIN or BDM_TEAM_LEADER only. SALES_DIRECTOR has
+// no access to the Employees tab (list / create / edit / delete).
+router.use(blockSalesDirector);
+router.use(requireRole('SUPER_ADMIN', 'BDM_TEAM_LEADER'));
 
 router.get('/', getUsers);
 router.post('/', createUser);
