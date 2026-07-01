@@ -16,7 +16,7 @@
   "dependencies": {
     "@google/genai": "^1.50.1",
     "@prisma/client": "^5.22.0",
-    "archiver": "^8.0.0",
+    "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
     "cors": "^2.8.5",
