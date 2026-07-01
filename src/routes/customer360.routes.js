@@ -24,8 +24,11 @@ router.get('/search', searchCustomers);
 router.get('/export', exportCustomers);
 // Static routes MUST be registered before the /:id/* param routes below, or
 // `/documents-report` would be captured as `/:id` = "documents-report".
-router.get('/documents-report', getDocumentsReport);
-router.get('/documents-report/download', downloadAllDocuments);
+// MASTER-only: the bulk documents report + download-all are restricted to the
+// master login (MASTER bypasses requireRole; SUPER_ADMIN / SALES_DIRECTOR / OPS
+// pass the blanket check above but are denied here).
+router.get('/documents-report', requireRole('MASTER'), getDocumentsReport);
+router.get('/documents-report/download', requireRole('MASTER'), downloadAllDocuments);
 router.get('/:id/summary', getSummary);
 router.get('/:id/journey', getJourney);
 router.get('/:id/billing', getBilling);
