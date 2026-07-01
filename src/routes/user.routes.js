@@ -48,14 +48,14 @@ router.get('/:id', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER
 // (see getUserPassword). SALES_DIRECTOR is explicitly blocked.
 router.get('/:id/password', blockSalesDirector, requireRole('SUPER_ADMIN', 'MASTER'), getUserPassword);
 
-// Employee management — SUPER_ADMIN or BDM_TEAM_LEADER only. SALES_DIRECTOR has
-// no access to the Employees tab (list / create / edit / delete).
-router.use(blockSalesDirector);
-router.use(requireRole('SUPER_ADMIN', 'BDM_TEAM_LEADER'));
+// Employee management. SALES_DIRECTOR may view the list and UPDATE users
+// (including setting a new password), but may NOT create or delete users — nor
+// reveal existing passwords (blocked on the password route above).
+router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM_TEAM_LEADER'));
 
 router.get('/', getUsers);
-router.post('/', createUser);
-router.put('/:id', updateUser);
-router.delete('/:id', requireRole('SUPER_ADMIN'), deleteUser);
+router.post('/', blockSalesDirector, createUser);                    // SD cannot create
+router.put('/:id', updateUser);                                      // SD can update
+router.delete('/:id', blockSalesDirector, requireRole('SUPER_ADMIN'), deleteUser); // SD cannot delete
 
 export default router;
