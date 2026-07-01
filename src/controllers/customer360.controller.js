@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import * as XLSX from 'xlsx';
+import archiver from 'archiver';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
 import { deriveCurrentStage } from '../utils/leadStageDeriver.js';
 
@@ -1863,6 +1864,95 @@ export const getDocuments = asyncHandler(async function getDocuments(req, res) {
     },
     uploadLinks: lead.uploadLinks,
   });
+});
+
+// GET /api/customer-360/:id/documents/download
+// Bundles every typed document for the lead into a single ZIP, each file named
+// after its document type (e.g. PO.pdf, COMPANY PAN.jpg). Extracting the ZIP
+// gives one folder of neatly-named documents.
+export const downloadDocuments = asyncHandler(async function downloadDocuments(req, res) {
+  const { id } = req.params;
+
+  const lead = await prisma.lead.findUnique({
+    where: { id },
+    select: {
+      documents: true,
+      campaignData: { select: { company: true } },
+    },
+  });
+
+  if (!lead) {
+    return res.status(404).json({ message: 'Customer not found.' });
+  }
+
+  const typedDocuments = lead.documents || {};
+  const entries = Object.entries(typedDocuments)
+    .map(([type, data]) => ({ type, url: typeof data === 'object' ? data?.url : data }))
+    .filter((e) => e.url);
+
+  if (entries.length === 0) {
+    return res.status(404).json({ message: 'No documents available to download.' });
+  }
+
+  // Map a MIME type to a sensible file extension (fallback when the URL has none).
+  const extFromContentType = (ct) => {
+    if (!ct) return null;
+    const map = {
+      'application/pdf': 'pdf',
+      'image/jpeg': 'jpg',
+      'image/jpg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'application/msword': 'doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    };
+    return map[ct.split(';')[0].trim().toLowerCase()] || null;
+  };
+
+  const folder = (lead.campaignData?.company || 'customer').replace(/[^a-z0-9]+/gi, '_');
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${folder}_documents.zip"`);
+
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.on('error', (err) => {
+    console.error('downloadDocuments archive error:', err);
+    // Headers are already sent once piping starts; just abort the stream.
+    try { res.status(500).end(); } catch { /* noop */ }
+  });
+  archive.pipe(res);
+
+  const usedNames = new Set();
+  for (const { type, url } of entries) {
+    try {
+      // Cloudinary docs are absolute; locally-stored ones may be relative
+      // (e.g. /uploads/..) — resolve those against this server's host.
+      const absUrl = /^https?:\/\//i.test(url)
+        ? url
+        : `${req.protocol}://${req.get('host')}${url.startsWith('/') ? '' : '/'}${url}`;
+      const resp = await fetch(absUrl);
+      if (!resp.ok) {
+        console.warn(`downloadDocuments: skip ${type} (HTTP ${resp.status})`);
+        continue;
+      }
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const ext =
+        (url.split('?')[0].match(/\.([a-z0-9]{2,5})$/i)?.[1] || extFromContentType(resp.headers.get('content-type')) || 'pdf')
+          .toLowerCase();
+      // File name = the document type as shown in the UI (underscores → spaces),
+      // with filesystem-illegal chars stripped. e.g. COMPANY_PAN → "COMPANY PAN".
+      const base = String(type).replace(/_/g, ' ').replace(/[\\/:*?"<>|]/g, '').trim() || 'document';
+      let name = `${base}.${ext}`;
+      let n = 1;
+      while (usedNames.has(name)) name = `${base} (${n++}).${ext}`;
+      usedNames.add(name);
+      archive.append(buf, { name });
+    } catch (err) {
+      console.warn(`downloadDocuments: failed to fetch ${type}:`, err.message);
+    }
+  }
+
+  await archive.finalize();
 });
 
 // GET /api/customer-360/:id/complaints

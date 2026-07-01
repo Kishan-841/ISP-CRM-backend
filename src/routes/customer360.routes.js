@@ -7,6 +7,7 @@ import {
   getJourney,
   getBilling,
   getDocuments,
+  downloadDocuments,
   getComplaints,
   getSamActivity,
   getFeasibility
@@ -23,6 +24,7 @@ router.get('/:id/summary', getSummary);
 router.get('/:id/journey', getJourney);
 router.get('/:id/billing', getBilling);
 router.get('/:id/documents', getDocuments);
+router.get('/:id/documents/download', downloadDocuments);
 router.get('/:id/complaints', getComplaints);
 router.get('/:id/sam', getSamActivity);
 router.get('/:id/feasibility', getFeasibility);
