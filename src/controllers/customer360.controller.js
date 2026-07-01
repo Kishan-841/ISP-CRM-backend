@@ -1,6 +1,8 @@
 import prisma from '../config/db.js';
 import * as XLSX from 'xlsx';
 import archiver from 'archiver';
+import fs from 'fs';
+import path from 'path';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
 import { deriveCurrentStage } from '../utils/leadStageDeriver.js';
 
@@ -1866,6 +1868,13 @@ export const getDocuments = asyncHandler(async function getDocuments(req, res) {
   });
 });
 
+// SSRF guard: only remote documents served from these hosts may be fetched.
+// Cloudinary always delivers from res.cloudinary.com (the cloud name is in the
+// path, not the host).
+const ALLOWED_DOC_HOSTS = new Set(['res.cloudinary.com']);
+// Local uploads live here (matches the static mount in index.js).
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+
 // GET /api/customer-360/:id/documents/download
 // Bundles every typed document for the lead into a single ZIP, each file named
 // after its document type (e.g. PO.pdf, COMPANY PAN.jpg). Extracting the ZIP
@@ -1925,20 +1934,45 @@ export const downloadDocuments = asyncHandler(async function downloadDocuments(r
   const usedNames = new Set();
   for (const { type, url } of entries) {
     try {
-      // Cloudinary docs are absolute; locally-stored ones may be relative
-      // (e.g. /uploads/..) — resolve those against this server's host.
-      const absUrl = /^https?:\/\//i.test(url)
-        ? url
-        : `${req.protocol}://${req.get('host')}${url.startsWith('/') ? '' : '/'}${url}`;
-      const resp = await fetch(absUrl);
-      if (!resp.ok) {
-        console.warn(`downloadDocuments: skip ${type} (HTTP ${resp.status})`);
-        continue;
+      let buf;
+      let ext;
+
+      if (/^https?:\/\//i.test(url)) {
+        // Remote (Cloudinary) doc. SSRF guard: HTTPS + allow-listed host only,
+        // and refuse redirects so a 302 can't pivot to an internal address.
+        let parsed;
+        try { parsed = new URL(url); } catch { continue; }
+        if (parsed.protocol !== 'https:' || !ALLOWED_DOC_HOSTS.has(parsed.hostname.toLowerCase())) {
+          console.warn(`downloadDocuments: blocked non-allowlisted host ${parsed.hostname} for ${type}`);
+          continue;
+        }
+        const resp = await fetch(url, { redirect: 'error' });
+        if (!resp.ok) {
+          console.warn(`downloadDocuments: skip ${type} (HTTP ${resp.status})`);
+          continue;
+        }
+        buf = Buffer.from(await resp.arrayBuffer());
+        ext = url.split('?')[0].match(/\.([a-z0-9]{2,5})$/i)?.[1]
+          || extFromContentType(resp.headers.get('content-type')) || 'pdf';
+      } else {
+        // Local upload: read straight from disk. NEVER HTTP-fetch back to our
+        // own host — req.get('host') is attacker-controlled (Host header), which
+        // would be a self-SSRF. Resolve safely and reject path traversal.
+        const rel = url.replace(/^\/+/, '').replace(/^uploads\/?/i, '');
+        const filePath = path.resolve(UPLOADS_DIR, rel);
+        if (filePath !== UPLOADS_DIR && !filePath.startsWith(UPLOADS_DIR + path.sep)) {
+          console.warn(`downloadDocuments: blocked path traversal for ${type}`);
+          continue;
+        }
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+          console.warn(`downloadDocuments: local file missing for ${type}`);
+          continue;
+        }
+        buf = fs.readFileSync(filePath);
+        ext = path.extname(filePath).replace('.', '') || 'pdf';
       }
-      const buf = Buffer.from(await resp.arrayBuffer());
-      const ext =
-        (url.split('?')[0].match(/\.([a-z0-9]{2,5})$/i)?.[1] || extFromContentType(resp.headers.get('content-type')) || 'pdf')
-          .toLowerCase();
+
+      ext = ext.toLowerCase();
       // File name = the document type as shown in the UI (underscores → spaces),
       // with filesystem-illegal chars stripped. e.g. COMPANY_PAN → "COMPANY PAN".
       const base = String(type).replace(/_/g, ' ').replace(/[\\/:*?"<>|]/g, '').trim() || 'document';
@@ -1948,7 +1982,7 @@ export const downloadDocuments = asyncHandler(async function downloadDocuments(r
       usedNames.add(name);
       archive.append(buf, { name });
     } catch (err) {
-      console.warn(`downloadDocuments: failed to fetch ${type}:`, err.message);
+      console.warn(`downloadDocuments: failed for ${type}:`, err.message);
     }
   }
 
