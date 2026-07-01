@@ -8,6 +8,8 @@ import {
   getBilling,
   getDocuments,
   downloadDocuments,
+  getDocumentsReport,
+  downloadAllDocuments,
   getComplaints,
   getSamActivity,
   getFeasibility
@@ -20,6 +22,10 @@ router.use(requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'OPS_TEAM'));
 
 router.get('/search', searchCustomers);
 router.get('/export', exportCustomers);
+// Static routes MUST be registered before the /:id/* param routes below, or
+// `/documents-report` would be captured as `/:id` = "documents-report".
+router.get('/documents-report', getDocumentsReport);
+router.get('/documents-report/download', downloadAllDocuments);
 router.get('/:id/summary', getSummary);
 router.get('/:id/journey', getJourney);
 router.get('/:id/billing', getBilling);

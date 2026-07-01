@@ -1,8 +1,10 @@
 import prisma from '../config/db.js';
+import { Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import archiver from 'archiver';
 import fs from 'fs';
 import path from 'path';
+import { DOCUMENT_TYPES } from '../config/documentTypes.js';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
 import { deriveCurrentStage } from '../utils/leadStageDeriver.js';
 
@@ -1868,123 +1870,204 @@ export const getDocuments = asyncHandler(async function getDocuments(req, res) {
   });
 });
 
+// ── Document bundling (individual + bulk downloads) ──────────────────────────
+
 // SSRF guard: only remote documents served from these hosts may be fetched.
 // Cloudinary always delivers from res.cloudinary.com (the cloud name is in the
 // path, not the host).
 const ALLOWED_DOC_HOSTS = new Set(['res.cloudinary.com']);
 // Local uploads live here (matches the static mount in index.js).
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+// The required document catalogue, ordered — the completeness baseline.
+const REQUIRED_DOC_TYPES = Object.values(DOCUMENT_TYPES).sort((a, b) => (a.order || 0) - (b.order || 0));
+
+// Map a MIME type to a sensible file extension (fallback when the URL has none).
+const extFromContentType = (ct) => {
+  if (!ct) return null;
+  const map = {
+    'application/pdf': 'pdf',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  };
+  return map[ct.split(';')[0].trim().toLowerCase()] || null;
+};
+
+// Strip filesystem-illegal characters from a folder/file name segment.
+const sanitizeName = (s, fallback = 'document') =>
+  String(s || '').replace(/[\\/:*?"<>|]/g, '').trim() || fallback;
+
+// Normalise a lead's documents JSON into [{ type, url }], dropping empties.
+const leadDocEntries = (documents) =>
+  Object.entries(documents || {})
+    .map(([type, data]) => ({ type, url: typeof data === 'object' ? data?.url : data }))
+    .filter((d) => d.url);
+
+// Fetch one document's bytes with SSRF guards. Remote docs must be HTTPS on an
+// allow-listed host with redirects refused; local docs are read from disk (never
+// HTTP-fetched back to our own host — the Host header is attacker-controlled).
+// Returns { buf, ext } or null on any failure/blocked source.
+async function fetchDocumentBytes(url) {
+  if (/^https?:\/\//i.test(url)) {
+    let parsed;
+    try { parsed = new URL(url); } catch { return null; }
+    if (parsed.protocol !== 'https:' || !ALLOWED_DOC_HOSTS.has(parsed.hostname.toLowerCase())) {
+      console.warn(`fetchDocumentBytes: blocked non-allowlisted host ${parsed.hostname}`);
+      return null;
+    }
+    const resp = await fetch(url, { redirect: 'error' });
+    if (!resp.ok) return null;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const ext = (url.split('?')[0].match(/\.([a-z0-9]{2,5})$/i)?.[1]
+      || extFromContentType(resp.headers.get('content-type')) || 'pdf').toLowerCase();
+    return { buf, ext };
+  }
+  // Local upload — resolve safely under UPLOADS_DIR, reject path traversal.
+  const rel = url.replace(/^\/+/, '').replace(/^uploads\/?/i, '');
+  const filePath = path.resolve(UPLOADS_DIR, rel);
+  if (filePath !== UPLOADS_DIR && !filePath.startsWith(UPLOADS_DIR + path.sep)) {
+    console.warn(`fetchDocumentBytes: blocked path traversal for ${url}`);
+    return null;
+  }
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
+  return { buf: fs.readFileSync(filePath), ext: (path.extname(filePath).replace('.', '') || 'pdf').toLowerCase() };
+}
+
+// Append a lead's documents into the archive under `folder/` (or the root when
+// folder is ''), each file named by its document type (underscores → spaces,
+// e.g. COMPANY PAN.pdf).
+async function appendLeadDocs(archive, docs, folder) {
+  const usedNames = new Set();
+  for (const { type, url } of docs) {
+    try {
+      const doc = await fetchDocumentBytes(url);
+      if (!doc) continue;
+      const base = sanitizeName(String(type).replace(/_/g, ' '));
+      let name = `${base}.${doc.ext}`;
+      let n = 1;
+      while (usedNames.has(name)) name = `${base} (${n++}).${doc.ext}`;
+      usedNames.add(name);
+      archive.append(doc.buf, { name: folder ? `${folder}/${name}` : name });
+    } catch (err) {
+      console.warn(`appendLeadDocs: failed for ${type}:`, err.message);
+    }
+  }
+}
+
+// Every lead that has at least one uploaded document → { id, leadNumber, company, docs }.
+async function fetchLeadsWithDocuments() {
+  const leads = await prisma.lead.findMany({
+    where: { documents: { not: Prisma.DbNull } },
+    select: {
+      id: true,
+      leadNumber: true,
+      documents: true,
+      campaignData: { select: { company: true } },
+    },
+  });
+  return leads
+    .map((l) => ({
+      id: l.id,
+      leadNumber: l.leadNumber,
+      company: l.campaignData?.company || '',
+      docs: leadDocEntries(l.documents),
+    }))
+    .filter((l) => l.docs.length > 0);
+}
 
 // GET /api/customer-360/:id/documents/download
-// Bundles every typed document for the lead into a single ZIP, each file named
-// after its document type (e.g. PO.pdf, COMPANY PAN.jpg). Extracting the ZIP
-// gives one folder of neatly-named documents.
+// Bundles one lead's documents into a ZIP, each file named by its type.
 export const downloadDocuments = asyncHandler(async function downloadDocuments(req, res) {
   const { id } = req.params;
 
   const lead = await prisma.lead.findUnique({
     where: { id },
-    select: {
-      documents: true,
-      campaignData: { select: { company: true } },
-    },
+    select: { documents: true, campaignData: { select: { company: true } } },
   });
+  if (!lead) return res.status(404).json({ message: 'Customer not found.' });
 
-  if (!lead) {
-    return res.status(404).json({ message: 'Customer not found.' });
-  }
+  const docs = leadDocEntries(lead.documents);
+  if (docs.length === 0) return res.status(404).json({ message: 'No documents available to download.' });
 
-  const typedDocuments = lead.documents || {};
-  const entries = Object.entries(typedDocuments)
-    .map(([type, data]) => ({ type, url: typeof data === 'object' ? data?.url : data }))
-    .filter((e) => e.url);
-
-  if (entries.length === 0) {
-    return res.status(404).json({ message: 'No documents available to download.' });
-  }
-
-  // Map a MIME type to a sensible file extension (fallback when the URL has none).
-  const extFromContentType = (ct) => {
-    if (!ct) return null;
-    const map = {
-      'application/pdf': 'pdf',
-      'image/jpeg': 'jpg',
-      'image/jpg': 'jpg',
-      'image/png': 'png',
-      'image/webp': 'webp',
-      'application/msword': 'doc',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-    };
-    return map[ct.split(';')[0].trim().toLowerCase()] || null;
-  };
-
-  const folder = (lead.campaignData?.company || 'customer').replace(/[^a-z0-9]+/gi, '_');
-
+  const companyName = sanitizeName(lead.campaignData?.company, 'customer');
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${folder}_documents.zip"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${companyName.replace(/\s+/g, '_')}_documents.zip"`);
 
   const archive = archiver('zip', { zlib: { level: 9 } });
   archive.on('error', (err) => {
     console.error('downloadDocuments archive error:', err);
-    // Headers are already sent once piping starts; just abort the stream.
+    try { res.status(500).end(); } catch { /* noop */ }
+  });
+  archive.pipe(res);
+  await appendLeadDocs(archive, docs, ''); // single lead → flat, no subfolder
+  await archive.finalize();
+});
+
+// GET /api/customer-360/documents-report
+// Fast: reads only the documents JSON keys (no file fetching). Returns each
+// lead-with-docs and which of the required types are present / missing.
+export const getDocumentsReport = asyncHandler(async function getDocumentsReport(req, res) {
+  const leads = await fetchLeadsWithDocuments();
+  const rows = leads.map((l) => {
+    const present = new Set(l.docs.map((d) => d.type));
+    const missing = REQUIRED_DOC_TYPES.filter((t) => !present.has(t.id));
+    return {
+      leadNumber: l.leadNumber,
+      company: l.company || l.leadNumber,
+      presentCount: REQUIRED_DOC_TYPES.length - missing.length,
+      total: REQUIRED_DOC_TYPES.length,
+      missing: missing.map((t) => t.label),
+      complete: missing.length === 0,
+    };
+  }).sort((a, b) => a.company.localeCompare(b.company));
+
+  res.json({ total: rows.length, requiredCount: REQUIRED_DOC_TYPES.length, rows });
+});
+
+// GET /api/customer-360/documents-report/download
+// Bulk: one ZIP with a folder per company (folder = company name, not ID), each
+// file named by its document type. Leads with no documents are skipped. A
+// top-level _document-completeness.csv records present/missing per company.
+export const downloadAllDocuments = asyncHandler(async function downloadAllDocuments(req, res) {
+  const leads = await fetchLeadsWithDocuments();
+  if (leads.length === 0) return res.status(404).json({ message: 'No documents available to download.' });
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="all-customer-documents.zip"');
+
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.on('error', (err) => {
+    console.error('downloadAllDocuments archive error:', err);
     try { res.status(500).end(); } catch { /* noop */ }
   });
   archive.pipe(res);
 
-  const usedNames = new Set();
-  for (const { type, url } of entries) {
-    try {
-      let buf;
-      let ext;
+  const usedFolders = new Set();
+  const csvRows = [['Company', 'Lead Number', 'Documents Present', 'Missing Documents']];
 
-      if (/^https?:\/\//i.test(url)) {
-        // Remote (Cloudinary) doc. SSRF guard: HTTPS + allow-listed host only,
-        // and refuse redirects so a 302 can't pivot to an internal address.
-        let parsed;
-        try { parsed = new URL(url); } catch { continue; }
-        if (parsed.protocol !== 'https:' || !ALLOWED_DOC_HOSTS.has(parsed.hostname.toLowerCase())) {
-          console.warn(`downloadDocuments: blocked non-allowlisted host ${parsed.hostname} for ${type}`);
-          continue;
-        }
-        const resp = await fetch(url, { redirect: 'error' });
-        if (!resp.ok) {
-          console.warn(`downloadDocuments: skip ${type} (HTTP ${resp.status})`);
-          continue;
-        }
-        buf = Buffer.from(await resp.arrayBuffer());
-        ext = url.split('?')[0].match(/\.([a-z0-9]{2,5})$/i)?.[1]
-          || extFromContentType(resp.headers.get('content-type')) || 'pdf';
-      } else {
-        // Local upload: read straight from disk. NEVER HTTP-fetch back to our
-        // own host — req.get('host') is attacker-controlled (Host header), which
-        // would be a self-SSRF. Resolve safely and reject path traversal.
-        const rel = url.replace(/^\/+/, '').replace(/^uploads\/?/i, '');
-        const filePath = path.resolve(UPLOADS_DIR, rel);
-        if (filePath !== UPLOADS_DIR && !filePath.startsWith(UPLOADS_DIR + path.sep)) {
-          console.warn(`downloadDocuments: blocked path traversal for ${type}`);
-          continue;
-        }
-        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-          console.warn(`downloadDocuments: local file missing for ${type}`);
-          continue;
-        }
-        buf = fs.readFileSync(filePath);
-        ext = path.extname(filePath).replace('.', '') || 'pdf';
-      }
+  for (const lead of leads) {
+    // Folder = company name (not ID). Disambiguate name collisions with the lead number.
+    let folder = sanitizeName(lead.company, lead.leadNumber);
+    if (usedFolders.has(folder.toLowerCase())) folder = `${folder} (${lead.leadNumber})`;
+    usedFolders.add(folder.toLowerCase());
 
-      ext = ext.toLowerCase();
-      // File name = the document type as shown in the UI (underscores → spaces),
-      // with filesystem-illegal chars stripped. e.g. COMPANY_PAN → "COMPANY PAN".
-      const base = String(type).replace(/_/g, ' ').replace(/[\\/:*?"<>|]/g, '').trim() || 'document';
-      let name = `${base}.${ext}`;
-      let n = 1;
-      while (usedNames.has(name)) name = `${base} (${n++}).${ext}`;
-      usedNames.add(name);
-      archive.append(buf, { name });
-    } catch (err) {
-      console.warn(`downloadDocuments: failed for ${type}:`, err.message);
-    }
+    await appendLeadDocs(archive, lead.docs, folder);
+
+    const present = new Set(lead.docs.map((d) => d.type));
+    const missing = REQUIRED_DOC_TYPES.filter((t) => !present.has(t.id)).map((t) => t.label);
+    csvRows.push([
+      lead.company || lead.leadNumber,
+      lead.leadNumber,
+      `${REQUIRED_DOC_TYPES.length - missing.length}/${REQUIRED_DOC_TYPES.length}`,
+      missing.join('; '),
+    ]);
   }
+
+  const csv = csvRows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  archive.append(Buffer.from(csv, 'utf8'), { name: '_document-completeness.csv' });
 
   await archive.finalize();
 });
