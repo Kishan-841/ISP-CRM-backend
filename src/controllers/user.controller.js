@@ -167,6 +167,19 @@ export const updateUser = asyncHandler(async function updateUser(req, res) {
     return res.status(404).json({ message: 'User not found.' });
   }
 
+  // Sales Director may update operational staff (details + set a new password)
+  // but must NOT be able to escalate privileges or hijack admins:
+  //   - cannot edit MASTER / SUPER_ADMIN / SALES_DIRECTOR accounts, and
+  //   - cannot change any user's role.
+  if (req.user.role === 'SALES_DIRECTOR') {
+    if (['MASTER', 'SUPER_ADMIN', 'SALES_DIRECTOR'].includes(existingUser.role)) {
+      return res.status(403).json({ message: 'You cannot edit this user.' });
+    }
+    if (role && role !== existingUser.role) {
+      return res.status(403).json({ message: "Sales Director cannot change a user's role." });
+    }
+  }
+
   // Team Leader can only edit BDMs assigned to them
   if (isTL) {
     if (existingUser.role !== 'BDM' || existingUser.teamLeaderId !== req.user.id) {
