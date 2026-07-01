@@ -4942,6 +4942,15 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
     } else if (period === 'ytd') {
       dateFrom = new Date(now.getFullYear(), 0, 1);
       dateFrom.setHours(0, 0, 0, 0);
+    } else if (['q1', 'q2', 'q3', 'q4'].includes(period)) {
+      // Financial-year quarters (Apr–Mar): Q1 Apr–Jun, Q2 Jul–Sep, Q3 Oct–Dec,
+      // Q4 Jan–Mar (spills into the next calendar year), relative to the current
+      // financial year (which starts in April).
+      const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      const qIndex = { q1: 0, q2: 1, q3: 2, q4: 3 }[period];
+      const startMonth = 3 + qIndex * 3; // Apr=3; Q4 → 12 → Jan next year (JS normalises)
+      dateFrom = new Date(fyStartYear, startMonth, 1, 0, 0, 0, 0);
+      dateTo = new Date(fyStartYear, startMonth + 3, 0, 23, 59, 59, 999); // day 0 = last day of quarter
     } else if (period === 'custom' && fromDate && toDate) {
       dateFrom = new Date(fromDate);
       dateFrom.setHours(0, 0, 0, 0);
