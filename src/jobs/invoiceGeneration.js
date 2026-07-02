@@ -173,11 +173,14 @@ const createInvoice = async (lead, billingPeriodStart, billingPeriodEnd, systemU
     // A period starting on the 1st of a month is a full cycle — charge full price
     // A period starting mid-month is a partial first period — pro-rate
     if (periodStart.getUTCDate() !== 1) {
-      const actualDays = daysBetween(billingPeriodStart, billingPeriodEnd);
       const fullCycleDays = getFullCycleDays(billingCycle);
+      // Pro-rate day-count = cycle days − day-of-month + 1 (include the start day).
+      //   e.g. Jun 22, quarterly(90) → 90 − 22 + 1 = 69
+      const actualDays = fullCycleDays - periodStart.getUTCDate() + 1;
       baseAmount = Math.round((actualDays / fullCycleDays) * fullCyclePrice * 100) / 100;
       console.log(`  Pro-rated: ${actualDays}/${fullCycleDays} days = ₹${baseAmount} (full: ₹${fullCyclePrice})`);
     }
+
   }
 
   const discountAmount = 0;
