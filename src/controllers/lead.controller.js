@@ -3051,7 +3051,11 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
       }
     } else {
       updateData.status = 'NOT_FEASIBLE';
-      updateData.feasibilityAssignedToId = null;
+      // Keep feasibilityAssignedToId so the reviewer can still see this lead in
+      // their Rejected history/count. Nulling it hid rejected leads from the
+      // FEASIBILITY_TEAM member who rejected them (the history + stats scope by
+      // feasibilityAssignedToId). Status = NOT_FEASIBLE already keeps it out of
+      // the pending queue, and reassignment overwrites it if it's pushed again.
       updateData.feasibilityNotes = notes || null;
       updateData.requirements = lead.requirements
         ? `${lead.requirements}\n\n[FT Review - ${new Date().toLocaleString()}] NOT FEASIBLE: ${notes}`
