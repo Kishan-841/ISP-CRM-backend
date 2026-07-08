@@ -2747,8 +2747,12 @@ export const getFeasibilityQueue = asyncHandler(async function getFeasibilityQue
     const weekStart = new Date(now);
     weekStart.setDate(weekStart.getDate() - 7);
 
-    // Base where for all reviewed stats
-    const baseReviewedWhere = { feasibilityAssignedToId: userId };
+    // Base where for all reviewed stats. Must match the pending-queue scope
+    // above: admin / BDM TL see counts across ALL reviewers, a Feasibility user
+    // only sees leads assigned to them. Hardcoding feasibilityAssignedToId here
+    // made Approved/Rejected/Approval-Rate show 0 on the master/admin login even
+    // though the tabs listed reviewed leads.
+    const baseReviewedWhere = (isAdmin || isTL) ? {} : { feasibilityAssignedToId: userId };
 
     // Period-filtered where (for total/approved/rejected/approvalRate)
     const periodWhere = statsDateFilter.gte
@@ -2934,17 +2938,22 @@ export const getFeasibilityReviewHistory = asyncHandler(async function getFeasib
       interestLevel: lead.interestLevel,
       // BDM info
       bdm: lead.assignedTo,
+      // Feasibility CAPEX / OPEX estimates (set at review)
+      tentativeCapex: lead.tentativeCapex,
+      tentativeOpex: lead.tentativeOpex,
       // Products
       products: lead.products.map(lp => lp.product)
     }));
 
-    // Get counts for tabs
+    // Get counts for tabs. Admin sees all reviewers' counts (matches the
+    // whereClause + list above); a Feasibility user sees only their own.
+    const countScope = isAdmin ? {} : { feasibilityAssignedToId: userId };
     const counts = {
       approved: await prisma.lead.count({
-        where: { feasibilityAssignedToId: userId, status: 'FEASIBLE' }
+        where: { ...countScope, status: 'FEASIBLE' }
       }),
       rejected: await prisma.lead.count({
-        where: { feasibilityAssignedToId: userId, status: 'NOT_FEASIBLE' }
+        where: { ...countScope, status: 'NOT_FEASIBLE' }
       })
     };
 
