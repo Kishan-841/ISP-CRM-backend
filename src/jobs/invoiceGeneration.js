@@ -174,18 +174,17 @@ const createInvoice = async (lead, billingPeriodStart, billingPeriodEnd, systemU
     // A period starting mid-month is a partial first period — pro-rate
     if (periodStart.getUTCDate() !== 1) {
       const fullCycleDays = getFullCycleDays(billingCycle);
-      // Pro-rate day-count = basis − day-of-month + 1 (include the start day).
-      // MONTHLY cycle: the first partial period runs to month-end, so the basis is
-      // the ACTUAL days in the start month (May=31), not a fixed 30:
-      //   18 May → 31 − 18 + 1 = 14. Divisor stays fullCycleDays so the daily rate
-      //   is unchanged (ARC/360). Longer cycles keep the cycle-day basis:
-      //   Jun 22, quarterly(90) → 90 − 22 + 1 = 69.
+      // MONTHLY cycle: pro-rate the first partial period by the CALENDAR days of
+      // the start month — (fullPrice ÷ daysInMonth × remaining days):
+      //   18 May → 8750 ÷ 31 × 14. Both the day-count and the divisor use the
+      //   actual month length (May=31, Feb=28/29). Longer cycles keep the
+      //   cycle-day basis: Jun 22, quarterly(90) → 90 − 22 + 1 = 69.
       const daysBasis = billingCycle === 'MONTHLY'
         ? new Date(Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth() + 1, 0)).getUTCDate()
         : fullCycleDays;
       const actualDays = daysBasis - periodStart.getUTCDate() + 1;
-      baseAmount = Math.round((actualDays / fullCycleDays) * fullCyclePrice * 100) / 100;
-      console.log(`  Pro-rated: ${actualDays}/${fullCycleDays} days = ₹${baseAmount} (full: ₹${fullCyclePrice})`);
+      baseAmount = Math.round((actualDays / daysBasis) * fullCyclePrice * 100) / 100;
+      console.log(`  Pro-rated: ${actualDays}/${daysBasis} days = ₹${baseAmount} (full: ₹${fullCyclePrice})`);
     }
 
   }
