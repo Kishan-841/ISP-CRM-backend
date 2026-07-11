@@ -678,7 +678,6 @@ export const markInvoicePaid = asyncHandler(async function markInvoicePaid(req, 
       });
 
       const totalPaid = existingPaid + paymentAmount + parsedTds;
-      const remainingAmount = Math.max(0, inv.grandTotal - creditAmount - totalPaid);
 
       const updatedInvoice = await tx.invoice.update({
         where: { id },
@@ -694,7 +693,9 @@ export const markInvoicePaid = asyncHandler(async function markInvoicePaid(req, 
           transactionDate: transactionDate ? new Date(transactionDate) : null,
           paymentDiscount: parsedDiscount,
           totalPaidAmount: totalPaid,
-          remainingAmount
+          // Fully paid here — zero any sub-rupee/₹1 residual so it doesn't linger
+          // in the customer's Total Pending.
+          remainingAmount: 0
         }
       });
 
@@ -888,7 +889,10 @@ export const addPaymentToInvoice = asyncHandler(async function addPaymentToInvoi
         where: { id },
         data: {
           totalPaidAmount: newTotalPaid,
-          remainingAmount: newRemaining,
+          // Zero the residual when fully paid — a sub-rupee/₹1 leftover (decimal
+          // grandTotal paid in whole rupees) would otherwise keep summing into the
+          // customer's Total Pending even though the invoice is PAID.
+          remainingAmount: newStatus === 'PAID' ? 0 : newRemaining,
           status: newStatus,
           paidAt: newStatus === 'PAID' ? new Date() : invoice.paidAt
         }
