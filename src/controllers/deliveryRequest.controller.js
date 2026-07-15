@@ -712,6 +712,22 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
     return [];
   };
 
+  // Normalize a bulk/quantity assignment to a list of { poItemId, bulkQuantity }
+  // sources. A bulk item (e.g. fiber) may be fulfilled from SEVERAL POs at once
+  // when no single PO holds the full requirement. Tolerates both the new
+  // `bulkSources` shape and the legacy single { poItemId, bulkQuantity } shape.
+  const getBulkSources = (a) => {
+    if (Array.isArray(a.bulkSources) && a.bulkSources.length > 0) {
+      return a.bulkSources
+        .filter(s => s && s.poItemId && Number(s.bulkQuantity) > 0)
+        .map(s => ({ poItemId: s.poItemId, bulkQuantity: Number(s.bulkQuantity) }));
+    }
+    if (a.poItemId && Number(a.bulkQuantity) > 0) {
+      return [{ poItemId: a.poItemId, bulkQuantity: Number(a.bulkQuantity) }];
+    }
+    return [];
+  };
+
   const request = await prisma.deliveryRequest.findUnique({
     where: { id },
     include: {
@@ -744,8 +760,11 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
     const hasBulkQty = assignment.bulkQuantity && assignment.bulkQuantity > 0;
 
     if (isBulkItem || (!hasSerials && hasBulkQty)) {
-      // Quantity-based assignment (bulk/fiber items OR non-serialized items)
-      const bulkQty = assignment.bulkQuantity || 0;
+      // Quantity-based assignment (bulk/fiber items OR non-serialized items).
+      // A bulk item may draw from SEVERAL POs at once — the TOTAL across every
+      // source must fit the requirement, and each source PO must hold its share.
+      const bulkSources = getBulkSources(assignment);
+      const bulkQty = bulkSources.reduce((sum, s) => sum + s.bulkQuantity, 0);
       if (bulkQty <= 0) {
         return res.status(400).json({
           message: `Please enter quantity to assign for ${item.product.modelNumber}`
@@ -757,19 +776,21 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
         });
       }
 
-      // Verify quantity is available in inventory
-      const poItem = await prisma.storePurchaseOrderItem.findFirst({
-        where: {
-          id: assignment.poItemId,
-          status: 'IN_STORE'
-        }
-      });
-
-      const availableQty = poItem?.receivedQuantity ?? poItem?.quantity ?? 0;
-      if (!poItem || availableQty < bulkQty) {
-        return res.status(400).json({
-          message: `Insufficient inventory for ${item.product.modelNumber}. Available: ${availableQty}`
+      // Every source PO must actually hold the quantity claimed against it.
+      for (const source of bulkSources) {
+        const poItem = await prisma.storePurchaseOrderItem.findFirst({
+          where: {
+            id: source.poItemId,
+            status: 'IN_STORE'
+          }
         });
+
+        const availableQty = poItem?.receivedQuantity ?? poItem?.quantity ?? 0;
+        if (!poItem || availableQty < source.bulkQuantity) {
+          return res.status(400).json({
+            message: `Insufficient inventory for ${item.product.modelNumber}. Requested ${source.bulkQuantity}, available ${availableQty} on that PO.`
+          });
+        }
       }
     } else if (hasSerials) {
       // Serialized item - the TOTAL serials across every source PO must match
@@ -817,7 +838,12 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
     // Flat union of every serial across all source POs — this is what every
     // downstream reader (dispatch, reports, customer-360) consumes.
     const allSerials = sources.flatMap(s => s.serialNumbers);
-    const assignedQty = useQuantityBased ? (assignment.bulkQuantity || 0) : allSerials.length;
+    // A bulk item may be fulfilled from several POs — the assigned quantity is
+    // the TOTAL across every source.
+    const bulkSources = useQuantityBased ? getBulkSources(assignment) : [];
+    const assignedQty = useQuantityBased
+      ? bulkSources.reduce((sum, s) => sum + s.bulkQuantity, 0)
+      : allSerials.length;
 
     await prisma.deliveryRequestItem.update({
       where: { id: assignment.itemId },
@@ -825,33 +851,35 @@ export const assignItemsToRequest = asyncHandler(async function assignItemsToReq
         assignedQuantity: assignedQty,
         assignedSerialNumbers: allSerials,
         // assignedFromPOItemId is a single field (legacy, not read downstream);
-        // record the bulk PO, or the first source PO for serialized items.
-        assignedFromPOItemId: useQuantityBased ? (assignment.poItemId || null) : (sources[0]?.poItemId || null),
+        // record the first source PO (bulk or serialized).
+        assignedFromPOItemId: useQuantityBased ? (bulkSources[0]?.poItemId || null) : (sources[0]?.poItemId || null),
         isAssigned: true,
         assignedAt: new Date()
       }
     });
 
     if (useQuantityBased) {
-      // Quantity-based - deduct quantity from inventory
-      const poItem = await prisma.storePurchaseOrderItem.findUnique({
-        where: { id: assignment.poItemId }
-      });
-
-      if (poItem) {
-        const currentQty = poItem.receivedQuantity ?? poItem.quantity ?? 0;
-        const remainingQty = currentQty - assignedQty;
-        await prisma.storePurchaseOrderItem.update({
-          where: { id: assignment.poItemId },
-          data: {
-            receivedQuantity: remainingQty > 0 ? remainingQty : 0,
-            quantity: Math.max(0, poItem.quantity - assignedQty),
-            // POItemStatus enum is only PURCHASED / IN_STORE. Fully-assigned
-            // items stay in IN_STORE with quantity=0 — callers check
-            // quantity, not status. (Matches the serial-number branch below.)
-            status: 'IN_STORE'
-          }
+      // Quantity-based - deduct the claimed quantity from EACH source PO.
+      for (const source of bulkSources) {
+        const poItem = await prisma.storePurchaseOrderItem.findUnique({
+          where: { id: source.poItemId }
         });
+
+        if (poItem) {
+          const currentQty = poItem.receivedQuantity ?? poItem.quantity ?? 0;
+          const remainingQty = currentQty - source.bulkQuantity;
+          await prisma.storePurchaseOrderItem.update({
+            where: { id: source.poItemId },
+            data: {
+              receivedQuantity: remainingQty > 0 ? remainingQty : 0,
+              quantity: Math.max(0, poItem.quantity - source.bulkQuantity),
+              // POItemStatus enum is only PURCHASED / IN_STORE. Fully-assigned
+              // items stay in IN_STORE with quantity=0 — callers check
+              // quantity, not status. (Matches the serial-number branch below.)
+              status: 'IN_STORE'
+            }
+          });
+        }
       }
     } else if (hasSerials) {
       // Serialized item - remove the claimed serials from EACH source PO.
