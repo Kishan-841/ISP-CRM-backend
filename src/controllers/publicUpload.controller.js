@@ -239,7 +239,11 @@ export const validateUploadToken = asyncHandler(async function validateUploadTok
   const baseDocIds = uploadLink.requiredDocuments && uploadLink.requiredDocuments.length > 0
     ? uploadLink.requiredDocuments
     : allDocTypes.map(d => d.id);
-  const selectedDocIds = baseDocIds.filter(id => otcApplicable || id !== 'ADVANCE_OTC');
+  const selectedDocIds = baseDocIds
+    .filter(id => otcApplicable || id !== 'ADVANCE_OTC')
+    // "Others" is a staff-only multi-file bucket (OTHER_<id> keys minted server
+    // side); the customer link only handles the fixed one-file-per-type slots.
+    .filter(id => id !== 'OTHERS');
 
   // Filter to only show selected documents
   const filteredDocTypes = allDocTypes.filter(dt => selectedDocIds.includes(dt.id));
@@ -312,7 +316,11 @@ export const customerUploadDocument = asyncHandler(async function customerUpload
   const baseDocIds = uploadLink.requiredDocuments && uploadLink.requiredDocuments.length > 0
     ? uploadLink.requiredDocuments
     : getAllDocumentTypes().map(d => d.id);
-  const selectedDocIds = baseDocIds.filter(id => otcApplicable || id !== 'ADVANCE_OTC');
+  const selectedDocIds = baseDocIds
+    .filter(id => otcApplicable || id !== 'ADVANCE_OTC')
+    // "Others" is a staff-only multi-file bucket (OTHER_<id> keys minted server
+    // side); the customer link only handles the fixed one-file-per-type slots.
+    .filter(id => id !== 'OTHERS');
 
   if (!selectedDocIds.includes(documentType)) {
     return res.status(400).json({ message: 'This document type is not required for this upload link' });

@@ -113,7 +113,46 @@ export const DOCUMENT_TYPES = {
     acceptedFormats: ['pdf', 'jpg', 'jpeg', 'png'],
     maxSize: 10 * 1024 * 1024,
     order: 12
+  },
+  OTHERS: {
+    id: 'OTHERS',
+    label: 'Others',
+    description: 'Any additional document required but not in the list above',
+    required: false,
+    acceptedFormats: ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'xlsx', 'xls'],
+    maxSize: 10 * 1024 * 1024,
+    order: 13,
+    // Unlike the fixed types (one file per key, re-upload replaces it), OTHERS
+    // holds MANY files: each upload is stored under its own `OTHER_<id>` key
+    // with a user-supplied `label`.
+    multiple: true
   }
+};
+
+/**
+ * "Others" documents are stored under dynamic keys (`OTHER_<id>`) in the lead's
+ * documents map, each carrying its own `label`, so a lead can have any number of
+ * them. The fixed types remain one-file-per-key.
+ */
+export const OTHER_KEY_PREFIX = 'OTHER_';
+
+export const isOtherDocumentKey = (key) =>
+  typeof key === 'string' && key.startsWith(OTHER_KEY_PREFIX);
+
+/**
+ * Split a lead's documents map into the fixed-type docs and the "Others" list.
+ * Every reader (verification screens, customer-360, bulk download) should use
+ * this so dynamic OTHER_* keys are never silently dropped.
+ */
+export const splitDocuments = (documents = {}) => {
+  const fixed = {};
+  const others = [];
+  for (const [key, meta] of Object.entries(documents || {})) {
+    if (isOtherDocumentKey(key)) others.push({ key, ...meta });
+    else fixed[key] = meta;
+  }
+  others.sort((a, b) => String(a.uploadedAt || '').localeCompare(String(b.uploadedAt || '')));
+  return { fixed, others };
 };
 
 /**
@@ -143,7 +182,9 @@ export const getDocumentTypeById = (id) => {
  * Validate if a document type ID is valid
  */
 export const isValidDocumentType = (id) => {
-  return id in DOCUMENT_TYPES;
+  // 'OTHERS' is the upload target (the server mints an OTHER_<id> key); an
+  // existing OTHER_<id> key is addressable directly for replace/delete.
+  return id in DOCUMENT_TYPES || isOtherDocumentKey(id);
 };
 
 /**
@@ -174,7 +215,10 @@ export const validateDocuments = (documents, testMode = false, opts = {}) => {
     .filter((doc) => hasGst || doc.id !== 'GST_DETAILS')
     .filter((doc) => hasOtc || doc.id !== 'ADVANCE_OTC');
   const requiredCount = testMode ? 0 : requiredTypes.length;
-  const uploadedCount = Object.keys(documents || {}).length;
+  // "Others" docs are purely additional — they must never inflate the
+  // "x of y uploaded" progress or count toward the requirement.
+  const uploadedCount = Object.keys(documents || {})
+    .filter((key) => !isOtherDocumentKey(key)).length;
 
   if (testMode) {
     // Test mode: allow bypass with 0 documents

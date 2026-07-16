@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/db.js';
 import { notifyLeadConverted, notifyFeasibilityAssigned, notifyFeasibilityReturned, notifyFeasibilityApproved, notifyVendorDocsReminder, notifyAllAdmins, createNotification } from '../services/notification.service.js';
-import { isValidDocumentType, validateDocuments, getRequiredDocumentTypes } from '../config/documentTypes.js';
+import { randomUUID } from 'crypto';
+import { isValidDocumentType, validateDocuments, getRequiredDocumentTypes, isOtherDocumentKey, OTHER_KEY_PREFIX } from '../config/documentTypes.js';
 import { deleteFromCloudinary, getResourceType } from '../config/cloudinary.js';
 import { generateOTCInvoiceNumber, generateInvoiceNumber, generateCreditNoteNumber, generateVendorPONumber, generateLeadNumber } from '../services/documentNumber.service.js';
 import { createInvoiceLedgerEntry, deleteLedgerEntriesForInvoice, createCreditNoteLedgerEntry } from '../services/ledger.service.js';
@@ -5897,10 +5898,23 @@ export const uploadDocument = asyncHandler(async function uploadDocument(req, re
       return res.status(404).json({ message: 'Lead not found.' });
     }
 
-    // Check if there's an existing document of this type and delete it from Cloudinary
     const existingDocs = lead.documents || {};
-    if (existingDocs[documentType]) {
-      const existingDoc = existingDocs[documentType];
+
+    // "Others" is a multi-file bucket: posting to /documents/OTHERS ADDS a new
+    // document under its own OTHER_<id> key (nothing is replaced). Posting to an
+    // existing OTHER_<id> replaces just that one, like the fixed types.
+    const isNewOther = documentType === 'OTHERS';
+    const storageKey = isNewOther ? `${OTHER_KEY_PREFIX}${randomUUID()}` : documentType;
+    const label = typeof req.body.label === 'string' ? req.body.label.trim() : '';
+
+    if (isNewOther && !label) {
+      return res.status(400).json({ message: 'Please provide a name for the "Others" document.' });
+    }
+
+    // Check if there's an existing document under this key and delete it from
+    // Cloudinary. Never fires for a NEW "Others" doc — its key is freshly minted.
+    if (existingDocs[storageKey]) {
+      const existingDoc = existingDocs[storageKey];
       try {
         const resourceType = getResourceType(existingDoc.mimetype);
         await deleteFromCloudinary(existingDoc.publicId, resourceType);
@@ -5912,7 +5926,7 @@ export const uploadDocument = asyncHandler(async function uploadDocument(req, re
 
     // Build document metadata
     const documentMeta = {
-      documentType,
+      documentType: isOtherDocumentKey(storageKey) ? 'OTHERS' : documentType,
       originalName: file.originalname,
       filename: file.filename,
       url: file.path,
@@ -5939,10 +5953,16 @@ export const uploadDocument = asyncHandler(async function uploadDocument(req, re
       }
     }
 
-    // Update documents object (keyed by document type)
+    // "Others" docs carry the user-supplied name so the Docs team knows what
+    // each one is. On re-upload, keep the previous name unless a new one is sent.
+    if (isOtherDocumentKey(storageKey)) {
+      documentMeta.label = label || existingDocs[storageKey]?.label || 'Other Document';
+    }
+
+    // Update documents object (keyed by document type / OTHER_<id>)
     const updatedDocs = {
       ...existingDocs,
-      [documentType]: documentMeta
+      [storageKey]: documentMeta
     };
 
     // Update lead
