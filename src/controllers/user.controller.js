@@ -321,6 +321,29 @@ export const getISRUsersForAssignment = asyncHandler(async function getISRUsersF
   res.json({ users });
 });
 
+/**
+ * Resolve the start of the selected dashboard period.
+ *
+ * Mirrors the windows the progress chart already plots, so the stat cards and
+ * the chart always describe the SAME span:
+ *   last7days -> last 7 days incl. today
+ *   monthly   -> last 4 weeks (28 days)
+ *   yearly    -> last 12 months, from the 1st of the earliest month
+ */
+const resolvePeriodStart = (period) => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  if (period === 'yearly') {
+    start.setMonth(start.getMonth() - 11);
+    start.setDate(1);
+  } else if (period === 'monthly') {
+    start.setDate(start.getDate() - 27);
+  } else {
+    start.setDate(start.getDate() - 6);
+  }
+  return start;
+};
+
 // Get dashboard stats for a specific user (admin only)
 export const getUserDashboardStats = asyncHandler(async function getUserDashboardStats(req, res) {
   const { userId } = req.params;
@@ -413,14 +436,27 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
   // Pending stays as `status=NEW` and Total stays at the full assignment
   // count, since those two have no inheritance ambiguity.
   const isISRTarget = targetUser.role === 'ISR';
+
+  // The `period` filter scopes ACTIVITY (what the user did in the window) — it
+  // is deliberately NOT applied to the standing workload. CampaignData has no
+  // `assignedAt`, so "assigned in this period" is unanswerable; filtering Total
+  // Assigned on `updatedAt` would report 3 for an ISR holding 500 rows who
+  // touched 3 this week. Total Assigned / Pending therefore remain current
+  // state (the UI labels them as such), while every "work done" metric is
+  // anchored to evidence that carries a real timestamp: CallLog.createdAt for
+  // calls and Lead.createdAt for conversions.
+  const periodStart = resolvePeriodStart(period);
+  const inPeriod = { gte: periodStart };
+
   const workingWhere = isISRTarget
-    ? { ...whereClause, callLogs: { some: { userId } } }
-    : { ...whereClause, status: { not: 'NEW' } };
+    ? { ...whereClause, callLogs: { some: { userId, createdAt: inPeriod } } }
+    : { ...whereClause, status: { not: 'NEW' }, updatedAt: inPeriod };
   const convertedWhere = isISRTarget
-    ? { ...whereClause, lead: { isNot: null } }
-    : { ...whereClause, status: 'INTERESTED' };
+    ? { ...whereClause, lead: { is: { createdAt: inPeriod } } }
+    : { ...whereClause, status: 'INTERESTED', updatedAt: inPeriod };
 
   const [totalAssigned, workingData, pendingData, convertedToLead] = await Promise.all([
+    // Current workload — intentionally un-scoped by period.
     prisma.campaignData.count({ where: whereClause }),
     prisma.campaignData.count({ where: workingWhere }),
     prisma.campaignData.count({ where: { ...whereClause, status: 'NEW' } }),
@@ -456,10 +492,14 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
     others: todayCallLogsDetailed.filter(log => log.status === 'OTHERS').length
   };
 
-  // Status distribution
+  // Status distribution — of the rows actually worked in the period, using the
+  // same anchor as workingData so the mix and the "Working" card agree.
+  const statusWhere = isISRTarget
+    ? { ...whereClause, callLogs: { some: { userId, createdAt: inPeriod } } }
+    : { ...whereClause, updatedAt: inPeriod };
   const statusCounts = await prisma.campaignData.groupBy({
     by: ['status'],
-    where: whereClause,
+    where: statusWhere,
     _count: { status: true }
   });
 
@@ -489,10 +529,12 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
     }
   });
 
-  // Call stats
+  // Call stats — scoped to the selected period (todayCalls is still derived
+  // from these, and every supported period includes today).
   const callLogs = await prisma.callLog.findMany({
     where: {
       userId,
+      createdAt: inPeriod,
       campaignData: { campaignId: { in: campaignIds } }
     },
     select: { duration: true, createdAt: true }
@@ -679,14 +721,20 @@ export const getUserDashboardStats = asyncHandler(async function getUserDashboar
     callStats: {
       totalCalls: callLogs.length,
       todayCalls: todayCallLogs.length,
-      avgCallDuration: callLogs.length > 0 ? Math.round(totalDuration / callLogs.length) : 0
+      avgCallDuration: callLogs.length > 0 ? Math.round(totalDuration / callLogs.length) : 0,
+      // Raw total so a caller aggregating several ISRs can compute an exact
+      // average instead of re-multiplying the rounded one back out.
+      totalDuration
     },
     weeklyProgress: progressData,
     followUpSchedule: {
       overdue: overdueCount,
       upcoming: followUpCounts
     },
-    period
+    period,
+    // The window the activity stats were measured over, so the UI can state
+    // exactly what it is showing (and prove the filter took effect).
+    periodStart: periodStart.toISOString()
   });
 });
 
