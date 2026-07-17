@@ -69,6 +69,8 @@ model User {
   storeStockAdded                    StoreStock[]             @relation("StoreStockAddedBy")
   storeIntakesPerformed              StoreStockIntakeLog[]    @relation("StoreIntakePerformedBy")
   storeDirectEntries                 StorePurchaseOrderItem[] @relation("StoreDirectEntryBy")
+  materialReturns                    MaterialReturn[]         @relation("MaterialReturnedBy")
+  materialReturnsReviewed            MaterialReturn[]         @relation("MaterialReturnReviewedBy")
   vendorsCreated                     Vendor[]                 @relation("VendorsCreated")
   vendorsAdminApproved               Vendor[]                 @relation("VendorAdminApproved")
   vendorsAccountsApproved            Vendor[]                 @relation("VendorAccountsApproved")
@@ -462,6 +464,7 @@ model Lead {
   demoPlanStartDate            DateTime?
   demoPlanPrice                Float?
   deliveryRequests             DeliveryRequest[]          @relation("DeliveryRequestLead")
+  materialReturns              MaterialReturn[]           @relation("MaterialReturns")
   uploadLinks                  DocumentUploadLink[]
   invoices                     Invoice[]                  @relation("LeadInvoices")
   ledgerEntries                LedgerEntry[]              @relation("CustomerLedger")
@@ -792,6 +795,7 @@ model StoreProduct {
   deliveryRequestItems DeliveryRequestItem[]    @relation("DeliveryRequestItemProduct")
   createdBy            User                     @relation("StoreProductCreatedBy", fields: [createdById], references: [id])
   poItems              StorePurchaseOrderItem[]
+  materialReturns      MaterialReturn[]         @relation("MaterialReturnProduct")
 
   @@index([category])
   @@index([modelNumber])
@@ -865,10 +869,60 @@ model StorePurchaseOrderItem {
   purchaseOrder        StorePurchaseOrder?   @relation(fields: [poId], references: [id], onDelete: Cascade)
   product              StoreProduct          @relation(fields: [productId], references: [id])
   directEntryBy        User?                 @relation("StoreDirectEntryBy", fields: [directEntryById], references: [id])
+  materialReturns      MaterialReturn[]      @relation("MaterialReturnTargetPOItem")
 
   @@index([poId])
   @@index([productId])
   @@index([status])
+}
+
+// Material recovered from a customer and brought back into the store.
+//
+// This is the AUDIT record, deliberately separate from the stock movement:
+// putting a serial back into a StorePurchaseOrderItem's serialNumbers[] records
+// nothing about which lead it came from or why, so the returns page needs its
+// own row per recovered item.
+//
+// Phase 1 is serial-tracked material only (SFP / switch / router / converter).
+// Bulk items (fiber, mtrs) carry no serial, so their origin lead can't be
+// verified — deferred.
+model MaterialReturn {
+  id                    String                 @id @default(uuid())
+  serialNumber          String
+  productId             String
+  // Lead the material was recovered from.
+  leadId                String
+  // The delivery line the serial was originally assigned on — kept so the
+  // return can be traced back to the exact delivery.
+  deliveryRequestItemId String?
+  condition             MaterialReturnCondition
+  // Admin gate. The store records the recovery; stock only moves once this is
+  // APPROVED, so nothing unapproved becomes assignable.
+  status                MaterialReturnStatus   @default(PENDING_APPROVAL)
+  // Why it came back. Required at the API layer — it's the point of this page.
+  remark                String
+  // Where the stock actually landed. Null until approved (nothing has moved).
+  targetPOItemId        String?
+  returnedById          String
+  returnedAt            DateTime               @default(now())
+  reviewedById          String?
+  reviewedAt            DateTime?
+  rejectionReason       String?
+  createdAt             DateTime               @default(now())
+
+  product               StoreProduct           @relation("MaterialReturnProduct", fields: [productId], references: [id])
+  lead                  Lead                   @relation("MaterialReturns", fields: [leadId], references: [id], onDelete: Cascade)
+  deliveryRequestItem   DeliveryRequestItem?   @relation("MaterialReturnDeliveryItem", fields: [deliveryRequestItemId], references: [id])
+  targetPOItem          StorePurchaseOrderItem? @relation("MaterialReturnTargetPOItem", fields: [targetPOItemId], references: [id])
+  returnedBy            User                   @relation("MaterialReturnedBy", fields: [returnedById], references: [id])
+  reviewedBy            User?                  @relation("MaterialReturnReviewedBy", fields: [reviewedById], references: [id])
+
+  @@index([leadId])
+  @@index([productId])
+  @@index([condition])
+  @@index([status])
+  @@index([serialNumber])
+  @@index([returnedAt])
 }
 
 model ReceiptBatchLog {
@@ -948,6 +1002,11 @@ model DeliveryRequestItem {
   quantity              Int
   assignedQuantity      Int?
   assignedSerialNumbers String[]
+  // Subset of assignedSerialNumbers that has been recovered from the customer.
+  // assignedSerialNumbers stays untouched so the delivery history remains a
+  // faithful record of what was originally handed over; readers show a serial as
+  // returned when it appears here. Also the guard against returning twice.
+  returnedSerialNumbers String[]
   assignedFromPOItemId  String?
   isAssigned            Boolean                 @default(false)
   assignedAt            DateTime?
@@ -957,6 +1016,7 @@ model DeliveryRequestItem {
   assignedFromPOItem    StorePurchaseOrderItem? @relation("DeliveryRequestItemAssignedFrom", fields: [assignedFromPOItemId], references: [id])
   deliveryRequest       DeliveryRequest         @relation(fields: [deliveryRequestId], references: [id], onDelete: Cascade)
   product               StoreProduct            @relation("DeliveryRequestItemProduct", fields: [productId], references: [id])
+  materialReturns       MaterialReturn[]        @relation("MaterialReturnDeliveryItem")
 
   @@index([deliveryRequestId])
   @@index([productId])
@@ -1586,6 +1646,27 @@ enum POStatus {
 enum POItemStatus {
   PURCHASED
   IN_STORE
+  // Recovered material that came back damaged. Quarantined: it stays VISIBLE in
+  // the store inventory (with a faulty badge) but is excluded from the delivery
+  // assign screen, which only offers IN_STORE — so it can never reach another
+  // customer. Status is per-BATCH, which is why faulty serials get their own
+  // per-product batch instead of going back into the batch they came from.
+  FAULTY
+}
+
+// Condition a recovered item came back in.
+enum MaterialReturnCondition {
+  GOOD
+  FAULTY
+}
+
+// Admin sign-off on a recovered item. Stock only moves on APPROVED — while a
+// return is PENDING_APPROVAL nothing enters inventory, so an unapproved return
+// can never be assigned to another customer.
+enum MaterialReturnStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
 }
 
 enum DeliveryRequestStatus {

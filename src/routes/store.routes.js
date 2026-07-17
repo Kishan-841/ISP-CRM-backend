@@ -43,6 +43,13 @@ import {
   getPartiallyReceivedPOs,
   updatePartialReceipt,
   getReceiptBatchHistory,
+  getReturnableMaterial,
+  getLeadsWithReturnableMaterial,
+  createMaterialReturn,
+  getMaterialReturns,
+  getPendingMaterialReturns,
+  approveMaterialReturn,
+  rejectMaterialReturn,
   // PO-Scoped Inventory APIs
   getPOInventoryItems,
   generatePOSerialTemplate,
@@ -210,5 +217,31 @@ router.post('/goods-receipt/:id/update-batch', receiptAccess, updatePartialRecei
 
 // Get receipt batch history for a PO
 router.get('/goods-receipt/:id/batch-history', receiptAccess, getReceiptBatchHistory);
+
+// ── Material returns ──
+// Recovering material from a customer (ILL shutdown / swap / RMA) and putting
+// it back into stock. Store-initiated for any lead that holds the serial.
+const returnsAccess = requireRole('STORE_MANAGER', 'ADMIN', 'SUPER_ADMIN');
+
+// Serials a lead currently holds that can be recovered
+router.get('/material-returns/returnable', returnsAccess, getReturnableMaterial);
+
+// Leads that still hold recoverable material (the return form's lead picker)
+router.get('/material-returns/leads', returnsAccess, getLeadsWithReturnableMaterial);
+
+// The returns page — all recovered material, filterable by condition
+router.get('/material-returns', returnsAccess, getMaterialReturns);
+
+// Record a return. Submits for approval only — no stock moves yet.
+router.post('/material-returns', returnsAccess, createMaterialReturn);
+
+// ── Material return approvals (admin gate) ──
+// Separate from returnsAccess on purpose: the store records the recovery, an
+// admin signs it off. Approving is what actually puts material into stock.
+const returnsApprovalAccess = requireRole('SUPER_ADMIN', 'ADMIN');
+
+router.get('/material-returns/pending', returnsApprovalAccess, getPendingMaterialReturns);
+router.post('/material-returns/:id/approve', returnsApprovalAccess, approveMaterialReturn);
+router.post('/material-returns/:id/reject', returnsApprovalAccess, rejectMaterialReturn);
 
 export default router;

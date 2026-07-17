@@ -1398,10 +1398,12 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     const saColdLeadsPending = await prisma.lead.count({ where: { isColdLead: true } });
     // Quick-disconnect inbox waiting for super-admin decision (SAM-raised).
     const quickDisconnectPending = await prisma.commercialChange.count({ where: { status: 'PENDING' } });
+    // Recovered material awaiting admin sign-off before it can enter stock.
+    const materialReturnsPending = await prisma.materialReturn.count({ where: { status: 'PENDING_APPROVAL' } });
     if (isMaster) {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSa2Pending, cnPendingApproval, saColdLeadsPending, dateChangeApprovalPending, quickDisconnectPending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, saDocsOrderReviewPending, saNocOrdersPending, accountsOrdersPending, saSa2Pending, cnPendingApproval, saColdLeadsPending, dateChangeApprovalPending, quickDisconnectPending, materialReturnsPending });
     } else {
-      Object.assign(counts, { isrQueue, bdmQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, sa2Pending: saSa2Pending, cnPendingApproval, coldLeadsPending: saColdLeadsPending, dateChangeApprovalPending, quickDisconnectPending });
+      Object.assign(counts, { isrQueue, bdmQueue, feasibilityPending: feasibilityQueue, docsQueue, accountsQueue, deliveryQueue, poApprovalPending, deliveryRequestPending: saDeliveryRequestPending, vendorsPendingAdmin, complaintsOpen, orderApprovalPending, salesDirectorPending, deliveryOrderApprovalPending, docsOrderReviewPending: saDocsOrderReviewPending, nocOrdersPending: saNocOrdersPending, accountsOrdersPending, sa2Pending: saSa2Pending, cnPendingApproval, coldLeadsPending: saColdLeadsPending, dateChangeApprovalPending, quickDisconnectPending, materialReturnsPending });
     }
   }
 

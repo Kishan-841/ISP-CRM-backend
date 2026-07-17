@@ -761,8 +761,11 @@ export const uploadSerialsAndAddToStore = asyncHandler(async function uploadSeri
 
 // Get store inventory (only items that are IN_STORE)
 export const getStoreInventory = asyncHandler(async function getStoreInventory(req, res) {
+    // FAULTY is included on purpose: recovered-but-damaged material must stay
+    // VISIBLE here (flagged), it just must never be offered for assignment —
+    // that's enforced by getAvailableInventory, which only reads IN_STORE.
     const items = await prisma.storePurchaseOrderItem.findMany({
-      where: { status: 'IN_STORE' },
+      where: { status: { in: ['IN_STORE', 'FAULTY'] } },
       include: {
         product: true,
         purchaseOrder: {
@@ -793,11 +796,17 @@ export const getStoreInventory = asyncHandler(async function getStoreInventory(r
           unit: item.product.unit,
           serialNumber: item.product.serialNumber,
           totalQuantity: 0,
+          // Quarantined (recovered-faulty) quantity, carved out of the total so
+          // the UI can show "x available / y faulty" rather than one blended
+          // number that overstates what's actually assignable.
+          faultyQuantity: 0,
           serialNumbers: [],
           items: []
         };
       }
+      const isFaulty = item.status === 'FAULTY';
       grouped[key].totalQuantity += actualQuantity;
+      if (isFaulty) grouped[key].faultyQuantity += actualQuantity;
       grouped[key].serialNumbers.push(...item.serialNumbers);
       grouped[key].items.push({
         id: item.id,
@@ -806,7 +815,10 @@ export const getStoreInventory = asyncHandler(async function getStoreInventory(r
         receivedQuantity: item.receivedQuantity,
         unitPrice: item.unitPrice,
         serialNumbers: item.serialNumbers,
-        poNumber: item.purchaseOrder?.poNumber || 'DIRECT ENTRY',
+        // Faulty batches are recovered material held back from assignment.
+        status: item.status,
+        isFaulty,
+        poNumber: item.purchaseOrder?.poNumber || (isFaulty ? 'FAULTY (RETURNED)' : 'DIRECT ENTRY'),
         giirnNumber: item.purchaseOrder?.giirnNumber || null,
         warehouse: item.purchaseOrder?.warehouse || null,
         vendorName: item.purchaseOrder?.vendor?.companyName || null,
@@ -2280,4 +2292,486 @@ export const addPOItemsToStore = asyncHandler(async function addPOItemsToStore(r
       message: `${items.length} item(s) added to store`,
       count: items.length
     });
+});
+
+// ============================================================
+// MATERIAL RETURNS — recovering material from a customer
+// ============================================================
+//
+// When a customer shuts down their ILL (or a unit is swapped / RMA'd), the
+// store physically recovers the hardware. These endpoints put it back into the
+// software so stock matches reality.
+//
+// Phase 1 is SERIAL-TRACKED material only. Bulk items (fiber, `mtrs`) carry no
+// serial, so the lead they came from can't be verified — deferred.
+//
+// Two things happen per return, and they are deliberately separate:
+//   1. Stock movement — the serial goes back into a StorePurchaseOrderItem
+//      batch (that IS the inventory; the assign screen reads from it).
+//   2. Audit — a MaterialReturn row, because a batch's serialNumbers[] records
+//      nothing about which lead it came from or why.
+
+/**
+ * GET /store/material-returns/returnable?leadId=...
+ *
+ * Serials currently held by a lead that can be recovered: everything assigned
+ * on its delivery items, minus anything already returned, restricted to
+ * serial-tracked products.
+ */
+export const getReturnableMaterial = asyncHandler(async function getReturnableMaterial(req, res) {
+  const { leadId } = req.query;
+
+  if (!leadId) {
+    return res.status(400).json({ message: 'leadId is required.' });
+  }
+
+  const items = await prisma.deliveryRequestItem.findMany({
+    where: {
+      isAssigned: true,
+      deliveryRequest: { leadId }
+    },
+    include: {
+      product: true,
+      deliveryRequest: { select: { id: true, requestNumber: true } }
+    }
+  });
+
+  // Only serial-tracked material is returnable in phase 1.
+  const returnable = [];
+  for (const item of items) {
+    const alreadyReturned = new Set(item.returnedSerialNumbers || []);
+    for (const serial of item.assignedSerialNumbers || []) {
+      if (alreadyReturned.has(serial)) continue;
+      returnable.push({
+        serialNumber: serial,
+        deliveryRequestItemId: item.id,
+        productId: item.productId,
+        productModel: item.product.modelNumber,
+        productCategory: item.product.category,
+        brandName: item.product.brandName,
+        requestNumber: item.deliveryRequest?.requestNumber || null
+      });
+    }
+  }
+
+  res.json({ success: true, returnable });
+});
+
+/**
+ * POST /store/material-returns
+ * body: { leadId, serialNumber, condition: 'GOOD'|'FAULTY', remark }
+ *
+ * Records the recovery only — it does NOT touch stock. The material enters
+ * inventory when an admin approves (see approveMaterialReturn), so nothing
+ * unapproved can be assigned to another customer.
+ */
+export const createMaterialReturn = asyncHandler(async function createMaterialReturn(req, res) {
+  const userId = req.user.id;
+  const { leadId, serialNumber, condition, remark } = req.body;
+
+  if (!leadId || !serialNumber || !condition) {
+    return res.status(400).json({ message: 'leadId, serialNumber and condition are required.' });
+  }
+  if (!['GOOD', 'FAULTY'].includes(condition)) {
+    return res.status(400).json({ message: 'Condition must be GOOD or FAULTY.' });
+  }
+  // The reason is the whole point of the returns page — never optional.
+  if (!remark || !remark.trim()) {
+    return res.status(400).json({ message: 'Please provide a remark explaining why the material was returned.' });
+  }
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: { campaignData: { select: { company: true } } }
+  });
+  if (!lead) {
+    return res.status(404).json({ message: 'Lead not found.' });
+  }
+
+  // The serial must actually be one this lead was given — prevents typos from
+  // inventing stock that was never delivered.
+  const deliveryItem = await prisma.deliveryRequestItem.findFirst({
+    where: {
+      isAssigned: true,
+      deliveryRequest: { leadId },
+      assignedSerialNumbers: { has: serialNumber }
+    },
+    include: { product: true }
+  });
+
+  if (!deliveryItem) {
+    return res.status(400).json({
+      message: `Serial ${serialNumber} was not delivered to ${lead.campaignData?.company || 'this lead'}.`
+    });
+  }
+
+  if ((deliveryItem.returnedSerialNumbers || []).includes(serialNumber)) {
+    return res.status(400).json({ message: `Serial ${serialNumber} has already been returned.` });
+  }
+
+  // Also block a second submission while one is still awaiting approval —
+  // returnedSerialNumbers is only stamped on approval, so without this the same
+  // serial could be queued twice.
+  const pendingDup = await prisma.materialReturn.findFirst({
+    where: { serialNumber, leadId, status: 'PENDING_APPROVAL' }
+  });
+  if (pendingDup) {
+    return res.status(400).json({
+      message: `Serial ${serialNumber} is already awaiting approval for this customer.`
+    });
+  }
+
+  // Recorded only — no stock movement. The material enters inventory when an
+  // admin approves it.
+  const created = await prisma.materialReturn.create({
+    data: {
+      serialNumber,
+      productId: deliveryItem.productId,
+      leadId,
+      deliveryRequestItemId: deliveryItem.id,
+      condition,
+      remark: remark.trim(),
+      status: 'PENDING_APPROVAL',
+      returnedById: userId
+    },
+    include: {
+      product: true,
+      lead: { include: { campaignData: { select: { company: true } } } },
+      returnedBy: { select: { id: true, name: true } }
+    }
+  });
+
+  emitSidebarRefreshByRole('STORE_MANAGER');
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('ADMIN');
+
+  res.status(201).json({
+    success: true,
+    message: `${serialNumber} submitted for admin approval.`,
+    materialReturn: created
+  });
+});
+
+/**
+ * GET /store/material-returns?condition=GOOD|FAULTY&search=...
+ * The returns page: every recovered item with the lead it came from and why.
+ */
+export const getMaterialReturns = asyncHandler(async function getMaterialReturns(req, res) {
+  const { condition, search, status } = req.query;
+
+  const where = {};
+  if (condition && ['GOOD', 'FAULTY'].includes(condition)) {
+    where.condition = condition;
+  }
+  if (status && ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(status)) {
+    where.status = status;
+  }
+  if (search && search.trim()) {
+    const term = search.trim();
+    where.OR = [
+      { serialNumber: { contains: term, mode: 'insensitive' } },
+      { remark: { contains: term, mode: 'insensitive' } },
+      { product: { modelNumber: { contains: term, mode: 'insensitive' } } },
+      { lead: { campaignData: { company: { contains: term, mode: 'insensitive' } } } }
+    ];
+  }
+
+  const returns = await prisma.materialReturn.findMany({
+    where,
+    orderBy: { returnedAt: 'desc' },
+    include: {
+      product: { select: { id: true, modelNumber: true, brandName: true, category: true, unit: true } },
+      lead: {
+        select: {
+          id: true,
+          leadNumber: true,
+          campaignData: { select: { company: true } }
+        }
+      },
+      returnedBy: { select: { id: true, name: true } },
+      reviewedBy: { select: { id: true, name: true } }
+    }
+  });
+
+  const formatted = returns.map(r => ({
+    id: r.id,
+    serialNumber: r.serialNumber,
+    condition: r.condition,
+    status: r.status,
+    remark: r.remark,
+    rejectionReason: r.rejectionReason,
+    returnedAt: r.returnedAt,
+    returnedBy: r.returnedBy?.name || null,
+    reviewedBy: r.reviewedBy?.name || null,
+    reviewedAt: r.reviewedAt,
+    productModel: r.product?.modelNumber || null,
+    productCategory: r.product?.category || null,
+    brandName: r.product?.brandName || null,
+    leadId: r.lead?.id || null,
+    leadNumber: r.lead?.leadNumber || null,
+    company: r.lead?.campaignData?.company || null
+  }));
+
+  res.json({
+    success: true,
+    returns: formatted,
+    stats: {
+      total: formatted.length,
+      good: formatted.filter(r => r.condition === 'GOOD').length,
+      faulty: formatted.filter(r => r.condition === 'FAULTY').length,
+      pending: formatted.filter(r => r.status === 'PENDING_APPROVAL').length
+    }
+  });
+});
+
+/**
+ * GET /store/material-returns/leads?search=...
+ *
+ * Leads that currently hold recoverable material — i.e. have at least one
+ * assigned serial that hasn't been returned yet. Drives the "pick a lead" step
+ * of the return form, so the store only ever sees leads with something to
+ * recover (no dead ends), and it stays behind the store role guard rather than
+ * needing access to the general leads/customer search.
+ */
+export const getLeadsWithReturnableMaterial = asyncHandler(async function getLeadsWithReturnableMaterial(req, res) {
+  const { search } = req.query;
+
+  const items = await prisma.deliveryRequestItem.findMany({
+    where: { isAssigned: true },
+    select: {
+      assignedSerialNumbers: true,
+      returnedSerialNumbers: true,
+      deliveryRequest: {
+        select: {
+          lead: {
+            select: {
+              id: true,
+              leadNumber: true,
+              customerUsername: true,
+              campaignData: { select: { company: true } }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Array-difference per item isn't expressible in the query, so fold in JS.
+  const byLead = new Map();
+  for (const item of items) {
+    const lead = item.deliveryRequest?.lead;
+    if (!lead) continue;
+    const returned = new Set(item.returnedSerialNumbers || []);
+    const remaining = (item.assignedSerialNumbers || []).filter(s => !returned.has(s));
+    if (remaining.length === 0) continue;
+
+    const entry = byLead.get(lead.id) || {
+      id: lead.id,
+      leadNumber: lead.leadNumber,
+      company: lead.campaignData?.company || null,
+      customerUsername: lead.customerUsername || null,
+      returnableCount: 0
+    };
+    entry.returnableCount += remaining.length;
+    byLead.set(lead.id, entry);
+  }
+
+  let leads = Array.from(byLead.values());
+  if (search && search.trim()) {
+    const term = search.trim().toLowerCase();
+    leads = leads.filter(l =>
+      (l.company || '').toLowerCase().includes(term) ||
+      (l.leadNumber || '').toLowerCase().includes(term) ||
+      (l.customerUsername || '').toLowerCase().includes(term)
+    );
+  }
+  leads.sort((a, b) => (a.company || '').localeCompare(b.company || ''));
+
+  res.json({ success: true, leads });
+});
+
+/**
+ * Move a serial into stock. Runs ONLY when an admin approves a return — that's
+ * the point at which recovered material becomes real inventory.
+ *
+ * GOOD  -> the batch it was assigned from when that batch is reliably known,
+ *          else a PO-less RETURN batch. assignedFromPOItemId records only the
+ *          FIRST source PO, so for a multi-PO assignment it may not be this
+ *          serial's true origin — fall back rather than credit a batch it never
+ *          came from.
+ * FAULTY -> a per-product FAULTY batch, never the original: POItemStatus is
+ *          per-BATCH, so flagging the original would quarantine its good
+ *          serials too.
+ */
+const moveReturnedSerialIntoStock = async (tx, { deliveryItem, productId, serialNumber, condition, userId }) => {
+  let targetBatch = null;
+
+  if (condition === 'GOOD') {
+    if (deliveryItem?.assignedFromPOItemId) {
+      targetBatch = await tx.storePurchaseOrderItem.findFirst({
+        where: { id: deliveryItem.assignedFromPOItemId, productId, status: 'IN_STORE' }
+      });
+    }
+    if (!targetBatch) {
+      targetBatch = await tx.storePurchaseOrderItem.findFirst({
+        where: { poId: null, productId, status: 'IN_STORE' }
+      });
+    }
+    if (!targetBatch) {
+      targetBatch = await tx.storePurchaseOrderItem.create({
+        data: {
+          productId, poId: null, quantity: 0, serialNumbers: [], receivedQuantity: 0,
+          status: 'IN_STORE', addedToStoreAt: new Date(), directEntryById: userId
+        }
+      });
+    }
+  } else {
+    targetBatch = await tx.storePurchaseOrderItem.findFirst({
+      where: { poId: null, productId, status: 'FAULTY' }
+    });
+    if (!targetBatch) {
+      targetBatch = await tx.storePurchaseOrderItem.create({
+        data: {
+          productId, poId: null, quantity: 0, serialNumbers: [], receivedQuantity: 0,
+          status: 'FAULTY', addedToStoreAt: new Date(), directEntryById: userId
+        }
+      });
+    }
+  }
+
+  const nextSerials = [...new Set([...(targetBatch.serialNumbers || []), serialNumber])];
+  await tx.storePurchaseOrderItem.update({
+    where: { id: targetBatch.id },
+    data: { serialNumbers: nextSerials, receivedQuantity: nextSerials.length, quantity: nextSerials.length }
+  });
+
+  return targetBatch.id;
+};
+
+/**
+ * GET /store/material-returns/pending
+ * Returns awaiting admin sign-off — drives the Approvals page + its badge.
+ */
+export const getPendingMaterialReturns = asyncHandler(async function getPendingMaterialReturns(req, res) {
+  const returns = await prisma.materialReturn.findMany({
+    where: { status: 'PENDING_APPROVAL' },
+    orderBy: { returnedAt: 'asc' },
+    include: {
+      product: { select: { modelNumber: true, brandName: true, category: true } },
+      lead: { select: { id: true, leadNumber: true, campaignData: { select: { company: true } } } },
+      returnedBy: { select: { id: true, name: true } }
+    }
+  });
+
+  res.json({
+    success: true,
+    returns: returns.map(r => ({
+      id: r.id,
+      serialNumber: r.serialNumber,
+      condition: r.condition,
+      remark: r.remark,
+      returnedAt: r.returnedAt,
+      returnedBy: r.returnedBy?.name || null,
+      productModel: r.product?.modelNumber || null,
+      productCategory: r.product?.category || null,
+      brandName: r.product?.brandName || null,
+      leadNumber: r.lead?.leadNumber || null,
+      company: r.lead?.campaignData?.company || null
+    })),
+    count: returns.length
+  });
+});
+
+/**
+ * POST /store/material-returns/:id/approve
+ * Approving is what actually puts the material into stock.
+ */
+export const approveMaterialReturn = asyncHandler(async function approveMaterialReturn(req, res) {
+  const userId = req.user.id;
+  const { id } = req.params;
+
+  const materialReturn = await prisma.materialReturn.findUnique({
+    where: { id },
+    include: { deliveryRequestItem: true }
+  });
+  if (!materialReturn) {
+    return res.status(404).json({ message: 'Material return not found.' });
+  }
+  if (materialReturn.status !== 'PENDING_APPROVAL') {
+    return res.status(400).json({ message: `This return has already been ${materialReturn.status.toLowerCase()}.` });
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const targetPOItemId = await moveReturnedSerialIntoStock(tx, {
+      deliveryItem: materialReturn.deliveryRequestItem,
+      productId: materialReturn.productId,
+      serialNumber: materialReturn.serialNumber,
+      condition: materialReturn.condition,
+      userId
+    });
+
+    // Stamp the serial as returned on the delivery line only now that it is
+    // genuinely back — assignedSerialNumbers stays untouched as history.
+    if (materialReturn.deliveryRequestItem) {
+      await tx.deliveryRequestItem.update({
+        where: { id: materialReturn.deliveryRequestItem.id },
+        data: {
+          returnedSerialNumbers: [...new Set([
+            ...(materialReturn.deliveryRequestItem.returnedSerialNumbers || []),
+            materialReturn.serialNumber
+          ])]
+        }
+      });
+    }
+
+    return tx.materialReturn.update({
+      where: { id },
+      data: { status: 'APPROVED', targetPOItemId, reviewedById: userId, reviewedAt: new Date() }
+    });
+  });
+
+  emitSidebarRefreshByRole('STORE_MANAGER');
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('ADMIN');
+
+  res.json({
+    success: true,
+    message: materialReturn.condition === 'FAULTY'
+      ? `${materialReturn.serialNumber} approved and quarantined as faulty.`
+      : `${materialReturn.serialNumber} approved and added back to inventory.`,
+    materialReturn: updated
+  });
+});
+
+/**
+ * POST /store/material-returns/:id/reject
+ * Nothing enters stock — the material stays with the customer on record.
+ */
+export const rejectMaterialReturn = asyncHandler(async function rejectMaterialReturn(req, res) {
+  const userId = req.user.id;
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ message: 'Please provide a reason for rejecting this return.' });
+  }
+
+  const materialReturn = await prisma.materialReturn.findUnique({ where: { id } });
+  if (!materialReturn) {
+    return res.status(404).json({ message: 'Material return not found.' });
+  }
+  if (materialReturn.status !== 'PENDING_APPROVAL') {
+    return res.status(400).json({ message: `This return has already been ${materialReturn.status.toLowerCase()}.` });
+  }
+
+  const updated = await prisma.materialReturn.update({
+    where: { id },
+    data: { status: 'REJECTED', rejectionReason: reason.trim(), reviewedById: userId, reviewedAt: new Date() }
+  });
+
+  emitSidebarRefreshByRole('STORE_MANAGER');
+  emitSidebarRefreshByRole('SUPER_ADMIN');
+  emitSidebarRefreshByRole('ADMIN');
+
+  res.json({ success: true, message: 'Material return rejected.', materialReturn: updated });
 });
