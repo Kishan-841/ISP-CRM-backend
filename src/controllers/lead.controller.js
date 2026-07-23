@@ -8,6 +8,7 @@ import { deleteFromCloudinary, getResourceType } from '../config/cloudinary.js';
 import { generateOTCInvoiceNumber, generateInvoiceNumber, generateCreditNoteNumber, generateVendorPONumber, generateLeadNumber } from '../services/documentNumber.service.js';
 import { createInvoiceLedgerEntry, deleteLedgerEntriesForInvoice, createCreditNoteLedgerEntry } from '../services/ledger.service.js';
 import { isAdminOrTestUser, canHardDelete, hasRole, hasAnyRole } from '../utils/roleHelper.js';
+import { isLeadContactVisible, maskLeadContactFields, applyLeadContactMask } from '../utils/leadMasking.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { sendEmail } from '../services/email.service.js';
 import { asyncHandler, parsePagination, buildDateFilter, buildSearchFilter, paginatedResponse } from '../utils/controllerHelper.js';
@@ -390,7 +391,10 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       actualPlanIsActive: lead.actualPlanIsActive,
     }));
 
-    res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json(paginatedResponse({ data: maskedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
 });
 
 // Get single lead
@@ -454,6 +458,14 @@ export const getLead = asyncHandler(async function getLead(req, res) {
       if (lead.createdById !== req.user.id) {
         return res.status(403).json({ message: 'You do not have access to this lead.' });
       }
+    }
+
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery (pushedToInstallationAt). getLead is
+    // reachable by every authenticated role, so masking here closes the
+    // direct-by-id bypass around the masked queue views.
+    if (!isLeadContactVisible(req.user, lead.pushedToInstallationAt) && lead.campaignData) {
+      lead.campaignData = maskLeadContactFields(lead.campaignData);
     }
 
     res.json({ lead });
@@ -2843,7 +2855,10 @@ export const getFeasibilityQueue = asyncHandler(async function getFeasibilityQue
       vendor: lead.vendor
     }));
 
-    res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json(paginatedResponse({ data: maskedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
 });
 
 // Get feasibility review history (approved and rejected by current user)
@@ -2900,6 +2915,9 @@ export const getFeasibilityReviewHistory = asyncHandler(async function getFeasib
     // Format response
     const formattedLeads = leads.map(lead => ({
       id: lead.id,
+      // Delivery gate for contact masking: histories can contain leads that
+      // have since reached delivery, which unmasks them for everyone.
+      pushedToInstallationAt: lead.pushedToInstallationAt,
       requirements: lead.requirements,
       status: lead.status,
       type: lead.type,
@@ -2958,7 +2976,10 @@ export const getFeasibilityReviewHistory = asyncHandler(async function getFeasib
       })
     };
 
-    res.json({ leads: formattedLeads, counts });
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json({ leads: maskedLeads, counts });
 });
 
 // Feasibility Team disposition - Feasible (Yes) or Not Feasible (No)
@@ -3294,7 +3315,10 @@ export const getOpsTeamQueue = asyncHandler(async function getOpsTeamQueue(req, 
       vendor: lead.vendor
     }));
 
-    res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json(paginatedResponse({ data: maskedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
 });
 
 /**
@@ -3364,6 +3388,9 @@ export const getOpsTeamReviewHistory = asyncHandler(async function getOpsTeamRev
     // Format response
     const formattedLeads = leads.map(lead => ({
       id: lead.id,
+      // Delivery gate for contact masking: histories can contain leads that
+      // have since reached delivery, which unmasks them for everyone.
+      pushedToInstallationAt: lead.pushedToInstallationAt,
       requirements: lead.requirements,
       status: lead.status,
       type: lead.type,
@@ -3415,7 +3442,10 @@ export const getOpsTeamReviewHistory = asyncHandler(async function getOpsTeamRev
       feasibilityDescription: lead.feasibilityDescription
     }));
 
-    res.json({ leads: formattedLeads, counts });
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json({ leads: maskedLeads, counts });
 });
 
 /**
@@ -3781,7 +3811,10 @@ export const getSuperAdmin2Queue = asyncHandler(async function getSuperAdmin2Que
       feasibilityReviewedAt: lead.feasibilityReviewedAt
     }));
 
-    res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json(paginatedResponse({ data: maskedLeads, total, page, limit, dataKey: 'leads', extra: { stats } }));
 });
 
 /**
@@ -3894,7 +3927,10 @@ export const getSuperAdmin2History = asyncHandler(async function getSuperAdmin2H
       products: lead.products.map(lp => lp.product)
     }));
 
-    res.json(paginatedResponse({ data: formattedLeads, total, page, limit, dataKey: 'leads' }));
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json(paginatedResponse({ data: maskedLeads, total, page, limit, dataKey: 'leads' }));
 });
 
 /**
@@ -4303,7 +4339,11 @@ export const getDocsTeamQueue = asyncHandler(async function getDocsTeamQueue(req
       vendor: lead.vendor
     }));
 
-    res.json(paginatedResponse({ data: formattedLeads, total: docsTotal, page, limit, dataKey: 'leads', extra: { accountsRejectedLeads: formattedAccountsRejected, stats } }));
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    const maskedAccountsRejected = formattedAccountsRejected.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json(paginatedResponse({ data: maskedLeads, total: docsTotal, page, limit, dataKey: 'leads', extra: { accountsRejectedLeads: maskedAccountsRejected, stats } }));
 });
 
 // Send accounts-rejected lead back to BDM for document re-upload
@@ -4421,6 +4461,9 @@ export const getDocsTeamReviewHistory = asyncHandler(async function getDocsTeamR
     // Format response
     const formattedLeads = leads.map(lead => ({
       id: lead.id,
+      // Delivery gate for contact masking: histories can contain leads that
+      // have since reached delivery, which unmasks them for everyone.
+      pushedToInstallationAt: lead.pushedToInstallationAt,
       requirements: lead.requirements,
       status: lead.status,
       type: lead.type,
@@ -4471,7 +4514,10 @@ export const getDocsTeamReviewHistory = asyncHandler(async function getDocsTeamR
       })
     };
 
-    res.json({ leads: formattedLeads, counts });
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json({ leads: maskedLeads, counts });
 });
 
 // Docs Team disposition - Approve or Reject documents
@@ -6607,7 +6653,10 @@ export const getAccountsTeamQueue = asyncHandler(async function getAccountsTeamQ
       return lead;
     });
 
-    res.json(paginatedResponse({ data: leadsWithGstSuggestion, total: accountsTotal, page, limit, dataKey: 'leads', extra: { stats } }));
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = leadsWithGstSuggestion.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json(paginatedResponse({ data: maskedLeads, total: accountsTotal, page, limit, dataKey: 'leads', extra: { stats } }));
 });
 
 // Update financial details for a lead
@@ -7224,6 +7273,9 @@ export const getAccountsTeamReviewHistory = asyncHandler(async function getAccou
 
     const formattedLeads = leads.map(lead => ({
       id: lead.id,
+      // Delivery gate for contact masking: histories can contain leads that
+      // have since reached delivery, which unmasks them for everyone.
+      pushedToInstallationAt: lead.pushedToInstallationAt,
       requirements: lead.requirements,
       status: lead.status,
       type: lead.type,
@@ -7310,7 +7362,10 @@ export const getAccountsTeamReviewHistory = asyncHandler(async function getAccou
       })
     };
 
-    res.json({ leads: formattedLeads, counts });
+    // Contact masking: company / contact person / mobile stay confidential
+    // until the lead reaches delivery; in-between teams get masked values.
+    const maskedLeads = formattedLeads.map(f => applyLeadContactMask(f, req.user, f.pushedToInstallationAt));
+    res.json({ leads: maskedLeads, counts });
 });
 
 // Get accounts verified leads (history)

@@ -5,6 +5,7 @@ import archiver from 'archiver';
 import fs from 'fs';
 import path from 'path';
 import { DOCUMENT_TYPES } from '../config/documentTypes.js';
+import { isLeadContactVisible, maskLeadContactFields, applyLeadContactMask, maskCompanyName, maskPersonName, maskMobileNumber } from '../utils/leadMasking.js';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
 import { deriveCurrentStage } from '../utils/leadStageDeriver.js';
 
@@ -100,7 +101,9 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
   const items = leads.map((lead) => {
     lead.deliveryRequest = lead.deliveryRequests?.[0] || null;
     const { stage, owner } = deriveCurrentStage(lead);
-    return {
+    // Contact masking: customer-360 is reachable by OPS (a masked role), and
+    // pre-delivery leads surface in this search — mask them per item.
+    return applyLeadContactMask({
       id: lead.id,
       company: lead.campaignData?.company || '',
       name: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim(),
@@ -116,7 +119,7 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
       currentStage: stage,
       currentOwner: owner,
       createdAt: lead.createdAt,
-    };
+    }, req.user, lead.pushedToInstallationAt);
   });
 
   res.json(paginatedResponse({ data: items, total, page, limit }));
@@ -175,6 +178,8 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
       leadNumber: true,
       status: true,
       deliveryStatus: true,
+      // Delivery gate for contact masking on the exported rows.
+      pushedToInstallationAt: true,
       customerUsername: true,
       customerGstNo: true,
       circuitId: true,
@@ -281,12 +286,15 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
     const contact = cd.name || `${cd.firstName || ''} ${cd.lastName || ''}`.trim();
     const capex = l.actualCapex ?? l.tentativeCapex ?? '';
     const opex  = l.actualOpex  ?? l.tentativeOpex  ?? '';
+    // Contact masking: the export must not leak what the on-screen list masks —
+    // pre-delivery leads keep company / contact / phone hidden from OPS.
+    const contactVisible = isLeadContactVisible(req.user, l.pushedToInstallationAt);
     return {
       'Lead #': l.leadNumber || '',
-      'Company': cd.company || '',
-      'Contact Name': contact,
+      'Company': contactVisible ? (cd.company || '') : maskCompanyName(cd.company || ''),
+      'Contact Name': contactVisible ? contact : maskPersonName(contact),
       'Title': cd.title || '',
-      'Phone': cd.phone || '',
+      'Phone': contactVisible ? (cd.phone || '') : maskMobileNumber(cd.phone || ''),
       'Email': cd.email || '',
       // New commercial columns — placed right after contact info per spec.
       'Bandwidth (BDM)': l.bandwidthRequirement || '',
@@ -384,6 +392,8 @@ export const getSummary = asyncHandler(async function getSummary(req, res) {
       status: true,
       type: true,
       deliveryStatus: true,
+      // Delivery gate for contact masking.
+      pushedToInstallationAt: true,
       customerUsername: true,
       customerIpAssigned: true,
       circuitId: true,
@@ -457,8 +467,13 @@ export const getSummary = asyncHandler(async function getSummary(req, res) {
     prisma.invoice.count({ where: { leadId: id, status: 'OVERDUE' } }),
   ]);
 
-  res.json({
+  // Contact masking: customer-360 is reachable by OPS (a masked role); a
+  // pre-delivery lead's contact info stays hidden here too. Both the flat
+  // name/company and the nested campaignData carry the fields.
+  const contactVisible = isLeadContactVisible(req.user, lead.pushedToInstallationAt);
+  const summary = {
     ...lead,
+    campaignData: contactVisible ? lead.campaignData : maskLeadContactFields(lead.campaignData),
     name: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim(),
     company: lead.campaignData?.company || '',
     currentBalance: latestLedger?.runningBalance ?? 0,
@@ -466,7 +481,12 @@ export const getSummary = asyncHandler(async function getSummary(req, res) {
     samAssignedAt: samAssignment?.assignedAt || null,
     complaintsSummary: { total: totalComplaints, open: openComplaints },
     invoicesSummary: { total: totalInvoices, overdue: overdueInvoices },
-  });
+  };
+  if (!contactVisible) {
+    summary.name = maskPersonName(summary.name);
+    summary.company = maskCompanyName(summary.company);
+  }
+  res.json(summary);
 });
 
 // GET /api/customer-360/:id/journey

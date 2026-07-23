@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import { emitToUser, emitToUsers } from '../sockets/index.js';
+import { maskCompanyName } from '../utils/leadMasking.js';
 
 /**
  * Create a notification and emit it via Socket.io
@@ -127,12 +128,17 @@ export const notifyAllAdmins = async (type, title, message, metadata = null) => 
 export const notifyFeasibilityAssigned = async (ftUserId, leadData) => {
   const { leadId, company, bdmName, campaignName } = leadData;
 
+  // Contact masking: the recipient is a Feasibility user (a masked role) and
+  // this event always fires pre-delivery, so the company name must not travel
+  // in the notification text or its stored metadata.
+  const maskedCompany = maskCompanyName(company);
+
   const title = 'New Feasibility Review';
-  const message = `"${company}" assigned for feasibility review by ${bdmName}`;
+  const message = `"${maskedCompany}" assigned for feasibility review by ${bdmName}`;
 
   return createNotification(ftUserId, 'FEASIBILITY_ASSIGNED', title, message, {
     leadId,
-    company,
+    company: maskedCompany,
     bdmName,
     campaignName
   });
