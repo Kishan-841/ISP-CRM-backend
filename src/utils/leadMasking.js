@@ -4,9 +4,9 @@
  * Company name, contact person and mobile number are confidential until the
  * lead reaches the delivery stage (pushedToInstallationAt set — the exact
  * moment it appears in the delivery login). Before that, only the roles that
- * own the customer relationship or run the business may see them; every
- * in-between processing team (Feasibility, Docs, Accounts, OPS, SA2, ...)
- * gets masked values.
+ * own the customer relationship, run the business, or must verify the
+ * customer's legal identity may see them; every in-between processing team
+ * (Feasibility, Docs, OPS, SA2, ...) gets masked values.
  *
  * Masking happens SERVER-SIDE at the response-formatting layer on purpose:
  * a frontend-only mask is trivially bypassed via devtools/network tab, and the
@@ -18,6 +18,11 @@
 //  - ISR / BDM / BDM_CP / BDM_TEAM_LEADER: the sales chain that created and
 //    owns the customer contact — an ISR must dial the number and a BDM meets
 //    the customer, and their queues are already scoped to their own data.
+//  - ACCOUNTS_TEAM: accounts verification is identity verification. They match
+//    the GST certificate and PAN against the customer's legal name and enter
+//    the company name that goes on the invoice — none of which can be done
+//    against "***************". Masking here didn't protect anything, it just
+//    pre-filled the billing form with asterisks.
 const UNMASKED_ROLES = new Set([
   'SUPER_ADMIN',
   'MASTER',
@@ -26,7 +31,8 @@ const UNMASKED_ROLES = new Set([
   'ISR',
   'BDM',
   'BDM_CP',
-  'BDM_TEAM_LEADER'
+  'BDM_TEAM_LEADER',
+  'ACCOUNTS_TEAM'
 ]);
 
 /**
