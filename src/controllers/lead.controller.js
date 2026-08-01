@@ -4688,7 +4688,11 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
       // SAM can assign to a BDM Team Leader
       assignToTeamLeaderId,
       // SAM can assign to an ISR (new flow)
-      assignToISRId
+      assignToISRId,
+      // BDM GPS capture (mandatory for BDM-type roles)
+      createdLatitude,
+      createdLongitude,
+      locationAccuracy
     } = req.body;
 
     // Validate required fields
@@ -4697,6 +4701,20 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
         message: 'Company name, contact name, phone, and lead source are required.'
       });
     }
+
+    // BDM GPS location: mandatory for field roles, optional for everyone else.
+    const parsedLat = parseFloat(createdLatitude);
+    const parsedLng = parseFloat(createdLongitude);
+    const hasValidLocation =
+      Number.isFinite(parsedLat) && parsedLat >= -90 && parsedLat <= 90 &&
+      Number.isFinite(parsedLng) && parsedLng >= -180 && parsedLng <= 180;
+    const isBdmCreator = ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(req.user.role);
+    if (isBdmCreator && !hasValidLocation) {
+      return res.status(400).json({
+        message: 'Location access is required to create a lead. Please enable location permission and try again.'
+      });
+    }
+    const parsedAccuracy = parseFloat(locationAccuracy);
 
     // Validate phone: must have exactly 10 digits
     const phoneStr = String(phone).trim();
@@ -4829,7 +4847,14 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
         linkedinUrl: linkedinUrl || null,
         status: 'NEW',
         type: 'QUALIFIED',
-        creationSource
+        creationSource,
+        // locationCapturedAt is server-stamped so clients can't backdate it.
+        ...(hasValidLocation ? {
+          createdLatitude: parsedLat,
+          createdLongitude: parsedLng,
+          locationAccuracy: Number.isFinite(parsedAccuracy) ? parsedAccuracy : null,
+          locationCapturedAt: new Date()
+        } : {})
       };
 
       // Add products if provided
@@ -4898,6 +4923,71 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
           : effectiveCreateAsLead ? 'Lead created successfully.' : 'Data saved successfully.',
       campaignData,
       lead
+    });
+});
+
+// ========== BDM LEADS (GPS-captured) ==========
+
+// Management view: every lead created with a captured BDM location.
+// Access enforced at the route (MASTER / ADMIN / SALES_DIRECTOR / SUPER_ADMIN).
+export const getBdmLeads = asyncHandler(async function getBdmLeads(req, res) {
+    const { bdmId, dateFrom, dateTo } = req.query;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+
+    const where = {
+      createdLatitude: { not: null },
+      ...(bdmId ? { createdById: bdmId } : {}),
+      ...((dateFrom || dateTo) ? {
+        locationCapturedAt: {
+          ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+          ...(dateTo ? { lte: new Date(new Date(dateTo).setHours(23, 59, 59, 999)) } : {})
+        }
+      } : {})
+    };
+
+    const [total, leads, byBdmRaw] = await Promise.all([
+      prisma.lead.count({ where }),
+      prisma.lead.findMany({
+        where,
+        select: {
+          id: true,
+          leadNumber: true,
+          createdAt: true,
+          createdLatitude: true,
+          createdLongitude: true,
+          locationAccuracy: true,
+          locationCapturedAt: true,
+          createdBy: { select: { id: true, name: true } },
+          campaignData: { select: { company: true, name: true, phone: true } }
+        },
+        orderBy: { locationCapturedAt: 'desc' },
+        take: limit,
+        skip: (page - 1) * limit
+      }),
+      // Unfiltered per-BDM counts drive the filter dropdown.
+      prisma.lead.groupBy({
+        by: ['createdById'],
+        where: { createdLatitude: { not: null } },
+        _count: { id: true }
+      })
+    ]);
+
+    const bdmUsers = await prisma.user.findMany({
+      where: { id: { in: byBdmRaw.map(b => b.createdById) } },
+      select: { id: true, name: true }
+    });
+    const nameById = new Map(bdmUsers.map(u => [u.id, u.name]));
+
+    res.json({
+      leads,
+      stats: {
+        total,
+        byBdm: byBdmRaw
+          .map(b => ({ bdmId: b.createdById, bdmName: nameById.get(b.createdById) || 'Unknown', count: b._count.id }))
+          .sort((a, b) => b.count - a.count)
+      },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
     });
 });
 

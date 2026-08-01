@@ -33,6 +33,7 @@ import {
   deleteMOM,
   getBDMFollowUps,
   getBDMDashboardStats,
+  getBdmLeads,
   getTeamPerformanceSummary,
   getTeamPerformanceLeads,
   getBDMSidebarCounts,
@@ -173,6 +174,8 @@ router.get('/bdm/dashboard-stats', getBDMDashboardStats);
 
 // Team Performance — TL oversight surface. Both endpoints gate on the
 // controller (TL sees own team, admin can pass ?teamLeaderId=<id>).
+// BDM field-visit leads (GPS captured at creation) — management only
+router.get('/bdm-leads/list', requireRole('MASTER', 'ADMIN', 'SALES_DIRECTOR', 'SUPER_ADMIN'), getBdmLeads);
 router.get('/team-performance/summary', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'), getTeamPerformanceSummary);
 router.get('/team-performance/leads', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'), getTeamPerformanceLeads);
 

@@ -281,6 +281,12 @@ model Lead {
   meetingPlace            String?
   latitude                Float?
   longitude               Float?
+  // BDM GPS location captured at lead creation (self-generate flow).
+  // Distinct from latitude/longitude above, which hold the meeting/site location.
+  createdLatitude         Float?
+  createdLongitude        Float?
+  locationAccuracy        Float?
+  locationCapturedAt      DateTime?
   bandwidthRequirement    String?
   fullAddress             String?
   meetingCount            Int             @default(1)
@@ -540,6 +546,7 @@ model Lead {
   @@index([assignedToId, status, callLaterAt])
   @@index([assignedToId, meetingDate])
   @@index([assignedToId, deliveryStatus])
+  @@index([createdById, locationCapturedAt])
   @@index([feasibilityAssignedToId, status])
   @@index([opsApprovalStatus, status])
   @@index([status, opsApprovalStatus, docsVerifiedAt])
