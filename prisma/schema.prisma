@@ -1636,6 +1636,9 @@ enum StoreProductType {
   FIBER
   MEDIA_CONVERTER
   ROUTER
+  UPS
+  BATTERY
+  SERVER_RACK
 }
 
 enum POStatus {

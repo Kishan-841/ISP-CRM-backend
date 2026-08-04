@@ -61,7 +61,7 @@ export const createProduct = asyncHandler(async function createProduct(req, res)
     }
 
     // Validate category
-    const validCategories = ['SWITCH', 'SFP', 'CLOSURE', 'RF', 'PATCH_CORD', 'FIBER', 'MEDIA_CONVERTER', 'ROUTER'];
+    const validCategories = ['SWITCH', 'SFP', 'CLOSURE', 'RF', 'PATCH_CORD', 'FIBER', 'MEDIA_CONVERTER', 'ROUTER', 'UPS', 'BATTERY', 'SERVER_RACK'];
     if (!validCategories.includes(category)) {
       return res.status(400).json({ message: 'Invalid product category' });
     }
@@ -192,7 +192,10 @@ export const getProductCategories = asyncHandler(async function getProductCatego
       { value: 'PATCH_CORD', label: 'Patch Cord', isSerialized: false },
       { value: 'FIBER', label: 'Fiber', isSerialized: false },
       { value: 'MEDIA_CONVERTER', label: 'Media Converter', isSerialized: true },
-      { value: 'ROUTER', label: 'Router', isSerialized: true }
+      { value: 'ROUTER', label: 'Router', isSerialized: true },
+      { value: 'UPS', label: 'UPS', isSerialized: true },
+      { value: 'BATTERY', label: 'Battery', isSerialized: true },
+      { value: 'SERVER_RACK', label: 'Server Rack', isSerialized: true }
     ];
     res.json(categories);
 });
