@@ -10247,6 +10247,7 @@ export const getCompletedLeadsQueue = asyncHandler(async function getCompletedLe
     // Format leads
     const formattedLeads = leads.map(lead => ({
       id: lead.id,
+      leadNumber: lead.leadNumber,
       company: lead.campaignData?.company || '-',
       name: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim() || '-',
       email: lead.campaignData?.email,
@@ -10282,6 +10283,7 @@ export const getCompletedLeadsQueue = asyncHandler(async function getCompletedLe
       actualPlanIsActive: lead.actualPlanIsActive,
       actualPlanStartDate: lead.actualPlanStartDate,
       actualPlanEndDate: lead.actualPlanEndDate,
+      actualPlanBillingCycle: lead.actualPlanBillingCycle,
       actualPlanCreatedAt: lead.actualPlanCreatedAt,
       actualPlanCreatedBy: lead.actualPlanCreatedBy,
       actualPlanNotes: lead.actualPlanNotes,
