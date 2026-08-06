@@ -1911,6 +1911,10 @@ export const getBDMScheduledMeetings = asyncHandler(async function getBDMSchedul
       campaign: lead.campaignData.campaign,
       // Bandwidth
       bandwidthRequirement: lead.bandwidthRequirement,
+      // BDM GPS captured at lead creation — prefills the outcome form's
+      // customer-location (lat/long) fields.
+      createdLatitude: lead.createdLatitude,
+      createdLongitude: lead.createdLongitude,
       // Products
       products: lead.products.map(lp => lp.product),
       // Created by
