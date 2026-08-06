@@ -110,6 +110,12 @@ export const createUser = asyncHandler(async function createUser(req, res) {
     return res.status(403).json({ message: 'You can only create BDM users.' });
   }
 
+  // Sales Director can create users, but never an account at or above their
+  // own privilege level.
+  if (req.user.role === 'SALES_DIRECTOR' && ['MASTER', 'SUPER_ADMIN', 'SALES_DIRECTOR'].includes(role)) {
+    return res.status(403).json({ message: 'You cannot create admin-level users.' });
+  }
+
   const existingUser = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
     select: { id: true }
