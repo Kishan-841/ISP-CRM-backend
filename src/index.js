@@ -93,7 +93,11 @@ const corsOptions = {
     callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  // x-api-key: the public website's enquiry forms post directly from the
+  // visitor's browser to /api/public/website-leads/* with this header
+  // (accepted trade-off: the key is visible in page source; it can only
+  // create leads, and the intake rate limit + validation still apply).
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
   credentials: true
 };
 // Rate limiting — the default of 100/min was too tight for a real CRM
