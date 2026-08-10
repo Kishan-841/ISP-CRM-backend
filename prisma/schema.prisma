@@ -192,6 +192,8 @@ model CampaignData {
   linkedinUrl            String?
   source                 String?
   state                  String?
+  // Postal PIN from the public website enquiry form
+  pincode                String?
   whatsapp               String?
   callLogs               CallLog[]
   campaign               Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -1582,6 +1584,7 @@ enum LeadCreationSource {
   COLD_LEAD // BDM parked a cold lead from a lukewarm meeting
   SAM_REFERRAL // SAM referred an existing customer to a new opportunity
   SAM_DISPATCH // SAM operator filled the Create Lead form and assigned it directly to a BDM (no ISR funnel)
+  WEBSITE // Submitted through the public website enquiry form (website-leads intake API)
   UNKNOWN // Backfill default for legacy leads with ambiguous history
 }
 

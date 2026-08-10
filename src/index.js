@@ -17,6 +17,7 @@ import vendorRoutes from './routes/vendor.routes.js';
 import inventoryRoutes from './routes/inventory.routes.js';
 import storeRoutes from './routes/store.routes.js';
 import publicUploadRoutes from './routes/publicUpload.routes.js';
+import { publicWebsiteLeadRouter, websiteLeadRouter } from './routes/websiteLead.routes.js';
 import deliveryRequestRoutes from './routes/deliveryRequest.routes.js';
 import invoiceRoutes from './routes/invoice.routes.js';
 import creditNoteRoutes from './routes/creditNote.routes.js';
@@ -166,6 +167,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/leads', leadRoutes);
+app.use('/api/website-leads', websiteLeadRouter);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/vendors', vendorRoutes);
@@ -198,6 +200,9 @@ app.use('/api/integrations/sam', samIntegrationRoutes);
 
 // Public routes (no auth required)
 app.use('/api/public/upload', publicUploadRoutes);
+// Website enquiry-form intake — no staff auth; the route middleware checks
+// the shared x-api-key against WEBSITE_LEADS_API_KEY.
+app.use('/api/public/website-leads', publicWebsiteLeadRouter);
 // Inbound webhook receivers — no staff auth; each handler verifies its own
 // signature header against SAM_WEBHOOK_SECRET before reading the payload.
 app.use('/api/webhooks/sam', samWebhookInboundRoutes);
