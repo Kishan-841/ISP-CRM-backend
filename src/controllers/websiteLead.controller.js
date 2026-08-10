@@ -31,7 +31,12 @@ export const submitWebsiteLead = asyncHandler(async function submitWebsiteLead(r
   if (!formType) {
     return res.status(400).json({ success: false, message: 'Unknown form type.' });
   }
-  const { name, companyName, email, mobile, pincode, address } = req.body || {};
+  // Accept both the documented names and the aliases the website team's form
+  // actually sends (company for companyName, phone for mobile).
+  const body = req.body || {};
+  const { name, email, pincode, address } = body;
+  const companyName = body.companyName ?? body.company;
+  const mobile = body.mobile ?? body.phone;
 
   // Validation — mirror the website form's fields
   if (!name || !String(name).trim()) {
