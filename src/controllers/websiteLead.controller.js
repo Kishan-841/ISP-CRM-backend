@@ -5,12 +5,32 @@ import { notifyAllAdmins } from '../services/notification.service.js';
 
 // ─── Public intake ───────────────────────────────────────────────────────────
 //
-// POST /api/public/website-leads — called by the company website's enquiry
-// form (server-side, with the shared x-api-key header; key checked in the
-// route middleware). Every submission becomes a CampaignData row in the
-// auto-created WEBSITE campaign plus an unassigned Lead
-// (creationSource 'WEBSITE') that the Website Leads page lists.
+// The website has TWO separate enquiry forms, treated as separate entities:
+//   POST /api/public/website-leads/business   → Bandwidth for Business form
+//   POST /api/public/website-leads/enterprise → Enterprise form
+// Each maps to its own auto-created campaign; both create unassigned Leads
+// (creationSource 'WEBSITE') that the single Website Leads page lists with a
+// Type filter. Auth (x-api-key) is checked in the route middleware.
+const FORM_TYPES = {
+  BUSINESS: {
+    campaignCode: 'WEBSITE_BUSINESS',
+    campaignName: 'Website Leads — Business',
+    title: 'Website Enquiry — Business',
+    source: 'Website - Business'
+  },
+  ENTERPRISE: {
+    campaignCode: 'WEBSITE_ENTERPRISE',
+    campaignName: 'Website Leads — Enterprise',
+    title: 'Website Enquiry — Enterprise',
+    source: 'Website - Enterprise'
+  }
+};
+
 export const submitWebsiteLead = asyncHandler(async function submitWebsiteLead(req, res) {
+  const formType = FORM_TYPES[req.websiteFormType];
+  if (!formType) {
+    return res.status(400).json({ success: false, message: 'Unknown form type.' });
+  }
   const { name, companyName, email, mobile, pincode, address } = req.body || {};
 
   // Validation — mirror the website form's fields
@@ -42,14 +62,14 @@ export const submitWebsiteLead = asyncHandler(async function submitWebsiteLead(r
     return res.status(500).json({ success: false, message: 'CRM is not configured to accept leads yet.' });
   }
 
-  // Find-or-create the shared Website Leads campaign (same pattern as the
+  // Find-or-create the campaign for this form type (same pattern as the
   // SELF-GENERATED / SAM-GENERATED campaigns).
-  let campaign = await prisma.campaign.findFirst({ where: { code: 'WEBSITE' } });
+  let campaign = await prisma.campaign.findFirst({ where: { code: formType.campaignCode } });
   if (!campaign) {
     campaign = await prisma.campaign.create({
       data: {
-        code: 'WEBSITE',
-        name: 'Website Leads',
+        code: formType.campaignCode,
+        name: formType.campaignName,
         description: 'Leads submitted through the public website enquiry form',
         type: 'ALL',
         status: 'ACTIVE',
@@ -80,13 +100,13 @@ export const submitWebsiteLead = asyncHandler(async function submitWebsiteLead(r
         firstName: nameParts[0] || '',
         lastName: nameParts.slice(1).join(' ') || '',
         company: String(companyName).trim(),
-        title: 'Website Enquiry',
+        title: formType.title,
         phone: digitsOnly,
         email: email ? String(email).trim() : null,
         address: address ? String(address).trim() : null,
         pincode: cleanedPincode || null,
         status: 'NEW',
-        source: 'Website',
+        source: formType.source,
         notes: repeat ? 'Repeat enquiry — this mobile number already exists in the CRM.' : null
       }
     });
@@ -105,11 +125,12 @@ export const submitWebsiteLead = asyncHandler(async function submitWebsiteLead(r
     return { lead: createdLead };
   });
 
+  const typeLabel = req.websiteFormType === 'BUSINESS' ? 'Business' : 'Enterprise';
   await notifyAllAdmins(
     'WEBSITE_LEAD',
     'New Website Lead',
-    `${companyName} (${name}) submitted an enquiry on the website${repeat ? ' — repeat enquiry' : ''}.`,
-    { leadId: lead.id, leadNumber }
+    `${companyName} (${name}) submitted a ${typeLabel} enquiry on the website${repeat ? ' — repeat enquiry' : ''}.`,
+    { leadId: lead.id, leadNumber, formType: req.websiteFormType }
   );
 
   res.status(201).json({ success: true, leadNumber, repeat });
@@ -122,8 +143,14 @@ export const submitWebsiteLead = asyncHandler(async function submitWebsiteLead(r
 export const getWebsiteLeads = asyncHandler(async function getWebsiteLeads(req, res) {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+  const { type } = req.query; // 'BUSINESS' | 'ENTERPRISE' | undefined (all)
 
-  const where = { creationSource: 'WEBSITE' };
+  const where = {
+    creationSource: 'WEBSITE',
+    ...(FORM_TYPES[type]
+      ? { campaignData: { campaign: { code: FORM_TYPES[type].campaignCode } } }
+      : {})
+  };
 
   const [total, leads] = await Promise.all([
     prisma.lead.count({ where }),
@@ -143,7 +170,8 @@ export const getWebsiteLeads = asyncHandler(async function getWebsiteLeads(req, 
             phone: true,
             pincode: true,
             address: true,
-            notes: true
+            notes: true,
+            campaign: { select: { code: true } }
           }
         }
       },
