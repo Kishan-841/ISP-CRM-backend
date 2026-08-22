@@ -11,6 +11,7 @@ import userRoutes from './routes/user.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
 import productRoutes from './routes/product.routes.js';
 import leadRoutes from './routes/lead.routes.js';
+import bodRoutes from './routes/bod.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import emailRoutes from './routes/email.routes.js';
 import vendorRoutes from './routes/vendor.routes.js';
@@ -18,6 +19,7 @@ import inventoryRoutes from './routes/inventory.routes.js';
 import storeRoutes from './routes/store.routes.js';
 import publicUploadRoutes from './routes/publicUpload.routes.js';
 import { publicWebsiteLeadRouter, websiteLeadRouter } from './routes/websiteLead.routes.js';
+import { publicContactMessageRouter, contactMessageRouter } from './routes/contactMessage.routes.js';
 import deliveryRequestRoutes from './routes/deliveryRequest.routes.js';
 import invoiceRoutes from './routes/invoice.routes.js';
 import creditNoteRoutes from './routes/creditNote.routes.js';
@@ -48,6 +50,7 @@ import { startFollowUpReminderJob } from './jobs/followUpReminder.js';
 import { startInvoiceGenerationJob } from './jobs/invoiceGeneration.js';
 import { startContractRenewalReminder } from './jobs/contractRenewalReminder.js';
 import { startDemoPlanExpiryJob } from './jobs/demoPlanExpiry.js';
+import { startBodLifecycleJob } from './jobs/bodLifecycle.js';
 import { startMeetingReminderJob } from './jobs/meetingReminder.js';
 import { startFollowUpPopupJob } from './jobs/followUpPopupReminder.js';
 import { startSamVisitReminderJob } from './jobs/samVisitReminder.js';
@@ -171,7 +174,9 @@ app.use('/api/users', userRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/leads', leadRoutes);
+app.use('/api/bod', bodRoutes);
 app.use('/api/website-leads', websiteLeadRouter);
+app.use('/api/contact-messages', contactMessageRouter);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/vendors', vendorRoutes);
@@ -207,6 +212,8 @@ app.use('/api/public/upload', publicUploadRoutes);
 // Website enquiry-form intake — no staff auth; the route middleware checks
 // the shared x-api-key against WEBSITE_LEADS_API_KEY.
 app.use('/api/public/website-leads', publicWebsiteLeadRouter);
+// Website contact-page form — same x-api-key as the website-leads intake.
+app.use('/api/public/contact-messages', publicContactMessageRouter);
 // Inbound webhook receivers — no staff auth; each handler verifies its own
 // signature header against SAM_WEBHOOK_SECRET before reading the payload.
 app.use('/api/webhooks/sam', samWebhookInboundRoutes);
@@ -257,6 +264,7 @@ httpServer.listen(PORT, () => {
   startInvoiceGenerationJob();
   startContractRenewalReminder();
   startDemoPlanExpiryJob();
+  startBodLifecycleJob();
   startMeetingReminderJob();
   startFollowUpPopupJob();
   startSamVisitReminderJob();

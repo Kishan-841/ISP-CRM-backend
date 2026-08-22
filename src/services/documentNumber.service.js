@@ -23,6 +23,7 @@ const DOCUMENT_CONFIG = {
   COMPLAINT: { prefix: 'COMP' },
   ENQUIRY: { prefix: 'ENQ' },
   SERVICE_ORDER: { prefix: 'SO' },
+  BOD: { prefix: 'BOD' },
   LEAD: { prefix: 'lead' },
   STORE_PO: { prefix: 'PO' },
   GIIRN: { prefix: 'G' },
@@ -145,6 +146,14 @@ export const generateEnquiryNumber = async (enquiryDate = new Date()) => {
  */
 export const generateServiceOrderNumber = async (orderDate = new Date()) => {
   return generateDocumentNumber('SERVICE_ORDER', orderDate);
+};
+
+/**
+ * Generate Bandwidth-on-Demand request number
+ * Format: BOD/DD/MM/YY-XXXX
+ */
+export const generateBODNumber = async (requestDate = new Date()) => {
+  return generateDocumentNumber('BOD', requestDate);
 };
 
 /**

@@ -1110,10 +1110,12 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     ]);
     // Legacy customers returned from delivery, awaiting billing details.
     const legacyPendingBilling = await prisma.legacyCustomer.count({ where: { status: 'PENDING_BILLING' } });
+    // Bandwidth-on-Demand requests waiting for accounts to bill.
+    const bodPendingAccounts = await prisma.bandwidthOnDemand.count({ where: { status: 'PENDING_ACCOUNTS' } });
     if (isMaster) {
-      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned, customerRequestsPending, legacyPendingBilling });
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, accountsComplaintsAssigned, customerRequestsPending, legacyPendingBilling, bodPendingAccounts });
     } else {
-      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned, customerRequestsPending, legacyPendingBilling });
+      Object.assign(counts, { accountsPending, demoPlanPending, createPlanPending, vendorsPendingAccounts, vendorDocsToVerify, orderRequestsPending, complaintsAssigned: accountsComplaintsAssigned, customerRequestsPending, legacyPendingBilling, bodPendingAccounts });
     }
   }
 

@@ -32,6 +32,8 @@ model User {
   emailsSent                         EmailLog[]               @relation("EmailsSent")
   inventoryCreated                   InventoryItem[]          @relation("InventoryCreatedBy")
   invoicesCreated                    Invoice[]                @relation("InvoicesCreatedBy")
+  bodRequestsCreated                 BandwidthOnDemand[]      @relation("BodCreatedBy")
+  bodRequestsBilled                  BandwidthOnDemand[]      @relation("BodBilledBy")
   paymentsCreated                    InvoicePayment[]         @relation("PaymentsCreatedBy")
   advancePaymentsCreated             AdvancePayment[]         @relation("AdvancePaymentsCreatedBy")
   creditNotesCreated                 CreditNote[]             @relation("CreditNotesCreatedBy")
@@ -475,6 +477,7 @@ model Lead {
   materialReturns              MaterialReturn[]           @relation("MaterialReturns")
   uploadLinks                  DocumentUploadLink[]
   invoices                     Invoice[]                  @relation("LeadInvoices")
+  bodRequests                  BandwidthOnDemand[]        @relation("LeadBodRequests")
   ledgerEntries                LedgerEntry[]              @relation("CustomerLedger")
   advancePayments              AdvancePayment[]           @relation("AdvancePayments")
   accountsVerifiedBy           User?                      @relation("AccountsVerifiedBy", fields: [accountsVerifiedById], references: [id], onDelete: SetNull)
@@ -1098,6 +1101,7 @@ model Invoice {
   remainingAmount      Float?
   createdBy            User                @relation("InvoicesCreatedBy", fields: [createdById], references: [id])
   lead                 Lead                @relation("LeadInvoices", fields: [leadId], references: [id], onDelete: Restrict)
+  bodRequest           BandwidthOnDemand?  @relation("BodInvoice")
   payments             InvoicePayment[]    @relation("InvoicePayments")
   creditNotes          CreditNote[]        @relation("InvoiceCreditNotes")
   adjustedCreditNotes  CreditNote[]        @relation("CreditNoteAdjustments")
@@ -1595,6 +1599,15 @@ enum InterestLevel {
 }
 
 enum NotificationType {
+  WEBSITE_LEAD
+  CONTACT_MESSAGE
+  BOD_REQUEST
+  BOD_SENT_BACK
+  BOD_BILLED
+  BOD_PROVISION
+  BOD_ACTIVE
+  BOD_ENDING
+  BOD_EXPIRED
   DATA_ASSIGNED
   LEAD_ASSIGNED
   LEAD_CONVERTED
@@ -1689,6 +1702,68 @@ enum DeliveryRequestStatus {
   ASSIGNED
   DISPATCHED
   COMPLETED
+}
+
+// ─── Contact form messages ───────────────────────────────────────────────────
+// "Send us a message" submissions from the public website's contact page
+// (public API, same x-api-key as website leads). Not leads — just messages
+// the team reads on /dashboard/contact-messages.
+model ContactMessage {
+  id        String    @id @default(uuid())
+  name      String
+  company   String?
+  phone     String?
+  email     String?
+  subject   String?
+  message   String
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([isRead, createdAt])
+  @@index([createdAt])
+}
+
+// ─── Bandwidth on Demand ──────────────────────────────────────────────────────
+// Temporary bandwidth boost for an ACTIVE customer, billed as a one-off invoice.
+// Lives beside the plan: actualPlan*/arcAmount are never modified by BOD.
+enum BodStatus {
+  PENDING_ACCOUNTS // raised by BDM/TL, waiting for accounts
+  SENT_BACK        // accounts returned it with a note; creator edits + resubmits
+  BILLED           // invoice generated; NOC notified to provision from startDate
+  ACTIVE           // startDate reached (set by daily job)
+  EXPIRED          // endDate passed (set by daily job); NOC notified to revert
+  CANCELLED
+}
+
+model BandwidthOnDemand {
+  id                    String    @id @default(uuid())
+  bodNumber             String    @unique
+  leadId                String
+  currentPlanBandwidth  Int?      // snapshot of the plan bandwidth at request time (Mbps)
+  requestedBandwidthMbps Int
+  durationDays          Int
+  startDate             DateTime
+  endDate               DateTime  // startDate + durationDays - 1
+  price                 Float     // base amount; GST added at billing
+  remarks               String?
+  accountsNote          String?   // reason when accounts sends it back
+  status                BodStatus @default(PENDING_ACCOUNTS)
+  invoiceId             String?   @unique
+  createdById           String
+  billedById            String?
+  billedAt              DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  lead                  Lead      @relation("LeadBodRequests", fields: [leadId], references: [id], onDelete: Restrict)
+  invoice               Invoice?  @relation("BodInvoice", fields: [invoiceId], references: [id])
+  createdBy             User      @relation("BodCreatedBy", fields: [createdById], references: [id])
+  billedBy              User?     @relation("BodBilledBy", fields: [billedById], references: [id])
+
+  @@index([leadId, status])
+  @@index([status, startDate])
+  @@index([status, endDate])
+  @@index([createdById, status])
 }
 
 enum InvoiceStatus {

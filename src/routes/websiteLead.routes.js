@@ -5,8 +5,9 @@ import { submitWebsiteLead, getWebsiteLeads } from '../controllers/websiteLead.c
 
 // ─── Public intake router (mounted at /api/public/website-leads, no staff auth)
 
-// The website's server calls this with the shared secret; nothing else may.
-const requireApiKey = (req, res, next) => {
+// The website calls public intake endpoints with the shared secret; nothing
+// else may. Also used by the contact-form intake (same website, same key).
+export const requireApiKey = (req, res, next) => {
   const configured = process.env.WEBSITE_LEADS_API_KEY;
   if (!configured) {
     // Deliberately disabled until the key is provisioned.
