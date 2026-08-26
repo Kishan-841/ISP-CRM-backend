@@ -666,6 +666,15 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
       productIds,
       bandwidthRequirement,
       notes,
+      // Existing (competitor) connection — all three mandatory. Drives the
+      // ISP Expiry Tracker so management can chase renewals before they lapse.
+      existingIsp,
+      existingBandwidth,
+      existingPlanExpiryDate,
+      // BDM GPS capture (mandatory for field roles)
+      createdLatitude,
+      createdLongitude,
+      locationAccuracy,
     } = req.body;
 
     if (!name || !name.trim()) return res.status(400).json({ message: 'Full name is required.' });
@@ -680,6 +689,37 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
     if (phoneDigits.length !== 10) {
       return res.status(400).json({ message: 'Phone number must be exactly 10 digits.' });
     }
+
+    // Existing connection details — required so the ISP Expiry Tracker
+    // always has something to filter on.
+    if (!existingIsp || !String(existingIsp).trim()) {
+      return res.status(400).json({ message: 'Existing ISP is required.' });
+    }
+    if (!existingBandwidth || !String(existingBandwidth).trim()) {
+      return res.status(400).json({ message: 'Existing bandwidth is required.' });
+    }
+    if (!existingPlanExpiryDate) {
+      return res.status(400).json({ message: 'Existing plan expiry date is required.' });
+    }
+    const parsedExpiry = new Date(existingPlanExpiryDate);
+    if (Number.isNaN(parsedExpiry.getTime())) {
+      return res.status(400).json({ message: 'Existing plan expiry date is not a valid date.' });
+    }
+
+    // BDM GPS location: mandatory for field roles, optional for admins who
+    // may be adding a lead on someone's behalf from a desk.
+    const parsedLat = parseFloat(createdLatitude);
+    const parsedLng = parseFloat(createdLongitude);
+    const hasValidLocation =
+      Number.isFinite(parsedLat) && parsedLat >= -90 && parsedLat <= 90 &&
+      Number.isFinite(parsedLng) && parsedLng >= -180 && parsedLng <= 180;
+    const isBdmCreator = ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(userRole);
+    if (isBdmCreator && !hasValidLocation) {
+      return res.status(400).json({
+        message: 'Location access is required to create a lead. Please enable location permission and try again.'
+      });
+    }
+    const parsedAccuracy = parseFloat(locationAccuracy);
 
     // Global dedup against existing campaign data
     const existingPhone = await prisma.campaignData.findFirst({
@@ -782,11 +822,21 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
           leadNumber,
           requirements: notes?.trim() || null,
           bandwidthRequirement: bandwidthRequirement?.trim() || null,
+          existingIsp: String(existingIsp).trim(),
+          existingBandwidth: String(existingBandwidth).trim(),
+          existingPlanExpiryDate: parsedExpiry,
           createdById: userId,
           assignedToId: userId,
           status: 'NEW',
           type: 'QUALIFIED',
           creationSource: 'BDM_DIRECT_LEAD',
+          // locationCapturedAt is server-stamped so clients can't backdate it.
+          ...(hasValidLocation ? {
+            createdLatitude: parsedLat,
+            createdLongitude: parsedLng,
+            locationAccuracy: Number.isFinite(parsedAccuracy) ? parsedAccuracy : null,
+            locationCapturedAt: new Date()
+          } : {}),
           ...(productIds && productIds.length > 0 && {
             products: { create: productIds.map((productId) => ({ productId })) }
           })
@@ -4962,6 +5012,9 @@ export const getBdmLeads = asyncHandler(async function getBdmLeads(req, res) {
           createdLongitude: true,
           locationAccuracy: true,
           locationCapturedAt: true,
+          existingIsp: true,
+          existingBandwidth: true,
+          existingPlanExpiryDate: true,
           createdBy: { select: { id: true, name: true } },
           campaignData: { select: { company: true, name: true, phone: true } }
         },
@@ -4987,6 +5040,125 @@ export const getBdmLeads = asyncHandler(async function getBdmLeads(req, res) {
       leads,
       stats: {
         total,
+        byBdm: byBdmRaw
+          .map(b => ({ bdmId: b.createdById, bdmName: nameById.get(b.createdById) || 'Unknown', count: b._count.id }))
+          .sort((a, b) => b.count - a.count)
+      },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+    });
+});
+
+// ========== ISP EXPIRY TRACKER ==========
+
+// Management view of stage-1 leads (BDM added them, nobody has moved them
+// forward) that are still on a competitor's connection, ordered by when that
+// connection lapses. The point is to chase the renewal window before it closes.
+//
+// "Stage 1" is Lead.status === 'NEW': the BDM has not dispositioned the lead,
+// so it has not reached the feasibility queue (which reads status QUALIFIED).
+// Access enforced at the route (MASTER / ADMIN / SALES_DIRECTOR / SUPER_ADMIN).
+export const getIspExpiryLeads = asyncHandler(async function getIspExpiryLeads(req, res) {
+    const { bdmId, month, dateFrom, dateTo, search } = req.query;
+    const { page, limit, skip } = parsePagination(req.query, 20);
+
+    // Month filter ("YYYY-MM") and the explicit from/to range are alternatives.
+    // Month wins when both are sent, since it is the coarser deliberate choice.
+    let expiryRange = null;
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [year, mon] = month.split('-').map(Number);
+      expiryRange = {
+        gte: new Date(year, mon - 1, 1, 0, 0, 0, 0),
+        lte: new Date(year, mon, 0, 23, 59, 59, 999)
+      };
+    } else if (dateFrom || dateTo) {
+      expiryRange = {
+        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+        ...(dateTo ? { lte: new Date(new Date(dateTo).setHours(23, 59, 59, 999)) } : {})
+      };
+    }
+
+    // Leads that predate this feature have no expiry date, so they can never
+    // be actioned here — exclude them rather than showing blank rows.
+    const baseWhere = {
+      status: 'NEW',
+      existingPlanExpiryDate: { not: null }
+    };
+
+    const where = {
+      ...baseWhere,
+      ...(bdmId ? { createdById: bdmId } : {}),
+      ...(expiryRange ? { existingPlanExpiryDate: expiryRange } : {}),
+      ...(search?.trim() ? {
+        OR: [
+          { existingIsp: { contains: search.trim(), mode: 'insensitive' } },
+          { campaignData: { company: { contains: search.trim(), mode: 'insensitive' } } },
+          { campaignData: { name: { contains: search.trim(), mode: 'insensitive' } } },
+          { campaignData: { phone: { contains: search.trim() } } }
+        ]
+      } : {})
+    };
+
+    // Urgency buckets are computed over the whole stage-1 set, not the current
+    // filter, so the cards stay a stable "what's coming" summary while the
+    // table below is being narrowed down.
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const in30 = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const in90 = new Date(startOfToday.getTime() + 90 * 24 * 60 * 60 * 1000);
+
+    const [total, leads, expired, thisMonth, next30, next90, byBdmRaw] = await Promise.all([
+      prisma.lead.count({ where }),
+      prisma.lead.findMany({
+        where,
+        select: {
+          id: true,
+          leadNumber: true,
+          createdAt: true,
+          existingIsp: true,
+          existingBandwidth: true,
+          existingPlanExpiryDate: true,
+          bandwidthRequirement: true,
+          requirements: true,
+          createdLatitude: true,
+          createdLongitude: true,
+          locationAccuracy: true,
+          locationCapturedAt: true,
+          createdBy: { select: { id: true, name: true } },
+          assignedTo: { select: { id: true, name: true } },
+          campaignData: { select: { company: true, name: true, phone: true, email: true, city: true } }
+        },
+        // Soonest-to-lapse first — that is the follow-up order.
+        orderBy: { existingPlanExpiryDate: 'asc' },
+        take: limit,
+        skip
+      }),
+      prisma.lead.count({ where: { ...baseWhere, existingPlanExpiryDate: { lt: startOfToday } } }),
+      prisma.lead.count({ where: { ...baseWhere, existingPlanExpiryDate: { gte: startOfToday, lte: endOfMonth } } }),
+      prisma.lead.count({ where: { ...baseWhere, existingPlanExpiryDate: { gte: startOfToday, lte: in30 } } }),
+      prisma.lead.count({ where: { ...baseWhere, existingPlanExpiryDate: { gte: startOfToday, lte: in90 } } }),
+      // Unfiltered per-BDM counts drive the filter dropdown.
+      prisma.lead.groupBy({
+        by: ['createdById'],
+        where: baseWhere,
+        _count: { id: true }
+      })
+    ]);
+
+    const bdmUsers = await prisma.user.findMany({
+      where: { id: { in: byBdmRaw.map(b => b.createdById) } },
+      select: { id: true, name: true }
+    });
+    const nameById = new Map(bdmUsers.map(u => [u.id, u.name]));
+
+    res.json({
+      leads,
+      stats: {
+        total,
+        expired,
+        thisMonth,
+        next30,
+        next90,
         byBdm: byBdmRaw
           .map(b => ({ bdmId: b.createdById, bdmName: nameById.get(b.createdById) || 'Unknown', count: b._count.id }))
           .sort((a, b) => b.count - a.count)

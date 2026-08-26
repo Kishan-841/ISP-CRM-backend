@@ -292,6 +292,14 @@ model Lead {
   locationAccuracy        Float?
   locationCapturedAt      DateTime?
   bandwidthRequirement    String?
+  // The connection the prospect is on TODAY (a competitor's plan), captured
+  // when a BDM adds the lead from the BDM queue. Distinct from
+  // bandwidthRequirement above, which is what they want to buy FROM us.
+  // Nullable because leads created before this feature have no values;
+  // the BDM add-lead controller enforces them as required at write time.
+  existingIsp             String?
+  existingBandwidth       String?
+  existingPlanExpiryDate  DateTime?
   fullAddress             String?
   meetingCount            Int             @default(1)
   accountsNotes           String?
@@ -552,6 +560,9 @@ model Lead {
   @@index([assignedToId, meetingDate])
   @@index([assignedToId, deliveryStatus])
   @@index([createdById, locationCapturedAt])
+  // ISP Expiry Tracker: stage-1 leads ordered by when their current
+  // provider's plan runs out.
+  @@index([status, existingPlanExpiryDate])
   @@index([feasibilityAssignedToId, status])
   @@index([opsApprovalStatus, status])
   @@index([status, opsApprovalStatus, docsVerifiedAt])

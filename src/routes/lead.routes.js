@@ -34,6 +34,7 @@ import {
   getBDMFollowUps,
   getBDMDashboardStats,
   getBdmLeads,
+  getIspExpiryLeads,
   getTeamPerformanceSummary,
   getTeamPerformanceLeads,
   getBDMSidebarCounts,
@@ -176,6 +177,9 @@ router.get('/bdm/dashboard-stats', getBDMDashboardStats);
 // controller (TL sees own team, admin can pass ?teamLeaderId=<id>).
 // BDM field-visit leads (GPS captured at creation) — management only
 router.get('/bdm-leads/list', requireRole('MASTER', 'ADMIN', 'SALES_DIRECTOR', 'SUPER_ADMIN'), getBdmLeads);
+// ISP Expiry Tracker — stage-1 leads still on a competitor's connection,
+// surfaced so management can chase them before that plan lapses.
+router.get('/isp-expiry/list', requireRole('MASTER', 'ADMIN', 'SALES_DIRECTOR', 'SUPER_ADMIN'), getIspExpiryLeads);
 router.get('/team-performance/summary', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'), getTeamPerformanceSummary);
 router.get('/team-performance/leads', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'), getTeamPerformanceLeads);
 
