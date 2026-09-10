@@ -125,6 +125,16 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
   res.json(paginatedResponse({ data: items, total, page, limit }));
 });
 
+// Vendor type is stored as a camelCase key. The export is read by humans, so
+// render the same labels the delivery screens show rather than the raw key.
+const VENDOR_TYPE_LABELS = {
+  ownNetwork: 'Own Network',
+  fiberVendor: 'Fiber Vendor',
+  commissionVendor: 'Commission Vendor',
+  thirdParty: 'Third Party',
+  telco: 'Telco',
+};
+
 // GET /api/customer-360/export?q=term
 // Streams an XLSX file containing every customer matching the search (no
 // pagination). Uses the same search filter shape as /search so the exported
@@ -200,6 +210,11 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
       tentativeOpex: true,
       actualCapex: true,
       actualOpex: true,
+      // Vendor type — delivery's actual pick, feasibility's estimate, or the
+      // pre-column legacy value buried in feasibilityNotes JSON.
+      feasibilityVendorType: true,
+      feasibilityNotes: true,
+      deliveryProducts: true,
       // OTC status derivation
       otcInvoiceId: true,
       otcInvoiceGeneratedAt: true,
@@ -277,6 +292,29 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
     return 'Unpaid';
   };
 
+  // Vendor type, resolved the same way this export already resolves CAPEX/OPEX:
+  // the delivery actual wins over the feasibility estimate, because delivery can
+  // set up a different vendor type than feasibility planned for.
+  //
+  // Third fallback is the legacy feasibilityNotes JSON, which is where vendorType
+  // lived before the feasibilityVendorType column existed — without it, older
+  // leads would export a blank cell despite having the data. Mirrors getFeasibility.
+  const vendorTypeFor = (l) => {
+    const dp = l.deliveryProducts && typeof l.deliveryProducts === 'object' ? l.deliveryProducts : {};
+    let raw = dp.vendorType || l.feasibilityVendorType || null;
+    if (!raw && l.feasibilityNotes) {
+      try {
+        const parsed = typeof l.feasibilityNotes === 'string'
+          ? JSON.parse(l.feasibilityNotes)
+          : l.feasibilityNotes;
+        raw = parsed?.vendorType || null;
+      } catch {
+        // feasibilityNotes is free text on most leads — not JSON, not an error.
+      }
+    }
+    return raw ? (VENDOR_TYPE_LABELS[raw] || raw) : '';
+  };
+
   // Flatten each lead into a single row. Ordering: identity columns first
   // (Lead#, company, contact, phone, email), then BDM-entered commercials
   // (bandwidth, IPs, ARC, OTC, OTC status, CAPEX, OPEX) as the user
@@ -304,6 +342,7 @@ export const exportCustomers = asyncHandler(async function exportCustomers(req, 
       'OTC Status': otcStatusFor(l),
       'CAPEX': capex,
       'OPEX': opex,
+      'Vendor Type': vendorTypeFor(l),
       // Remaining columns
       'City': cd.city || '',
       'State': cd.state || '',
