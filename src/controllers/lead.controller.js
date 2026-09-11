@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/db.js';
+import { assertProductsAllowed } from '../utils/productVisibility.js';
 import { notifyLeadConverted, notifyFeasibilityAssigned, notifyFeasibilityReturned, notifyFeasibilityApproved, notifyVendorDocsReminder, notifyAllAdmins, createNotification } from '../services/notification.service.js';
 import { randomUUID } from 'crypto';
 import { isValidDocumentType, validateDocuments, getRequiredDocumentTypes, isOtherDocumentKey, OTHER_KEY_PREFIX } from '../config/documentTypes.js';
@@ -564,6 +565,11 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
       }
     }
 
+    // A hidden dropdown is only cosmetic — a stale tab or a replayed request
+    // could still attach a product this BDM may not sell. No-op for every
+    // other role. See utils/productVisibility.js.
+    await assertProductsAllowed(prisma, req.user, productIds);
+
     // Only add products if productIds provided and not empty
     if (productIds && productIds.length > 0) {
       leadData.products = {
@@ -780,6 +786,11 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
         }
       }
     }
+
+    // A hidden dropdown is only cosmetic — a stale tab or a replayed request
+    // could still attach a product this BDM may not sell. No-op for every
+    // other role. See utils/productVisibility.js.
+    await assertProductsAllowed(prisma, req.user, productIds);
 
     // Validate products if provided
     if (productIds && productIds.length > 0) {
@@ -1086,6 +1097,11 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
         data: campaignDataUpdate
       });
     }
+
+    // A hidden dropdown is only cosmetic — a stale tab or a replayed request
+    // could still attach a product this BDM may not sell. No-op for every
+    // other role. See utils/productVisibility.js.
+    await assertProductsAllowed(prisma, req.user, productIds);
 
     // If productIds is provided, update the products
     if (productIds !== undefined) {
@@ -2331,6 +2347,11 @@ export const bdmDisposition = asyncHandler(async function bdmDisposition(req, re
         reason: notes || 'Parked as cold lead after lukewarm meeting',
       });
     }
+
+    // A hidden dropdown is only cosmetic — a stale tab or a replayed request
+    // could still attach a product this BDM may not sell. No-op for every
+    // other role. See utils/productVisibility.js.
+    await assertProductsAllowed(prisma, req.user, productIds);
 
     // Update products if provided
     if (productIds && Array.isArray(productIds) && productIds.length > 0) {
@@ -4910,6 +4931,9 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
           locationCapturedAt: new Date()
         } : {})
       };
+
+      // Same guard as the other product-attaching endpoints.
+      await assertProductsAllowed(prisma, req.user, productIds);
 
       // Add products if provided
       if (productIds && productIds.length > 0) {
