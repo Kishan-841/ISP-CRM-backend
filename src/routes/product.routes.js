@@ -19,9 +19,10 @@ router.get('/', getProducts);
 router.get('/parents', getParentProducts); // For dropdown (root-level products only)
 router.get('/:id', getProduct);
 
-// Admin only routes
-router.post('/', requireRole('SUPER_ADMIN'), createProduct);
-router.put('/:id', requireRole('SUPER_ADMIN'), updateProduct);
-router.delete('/:id', requireRole('SUPER_ADMIN'), deleteProduct);
+// Admin routes. Sales Director manages the product catalogue alongside
+// Super Admin, including which BDMs each product is visible to.
+router.post('/', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR'), createProduct);
+router.put('/:id', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR'), updateProduct);
+router.delete('/:id', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR'), deleteProduct);
 
 export default router;
