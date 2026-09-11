@@ -21,6 +21,8 @@ model User {
   callLogs                           CallLog[]
   collectionCalls                    CollectionCallLog[]      @relation("CollectionCallsMade")
   assignedCampaigns                  CampaignAssignment[]
+  // Products this BDM has been granted access to (see ProductAssignment).
+  productAssignments                 ProductAssignment[]
   createdCampaignData                CampaignData[]           @relation("CampaignDataCreatedBy")
   deliveryRequestsAssignedToStore    DeliveryRequest[]        @relation("DeliveryRequestAssignedToStore")
   deliveryRequestsPushedToNoc        DeliveryRequest[]        @relation("DeliveryRequestPushedToNoc")
@@ -253,6 +255,27 @@ model Product {
   storeSerialItems StoreSerialItem[]
   storeStock       StoreStock[]
   intakeLogs       StoreStockIntakeLog[]
+  // Which BDMs may sell this product. EMPTY MEANS VISIBLE TO EVERYONE —
+  // restriction is opt-in, so existing products need no backfill.
+  assignments      ProductAssignment[]
+}
+
+// Restricts a product to named BDMs. A product with no rows here is visible to
+// every BDM; adding a row narrows it to the listed users only.
+//
+// Mirrors the CampaignAssignment pattern. Cascades on both sides so deleting a
+// product or a user never strands rows.
+model ProductAssignment {
+  id         String   @id @default(uuid())
+  userId     String
+  productId  String
+  assignedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([productId])
+  @@index([userId])
 }
 
 model Lead {
