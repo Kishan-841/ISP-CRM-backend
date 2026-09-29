@@ -72,11 +72,6 @@ export async function previewLeadDeletion(leadId) {
     statusChangeLogs,
     notifications,
     nexusConversations,
-    samMeetings,
-    samVisits,
-    samCommunications,
-    samAssignmentHistory,
-    samAssignments,
     leadProducts,
     moms,
     uploadLinks,
@@ -101,11 +96,6 @@ export async function previewLeadDeletion(leadId) {
     lead.customerUsername
       ? prisma.nexusConversation.count({ where: { customerUserId: lead.customerUsername } })
       : 0,
-    prisma.sAMMeeting.count({ where: { customerId: leadId } }),
-    prisma.sAMVisit.count({ where: { customerId: leadId } }),
-    prisma.customerCommunication.count({ where: { customerId: leadId } }),
-    prisma.sAMAssignmentHistory.count({ where: { customerId: leadId } }),
-    prisma.sAMAssignment.count({ where: { customerId: leadId } }),
     prisma.leadProduct.count({ where: { leadId } }),
     prisma.mOM.count({ where: { leadId } }),
     prisma.documentUploadLink.count({ where: { leadId } }),
@@ -143,11 +133,6 @@ export async function previewLeadDeletion(leadId) {
       statusChangeLogs,
       notifications,
       nexusConversations,
-      samMeetings,
-      samVisits,
-      samCommunications,
-      samAssignmentHistory,
-      samAssignments,
       // ↓ auto-cascade with Lead
       leadProducts,
       minutesOfMeeting: moms,
@@ -213,7 +198,7 @@ async function _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCa
   }
 
   // Also collect Cloudinary references pre-transaction. Complaint IDs and
-  // service-order IDs are cascaded away in step 10 of the transaction, so if
+  // service-order IDs are cascaded away in step 9 of the transaction, so if
   // we wait we'd have no way to reconstruct their folder prefixes.
   const cloudinaryRefs = await collectCloudinaryRefs(leadId);
 
@@ -225,14 +210,7 @@ async function _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCa
       });
     }
 
-    // ─── 2. SAM post-sale records ───────────────────────────────────────
-    await tx.sAMMeeting.deleteMany({ where: { customerId: leadId } });
-    await tx.sAMVisit.deleteMany({ where: { customerId: leadId } });
-    await tx.customerCommunication.deleteMany({ where: { customerId: leadId } });
-    await tx.sAMAssignmentHistory.deleteMany({ where: { customerId: leadId } });
-    await tx.sAMAssignment.deleteMany({ where: { customerId: leadId } });
-
-    // ─── 3. Invoice grandchildren → Invoices ────────────────────────────
+    // ─── 2. Invoice grandchildren → Invoices ────────────────────────────
     const invoiceIds = await tx.invoice.findMany({
       where: { leadId },
       select: { id: true },
@@ -246,25 +224,25 @@ async function _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCa
     await tx.invoice.deleteMany({ where: { leadId } });
     await tx.advancePayment.deleteMany({ where: { leadId } });
 
-    // ─── 4. Ledger (scoped strictly to this lead's customerId) ──────────
+    // ─── 3. Ledger (scoped strictly to this lead's customerId) ──────────
     //     Important: customerId = leadId, so no cross-lead deletion risk.
     await tx.ledgerEntry.deleteMany({ where: { customerId: leadId } });
 
-    // ─── 5. Vendor POs ──────────────────────────────────────────────────
+    // ─── 4. Vendor POs ──────────────────────────────────────────────────
     await tx.vendorPurchaseOrder.deleteMany({ where: { leadId } });
 
-    // ─── 6. Delivery requests (items + logs cascade) ───────────────────
+    // ─── 5. Delivery requests (items + logs cascade) ───────────────────
     await tx.deliveryRequest.deleteMany({ where: { leadId } });
 
-    // ─── 7. Remaining lead-scoped collection calls (if any without invoiceId) ─
+    // ─── 6. Remaining lead-scoped collection calls (if any without invoiceId) ─
     await tx.collectionCallLog.deleteMany({ where: { leadId } });
 
-    // ─── 8. Status change logs for this entity ─────────────────────────
+    // ─── 7. Status change logs for this entity ─────────────────────────
     await tx.statusChangeLog.deleteMany({
       where: { entityType: 'LEAD', entityId: leadId },
     });
 
-    // ─── 9. Notifications referencing leadId in metadata ───────────────
+    // ─── 8. Notifications referencing leadId in metadata ───────────────
     try {
       await tx.notification.deleteMany({
         where: { metadata: { path: ['leadId'], equals: leadId } },
@@ -273,19 +251,19 @@ async function _doDeleteLeadEntirely({ leadId, deletedById, reason, alsoDeleteCa
       /* JSON path query can fail silently on weird metadata shapes; skip */
     }
 
-    // ─── 10. The Lead itself — cascades to ───────────────────────────────
+    // ─── 9. The Lead itself — cascades to ───────────────────────────────
     //     LeadProduct, MOM, DocumentUploadLink, PlanUpgradeHistory, Complaint
     //     (+ ComplaintAssignment + ComplaintAttachment), CustomerComplaintRequest,
     //     ServiceOrder. These do NOT need manual deletion.
     await tx.lead.delete({ where: { id: leadId } });
 
-    // ─── 11. Optionally wipe the underlying CampaignData + its CallLogs ──
+    // ─── 10. Optionally wipe the underlying CampaignData + its CallLogs ──
     if (alsoDeleteCampaignData && preview.lead.campaignDataId) {
       // CallLog has onDelete: Cascade on campaignData, so deleting CD removes them.
       await tx.campaignData.delete({ where: { id: preview.lead.campaignDataId } });
     }
 
-    // ─── 12. Write the audit row (can never be cascaded away) ───────────
+    // ─── 11. Write the audit row (can never be cascaded away) ───────────
     const audit = await tx.leadDeletionAudit.create({
       data: {
         leadId,

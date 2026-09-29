@@ -11,7 +11,6 @@ import {
   getDocumentsReport,
   downloadAllDocuments,
   getComplaints,
-  getSamActivity,
   getFeasibility
 } from '../controllers/customer360.controller.js';
 
@@ -35,7 +34,6 @@ router.get('/:id/billing', getBilling);
 router.get('/:id/documents', getDocuments);
 router.get('/:id/documents/download', downloadDocuments);
 router.get('/:id/complaints', getComplaints);
-router.get('/:id/sam', getSamActivity);
 router.get('/:id/feasibility', getFeasibility);
 
 export default router;

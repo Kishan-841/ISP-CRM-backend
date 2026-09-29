@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import prisma from '../config/db.js';
 import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
 import { logStatusChange } from '../services/statusChangeLog.service.js';
+import { isBdmLikeRole } from '../utils/bdmRoles.js';
 
 export const getUsers = asyncHandler(async function getUsers(req, res) {
   const isTL = req.user.role === 'BDM_TEAM_LEADER';
@@ -127,9 +128,12 @@ export const createUser = asyncHandler(async function createUser(req, res) {
 
   // For Team Leader, auto-assign themselves; otherwise validate provided teamLeaderId
   const effectiveTeamLeaderId = isTL ? req.user.id : teamLeaderId || null;
-  if (effectiveTeamLeaderId && !isTL) {
-    const validLeaderRoles = ['BDM_TEAM_LEADER', 'NOC_HEAD', 'SAM_HEAD'];
-    const tl = await prisma.user.findUnique({ where: { id: effectiveTeamLeaderId }, select: { role: true, isActive: true } });
+  // SAM always works solo (spec: "SAM never has a team leader").
+  const finalRole = isTL ? 'BDM' : (role || 'ISR');
+  const finalTeamLeaderId = finalRole === 'SAM' ? null : effectiveTeamLeaderId;
+  if (finalTeamLeaderId && !isTL) {
+    const validLeaderRoles = ['BDM_TEAM_LEADER', 'NOC_HEAD'];
+    const tl = await prisma.user.findUnique({ where: { id: finalTeamLeaderId }, select: { role: true, isActive: true } });
     if (!tl || !validLeaderRoles.includes(tl.role) || !tl.isActive) {
       return res.status(400).json({ message: 'Invalid team leader.' });
     }
@@ -142,8 +146,8 @@ export const createUser = asyncHandler(async function createUser(req, res) {
       passwordIsHashed: false,
       name,
       mobile: mobile?.trim() || null,
-      role: isTL ? 'BDM' : (role || 'ISR'),
-      ...(effectiveTeamLeaderId && { teamLeaderId: effectiveTeamLeaderId })
+      role: finalRole,
+      ...(finalTeamLeaderId && { teamLeaderId: finalTeamLeaderId })
     },
     select: {
       id: true,
@@ -209,10 +213,19 @@ export const updateUser = asyncHandler(async function updateUser(req, res) {
   }
 
   // Validate teamLeaderId if provided (only admins can change team leader)
-  if (teamLeaderId && !isTL) {
+  const resultingRole = role || existingUser.role;
+  if (teamLeaderId && !isTL && resultingRole !== 'SAM') {
     const tl = await prisma.user.findUnique({ where: { id: teamLeaderId }, select: { role: true, isActive: true } });
     if (!tl || tl.role !== 'BDM_TEAM_LEADER' || !tl.isActive) {
       return res.status(400).json({ message: 'Invalid team leader.' });
+    }
+  }
+
+  // A team leader with active members cannot become SAM (SAM never leads a team).
+  if (resultingRole === 'SAM' && existingUser.role === 'BDM_TEAM_LEADER') {
+    const activeMembers = await prisma.user.count({ where: { teamLeaderId: id, isActive: true } });
+    if (activeMembers > 0) {
+      return res.status(400).json({ message: "Move this team leader's team members to another team leader before changing their role to SAM." });
     }
   }
 
@@ -227,6 +240,8 @@ export const updateUser = asyncHandler(async function updateUser(req, res) {
     updateData.passwordIsHashed = false;
   }
   if (teamLeaderId !== undefined && !isTL) updateData.teamLeaderId = teamLeaderId || null;
+  // SAM never has a team leader, even when changing an existing BDM into SAM.
+  if ((updateData.role || existingUser.role) === 'SAM') updateData.teamLeaderId = null;
 
   const user = await prisma.user.update({
     where: { id },
@@ -278,10 +293,11 @@ export const getUsersByRole = asyncHandler(async function getUsersByRole(req, re
   };
 
   // Only exclude SUPER_ADMIN when fetching ALL roles
+  // SAM_INTEGRATION is a machine account and is never listed.
   if (role && role !== 'ALL') {
-    whereClause.role = role;
+    whereClause.role = role === 'SAM_INTEGRATION' ? { in: [] } : role;
   } else {
-    whereClause.role = { not: 'SUPER_ADMIN' };
+    whereClause.role = { notIn: ['SUPER_ADMIN', 'SAM_INTEGRATION'] };
   }
 
   // Conditionally include team-leader fields so existing callers
@@ -783,38 +799,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
     Object.assign(counts, { followUps, callingQueue, retryQueue });
   }
 
-  if (userRole === 'SAM' || isMaster) {
-    // SAM counts: follow-ups, calling queue, retry queue
-    const [samFollowUps, samCallingQueue, samRetryQueue] = await Promise.all([
-      prisma.campaignData.count({
-        where: {
-          ...(!isMaster && { assignedToId: userId }),
-          status: 'CALL_LATER',
-          callLaterAt: { not: null, lte: endOfToday }
-        }
-      }),
-      prisma.campaignData.count({
-        where: {
-          ...(!isMaster && { assignedToId: userId }),
-          status: 'NEW'
-        }
-      }),
-      prisma.campaignData.count({
-        where: {
-          ...(!isMaster && { assignedToId: userId }),
-          status: { in: ['RINGING_NOT_PICKED', 'NOT_REACHABLE'] },
-          lead: null // Not converted to lead
-        }
-      })
-    ]);
-    if (isMaster) {
-      Object.assign(counts, { samFollowUps, samCallingQueue, samRetryQueue });
-    } else {
-      Object.assign(counts, { followUps: samFollowUps, callingQueue: samCallingQueue, retryQueue: samRetryQueue });
-    }
-  }
-
-  if (userRole === 'BDM' || isMaster) {
+  if (isBdmLikeRole(userRole) || isMaster) {
     // BDM counts: queue, calling queue, retry queue, meetings, follow-ups, delivery completed, opportunity pipeline, cold leads
     const [queue, bdmCallingQueue, bdmRetryQueue, meetings, bdmFollowUps, deliveryCompleted, leadPipeline, coldLeadsPending] = await Promise.all([
       prisma.lead.count({
@@ -1233,71 +1218,6 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       Object.assign(counts, { adminPoApprovalPending });
     } else {
       Object.assign(counts, { poApprovalPending: adminPoApprovalPending });
-    }
-  }
-
-  if (userRole === 'SAM_HEAD' || isMaster) {
-    const [unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries] = await Promise.all([
-      prisma.lead.count({
-        where: {
-          customerUserId: { not: null },
-          samAssignment: null
-        }
-      }),
-      prisma.lead.count({
-        where: {
-          customerUserId: { not: null },
-          contractEndDate: { not: null, lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
-          samAssignment: { isNot: null }
-        }
-      }),
-      prisma.serviceOrder.count({
-        // SAM_HEAD oversight: orders sitting in either of the early
-        // approval gates (delivery + sales director).
-        where: { status: { in: ['PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL'] } }
-      }),
-      prisma.customerEnquiry.count({
-        where: { status: 'SUBMITTED' }
-      }),
-    ]);
-    Object.assign(counts, { unassignedCustomers, contractExpiring, allOrdersPending, pendingEnquiries });
-  }
-
-  if (userRole === 'SAM_EXECUTIVE' || isMaster) {
-    const [pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending] = await Promise.all([
-      prisma.sAMMeeting.count({
-        where: {
-          ...(!isMaster && { samExecutiveId: userId }),
-          status: 'COMPLETED',
-          momEmailSentAt: null
-        }
-      }),
-      prisma.sAMVisit.count({
-        where: {
-          ...(!isMaster && { samExecutiveId: userId }),
-          status: 'SCHEDULED',
-          visitDate: { lt: new Date() }
-        }
-      }),
-      prisma.lead.count({
-        where: {
-          customerUserId: { not: null },
-          contractEndDate: { not: null, lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
-          ...(!isMaster && { samAssignment: { samExecutiveId: userId } })
-        }
-      }),
-      prisma.serviceOrder.count({
-        // Their own orders waiting at either early-approval gate.
-        where: {
-          ...(!isMaster && { createdById: userId }),
-          status: { in: ['PENDING_DELIVERY_APPROVAL', 'PENDING_SALES_DIRECTOR_APPROVAL'] }
-        }
-      }),
-    ]);
-    if (isMaster) {
-      Object.assign(counts, { pendingMomEmails, overdueVisits, samExecContractExpiring, samExecOrdersPending });
-    } else {
-      Object.assign(counts, { pendingMomEmails, overdueVisits, contractExpiring: samExecContractExpiring, ordersPending: samExecOrdersPending });
     }
   }
 

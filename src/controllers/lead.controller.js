@@ -9,6 +9,7 @@ import { deleteFromCloudinary, getResourceType } from '../config/cloudinary.js';
 import { generateOTCInvoiceNumber, generateInvoiceNumber, generateCreditNoteNumber, generateVendorPONumber, generateLeadNumber } from '../services/documentNumber.service.js';
 import { createInvoiceLedgerEntry, deleteLedgerEntriesForInvoice, createCreditNoteLedgerEntry } from '../services/ledger.service.js';
 import { isAdminOrTestUser, canHardDelete, hasRole, hasAnyRole } from '../utils/roleHelper.js';
+import { BDM_LIKE_ROLES, isBdmLike, isBdmLikeRole } from '../utils/bdmRoles.js';
 import { isLeadContactVisible, maskLeadContactFields, applyLeadContactMask } from '../utils/leadMasking.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { sendEmail } from '../services/email.service.js';
@@ -130,7 +131,7 @@ const OPPORTUNITY_STAGE_FILTERS = {
 // overwrite this OR and let a BDM see every other BDM's leads.
 const buildOpportunityRoleClause = (user) => {
   const isAdmin = isAdminOrTestUser(user);
-  const isBDM = hasRole(user, 'BDM');
+  const isBDM = isBdmLike(user);
   const isTL = hasRole(user, 'BDM_TEAM_LEADER');
   const isFeasibilityTeam = hasRole(user, 'FEASIBILITY_TEAM');
   if (isAdmin || isFeasibilityTeam) return null;
@@ -169,7 +170,7 @@ export const getOpportunityPipelineStats = asyncHandler(async function getOpport
 export const getLeads = asyncHandler(async function getLeads(req, res) {
     const userId = req.user.id;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isBDM = hasRole(req.user, 'BDM');
+    const isBDM = isBdmLike(req.user);
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isFeasibilityTeam = hasRole(req.user, 'FEASIBILITY_TEAM');
 
@@ -439,11 +440,11 @@ export const getLead = asyncHandler(async function getLead(req, res) {
     // Ownership gate. Mirrors the role-scope getLeads applies, so a BDM
     // who'd never see a lead in their list also can't open it by guessing
     // its id. Other roles (admin / TL / Feasibility / Docs / Accounts /
-    // OPS / Delivery / NOC / SAM / Support / Store / Area Head / SA2) all
+    // OPS / Delivery / NOC / Support / Store / Area Head / SA2) all
     // have legitimate cross-BDM visibility on leads in their workflow, so
-    // they pass through. BDM/BDM_CP must own the lead; ISR must have
-    // created it.
-    const isBdm = hasAnyRole(req.user, ['BDM', 'BDM_CP']);
+    // they pass through. BDM-like roles (BDM, SAM) and BDM_CP must own the
+    // lead; ISR must have created it.
+    const isBdm = hasAnyRole(req.user, [...BDM_LIKE_ROLES, 'BDM_CP']);
     const isTl = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
     const isISR = hasRole(req.user, 'ISR');
@@ -533,7 +534,7 @@ export const convertToLead = asyncHandler(async function convertToLead(req, res)
     let creationSource = 'UNKNOWN';
     if (campaignData.isSelfGenerated === true && uploaderRole === 'ISR') {
       creationSource = 'ISR_SELF_DATA';
-    } else if (['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(uploaderRole)) {
+    } else if ([...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'].includes(uploaderRole)) {
       creationSource = 'BULK_UPLOAD_BDM';
     } else if (['SUPER_ADMIN', 'ADMIN', 'MASTER'].includes(uploaderRole)) {
       creationSource = 'BULK_UPLOAD_ADMIN';
@@ -654,7 +655,7 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
     const userRole = req.user.role;
 
     // Only BDM-family roles can add direct leads to their own queue
-    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'].includes(userRole)) {
+    if (![...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'].includes(userRole)) {
       return res.status(403).json({ message: 'Only BDM users can add direct leads.' });
     }
 
@@ -719,7 +720,7 @@ export const createDirectLead = asyncHandler(async function createDirectLead(req
     const hasValidLocation =
       Number.isFinite(parsedLat) && parsedLat >= -90 && parsedLat <= 90 &&
       Number.isFinite(parsedLng) && parsedLng >= -180 && parsedLng <= 180;
-    const isBdmCreator = ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(userRole);
+    const isBdmCreator = [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'].includes(userRole);
     if (isBdmCreator && !hasValidLocation) {
       return res.status(400).json({
         message: 'Location access is required to create a lead. Please enable location permission and try again.'
@@ -986,7 +987,7 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
     const isUserAdmin = isAdminOrTestUser(req.user);
     const isAssignedBDM = existing.assignedToId === userId;
     const isCreator = existing.createdById === userId;
-    const isBDMOrTL = hasAnyRole(req.user, ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER']);
+    const isBDMOrTL = hasAnyRole(req.user, [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER']);
 
     if (!isUserAdmin && !(isBDMOrTL && (isAssignedBDM || isCreator))) {
       return res.status(403).json({ message: 'You can only update leads assigned to or created by you.' });
@@ -1006,8 +1007,8 @@ export const updateLead = asyncHandler(async function updateLead(req, res) {
       }
     }
 
-    // BDM/BDM_CP cannot change status from leads table - must use call disposition
-    if ((userRole === 'BDM' || userRole === 'BDM_CP') && status !== undefined) {
+    // BDM-like roles (BDM, SAM) and BDM_CP cannot change status from leads table - must use call disposition
+    if ((isBdmLikeRole(userRole) || userRole === 'BDM_CP') && status !== undefined) {
       return res.status(403).json({
         message: 'BDM cannot change lead status directly. Use call disposition instead.'
       });
@@ -1253,7 +1254,7 @@ export const getBDMUsers = asyncHandler(async function getBDMUsers(req, res) {
     // the Pipeline ARC dropdown can drill into any role that owns leads.
     const whereClause = isTL
       ? { isActive: true, OR: [{ role: 'BDM', teamLeaderId: req.user.id }, { id: req.user.id }] }
-      : { isActive: true, role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] } };
+      : { isActive: true, role: { in: [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'] } };
 
     const bdmUsers = await prisma.user.findMany({
       where: whereClause,
@@ -1271,40 +1272,32 @@ export const getBDMUsers = asyncHandler(async function getBDMUsers(req, res) {
 
 // Get BDM Team Leaders for assignment dropdown (ISR uses this)
 export const getTeamLeaders = asyncHandler(async function getTeamLeaders(req, res) {
-    // Surface BDM Team Leaders AND standalone BDMs (BDMs not under any TL) so
-    // ISR/SAM flows can assign data to them directly. Without this, BDMs who
+    // Surface BDM Team Leaders AND solo BDM-like users (BDM/SAM with no TL) so
+    // ISR flows can assign data to them directly. Without this, users who
     // sit outside any team are unreachable from the assignment dropdown.
     const users = await prisma.user.findMany({
       where: {
         isActive: true,
         OR: [
           { role: 'BDM_TEAM_LEADER' },
-          { role: 'BDM', teamLeaderId: null },
+          { role: { in: [...BDM_LIKE_ROLES] }, teamLeaderId: null },
         ],
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
-      orderBy: [
-        { role: 'asc' },   // BDM before BDM_TEAM_LEADER alphabetically — TLs first feels right but role names alphabetize the other way; we resort below.
-        { name: 'asc' },
-      ],
+      select: { id: true, name: true, email: true, role: true },
+      orderBy: { name: 'asc' },
     });
 
-    // Sort TLs first, then standalone BDMs, each group alphabetised.
+    // TLs first, then solo BDM-like users (BDM, SAM), each alphabetised.
     users.sort((a, b) => {
-      if (a.role !== b.role) return a.role === 'BDM_TEAM_LEADER' ? -1 : 1;
-      return a.name.localeCompare(b.name);
+      const rank = (u) => (u.role === 'BDM_TEAM_LEADER' ? 0 : 1);
+      return rank(a) - rank(b) || a.name.localeCompare(b.name);
     });
 
     const formatted = users.map(u => ({
       id: u.id,
       name: u.name,
       email: u.email,
-      kind: u.role === 'BDM_TEAM_LEADER' ? 'TL' : 'BDM',
+      kind: u.role === 'BDM_TEAM_LEADER' ? 'TL' : u.role, // 'BDM' | 'SAM'
     }));
 
     res.json({ users: formatted });
@@ -1326,7 +1319,7 @@ export const checkLeadExists = asyncHandler(async function checkLeadExists(req, 
 // Get BDM calling queue (leads assigned to BDM with NEW status only)
 export const getBDMQueue = asyncHandler(async function getBDMQueue(req, res) {
     const userId = req.user.id;
-    const isBDM = hasRole(req.user, 'BDM');
+    const isBDM = isBdmLike(req.user);
     const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
@@ -1651,7 +1644,7 @@ export const reassignLeadToBDM = asyncHandler(async function reassignLeadToBDM(r
       select: { id: true, name: true, role: true, isActive: true, teamLeaderId: true }
     });
 
-    if (!bdm || !['BDM', 'BDM_TEAM_LEADER'].includes(bdm.role) || !bdm.isActive) {
+    if (!bdm || ![...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER'].includes(bdm.role) || !bdm.isActive) {
       return res.status(400).json({ message: 'Invalid BDM user.' });
     }
 
@@ -1733,7 +1726,7 @@ export const bulkReassignLeadsToBDM = asyncHandler(async function bulkReassignLe
       select: { id: true, name: true, role: true, isActive: true, teamLeaderId: true }
     });
 
-    if (!bdm || !['BDM', 'BDM_TEAM_LEADER'].includes(bdm.role) || !bdm.isActive) {
+    if (!bdm || ![...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER'].includes(bdm.role) || !bdm.isActive) {
       return res.status(400).json({ message: 'Invalid BDM user.' });
     }
 
@@ -1808,11 +1801,11 @@ export const transferAllLeads = asyncHandler(async function transferAllLeads(req
       })
     ]);
 
-    if (!fromBdm || !['BDM', 'BDM_TEAM_LEADER'].includes(fromBdm.role)) {
+    if (!fromBdm || ![...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER'].includes(fromBdm.role)) {
       return res.status(400).json({ message: 'Invalid source BDM.' });
     }
 
-    if (!toBdm || !['BDM', 'BDM_TEAM_LEADER'].includes(toBdm.role) || !toBdm.isActive) {
+    if (!toBdm || ![...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER'].includes(toBdm.role) || !toBdm.isActive) {
       return res.status(400).json({ message: 'Target BDM must be an active BDM user.' });
     }
 
@@ -1894,7 +1887,7 @@ export const transferAllLeads = asyncHandler(async function transferAllLeads(req
 
 // Get BDM scheduled meetings
 export const getBDMScheduledMeetings = asyncHandler(async function getBDMScheduledMeetings(req, res) {
-    const isBDM = hasRole(req.user, 'BDM');
+    const isBDM = isBdmLike(req.user);
     const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
@@ -2043,7 +2036,7 @@ export const updateLeadLocation = asyncHandler(async function updateLeadLocation
 
     // Authorization: Only admin or the assigned BDM can update location
     const isUserAdmin = isAdminOrTestUser(req.user);
-    const isBDMOrTL = hasAnyRole(req.user, ['BDM', 'BDM_TEAM_LEADER']);
+    const isBDMOrTL = hasAnyRole(req.user, [...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER']);
     if (!isUserAdmin && !(isBDMOrTL && lead.assignedToId === req.user.id)) {
       return res.status(403).json({ message: 'You can only update locations of leads assigned to you.' });
     }
@@ -2460,7 +2453,7 @@ export const getLeadMOMs = asyncHandler(async function getLeadMOMs(req, res) {
 
     // Ownership gate — same shape as getLead. Other roles still get to
     // read MOMs for leads they handle through their workflow.
-    const isBdm = hasAnyRole(req.user, ['BDM', 'BDM_CP']);
+    const isBdm = hasAnyRole(req.user, [...BDM_LIKE_ROLES, 'BDM_CP']);
     const isTl = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
     if (isBdm && !isTl && !isAdmin) {
@@ -2539,7 +2532,7 @@ export const deleteMOM = asyncHandler(async function deleteMOM(req, res) {
 // Get BDM follow-ups
 export const getBDMFollowUps = asyncHandler(async function getBDMFollowUps(req, res) {
     const userId = req.user.id;
-    const isBDM = hasRole(req.user, 'BDM');
+    const isBDM = isBdmLike(req.user);
     const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
@@ -2627,7 +2620,7 @@ export const getBDMFollowUps = asyncHandler(async function getBDMFollowUps(req, 
 // Get BDM delivery completed leads
 export const getBDMDeliveryCompleted = asyncHandler(async function getBDMDeliveryCompleted(req, res) {
     const userId = req.user.id;
-    const isBDM = hasRole(req.user, 'BDM');
+    const isBDM = isBdmLike(req.user);
     const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
@@ -4760,10 +4753,8 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
       createAsLead,
       // Product IDs (optional)
       productIds,
-      // SAM can assign to a BDM Team Leader
+      // ISR can assign to a BDM Team Leader
       assignToTeamLeaderId,
-      // SAM can assign to an ISR (new flow)
-      assignToISRId,
       // BDM GPS capture (mandatory for BDM-type roles)
       createdLatitude,
       createdLongitude,
@@ -4783,7 +4774,7 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
     const hasValidLocation =
       Number.isFinite(parsedLat) && parsedLat >= -90 && parsedLat <= 90 &&
       Number.isFinite(parsedLng) && parsedLng >= -180 && parsedLng <= 180;
-    const isBdmCreator = ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(req.user.role);
+    const isBdmCreator = [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'].includes(req.user.role);
     if (isBdmCreator && !hasValidLocation) {
       return res.status(400).json({
         message: 'Location access is required to create a lead. Please enable location permission and try again.'
@@ -4812,17 +4803,13 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
       });
     }
 
-    const isSAMRole = ['SAM_EXECUTIVE', 'SAM_HEAD'].includes(req.user.role);
-
     // If campaignId not provided, we need a default "Self Generated" campaign
     let targetCampaignId = campaignId;
 
     if (!targetCampaignId) {
-      // Determine campaign code based on role/flow
-      const useSAMCampaign = isSAMRole || assignToISRId;
-      const campaignCode = useSAMCampaign ? 'SAM-GENERATED' : 'SELF-GENERATED';
-      const campaignName = useSAMCampaign ? 'SAM Generated Leads' : 'Self Generated Leads';
-      const campaignDesc = useSAMCampaign ? 'Leads created by SAM team' : 'Campaign for leads created by ISRs';
+      const campaignCode = 'SELF-GENERATED';
+      const campaignName = 'Self Generated Leads';
+      const campaignDesc = 'Campaign for leads created by ISRs';
 
       let selfCampaign = await prisma.campaign.findFirst({
         where: { code: campaignCode }
@@ -4850,10 +4837,8 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
 
-    // For SAM roles (or admin on SAM page) using ISR flow: assign to ISR, don't create lead
-    const samISRFlow = (isSAMRole || isAdminOrTestUser(req.user)) && assignToISRId;
-    const effectiveAssigneeId = samISRFlow ? assignToISRId : (assignToTeamLeaderId || userId);
-    const effectiveCreateAsLead = samISRFlow ? false : createAsLead;
+    const effectiveAssigneeId = assignToTeamLeaderId || userId;
+    const effectiveCreateAsLead = createAsLead;
 
     // Create CampaignData entry
     const campaignData = await prisma.campaignData.create({
@@ -4876,7 +4861,7 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
         isSelfGenerated: true,
         createdById: userId,
         assignedToId: effectiveAssigneeId,
-        assignedByBdmId: (assignToTeamLeaderId || samISRFlow) ? userId : null,
+        assignedByBdmId: assignToTeamLeaderId ? userId : null,
         status: effectiveCreateAsLead ? 'INTERESTED' : 'NEW'
       },
       include: {
@@ -4889,31 +4874,12 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
       }
     });
 
-    // For SAM→ISR flow: upsert CampaignAssignment so ISR sees the campaign
-    if (samISRFlow) {
-      await prisma.campaignAssignment.upsert({
-        where: {
-          userId_campaignId: {
-            userId: assignToISRId,
-            campaignId: targetCampaignId
-          }
-        },
-        update: {},
-        create: {
-          userId: assignToISRId,
-          campaignId: targetCampaignId
-        }
-      });
-    }
-
     let lead = null;
 
-    // If createAsLead is true, also create a Lead entry (not for SAM→ISR flow)
+    // If createAsLead is true, also create a Lead entry
     if (effectiveCreateAsLead) {
       const leadNumber = await generateLeadNumber();
-      // SAM_EXECUTIVE/SAM_HEAD direct-create (no ISR routing) → SAM_REFERRAL.
-      // Otherwise this is an ISR creating their own lead → ISR_SELF_DATA.
-      const creationSource = isSAMRole ? 'SAM_REFERRAL' : 'ISR_SELF_DATA';
+      const creationSource = 'ISR_SELF_DATA';
       const leadData = {
         campaignDataId: campaignData.id,
         leadNumber,
@@ -4970,17 +4936,7 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
     }
 
     // Notify assignee
-    if (samISRFlow) {
-      await createNotification(
-        assignToISRId,
-        'DATA_ASSIGNED',
-        'New Data Assigned',
-        `${req.user.name} has assigned new data to you: ${company} (${contactName})`,
-        { campaignDataId: campaignData.id }
-      );
-      emitSidebarRefresh(assignToISRId);
-      emitSidebarRefreshByRole('ISR');
-    } else if (assignToTeamLeaderId) {
+    if (assignToTeamLeaderId) {
       await createNotification(
         assignToTeamLeaderId,
         'LEAD_ASSIGNED',
@@ -4994,11 +4950,9 @@ export const createSelfGeneratedLead = asyncHandler(async function createSelfGen
 
     res.status(201).json({
       success: true,
-      message: samISRFlow
-        ? 'Data created and assigned to ISR.'
-        : assignToTeamLeaderId
-          ? 'Lead created and assigned to Team Leader.'
-          : effectiveCreateAsLead ? 'Lead created successfully.' : 'Data saved successfully.',
+      message: assignToTeamLeaderId
+        ? 'Lead created and assigned to Team Leader.'
+        : effectiveCreateAsLead ? 'Lead created successfully.' : 'Data saved successfully.',
       campaignData,
       lead
     });
@@ -5197,7 +5151,7 @@ export const getIspExpiryLeads = asyncHandler(async function getIspExpiryLeads(r
 export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardStats(req, res) {
     const userRole = req.user.role;
     const isAdmin = isAdminOrTestUser(req.user);
-    const isBDM = hasRole(req.user, 'BDM');
+    const isBDM = isBdmLike(req.user);
     const isBDMCP = hasRole(req.user, 'BDM_CP');
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isOps = hasRole(req.user, 'OPS_TEAM');
@@ -5225,7 +5179,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
       const allBdms = await prisma.user.findMany({
         where: {
           isActive: true,
-          role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] }
+          role: { in: [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'] }
         },
         select: { id: true }
       });
@@ -5247,8 +5201,8 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
           where: { id: targetUserId },
           select: { role: true }
         });
-        if (!targetUser || !['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'].includes(targetUser.role)) {
-          return res.status(400).json({ message: 'Target user is not a BDM or Team Leader.' });
+        if (!targetUser || ![...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'].includes(targetUser.role)) {
+          return res.status(400).json({ message: 'Target user is not a BDM, SAM or Team Leader.' });
         }
         if (targetUser.role === 'BDM_TEAM_LEADER') {
           const teamMembers = await prisma.user.findMany({
@@ -5799,7 +5753,7 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
 export const getBDMSidebarCounts = asyncHandler(async function getBDMSidebarCounts(req, res) {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const isBDM = hasRole(req.user, 'BDM');
+    const isBDM = isBdmLike(req.user);
     const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
 
@@ -5865,7 +5819,7 @@ export const pushToDocsVerification = asyncHandler(async function pushToDocsVeri
     const files = req.files || [];
 
     // Check if user is BDM, Team Leader, or Admin/TestUser
-    if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
+    if (!isBdmLike(req.user) && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
       return res.status(403).json({ message: 'Only BDM, Team Leader, or Admin can push to verification.' });
     }
 
@@ -6211,7 +6165,7 @@ export const uploadDocument = asyncHandler(async function uploadDocument(req, re
     const file = req.file;
 
     // Validate user role
-    if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
+    if (!isBdmLike(req.user) && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
       return res.status(403).json({ message: 'Only BDM, Team Leader, or Admin can upload documents.' });
     }
 
@@ -6325,7 +6279,7 @@ export const removeDocument = asyncHandler(async function removeDocument(req, re
     const { id, documentType } = req.params;
 
     // Validate user role
-    if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
+    if (!isBdmLike(req.user) && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
       return res.status(403).json({ message: 'Only BDM, Team Leader, or Admin can remove documents.' });
     }
 
@@ -6407,7 +6361,7 @@ export const getLeadDocuments = asyncHandler(async function getLeadDocuments(req
     // Same ownership gate as getLead — BDMs/BDM_CPs only see docs for
     // leads they own; everyone else (admin, TL, doc/accounts/ops/etc.
     // teams who actually need to view documents) passes through.
-    const isBdm = hasAnyRole(req.user, ['BDM', 'BDM_CP']);
+    const isBdm = hasAnyRole(req.user, [...BDM_LIKE_ROLES, 'BDM_CP']);
     const isTl = hasRole(req.user, 'BDM_TEAM_LEADER');
     const isAdmin = isAdminOrTestUser(req.user);
     if (isBdm && !isTl && !isAdmin) {
@@ -6479,13 +6433,13 @@ export const pushToDocsVerificationTyped = asyncHandler(async function pushToDoc
     // fall back to the lead's existing flag (or true if never set).
     const { notes, testMode, arcAmount, otcAmount, advanceAmount, paymentTerms, hasGst } = req.body;
 
-    // Check if user is BDM, BDM_CP, Team Leader, or Admin/TestUser
-    if (!hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_CP') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
+    // Check if user is BDM-like (BDM, SAM), BDM_CP, Team Leader, or Admin/TestUser
+    if (!isBdmLike(req.user) && !hasRole(req.user, 'BDM_CP') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
       return res.status(403).json({ message: 'Only BDM, BDM(CP), Team Leader, or Admin can push to verification.' });
     }
 
-    // Only allow testMode for BDM/BDM_CP/Admin/TestUser
-    const allowTestMode = isAdminOrTestUser(req.user) || req.user.role === 'BDM' || req.user.role === 'BDM_CP' || req.user.role === 'BDM_TEAM_LEADER';
+    // Only allow testMode for BDM-like (BDM, SAM)/BDM_CP/Team Leader/Admin/TestUser
+    const allowTestMode = isAdminOrTestUser(req.user) || isBdmLikeRole(req.user.role) || req.user.role === 'BDM_CP' || req.user.role === 'BDM_TEAM_LEADER';
     const isTestMode = allowTestMode && testMode === true;
 
     // Find the lead
@@ -7748,7 +7702,7 @@ export const pushToInstallation = asyncHandler(async function pushToInstallation
     const userName = req.user.name;
 
     // Only OPS_TEAM, BDM, Team Leader, or SUPER_ADMIN can push to installation
-    if (!hasRole(req.user, 'OPS_TEAM') && !hasRole(req.user, 'BDM') && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
+    if (!hasRole(req.user, 'OPS_TEAM') && !isBdmLike(req.user) && !hasRole(req.user, 'BDM_TEAM_LEADER') && !isAdminOrTestUser(req.user)) {
       return res.status(403).json({ message: 'Only OPS Team, BDM or Team Leader can push leads to installation.' });
     }
 
@@ -11970,211 +11924,6 @@ export const getCustomerEnquiryQueue = asyncHandler(async function getCustomerEn
     res.json({ enquiries, total: enquiries.length });
 });
 
-// Get customer enquiry queue for SAM Head (referral enquiries pending assignment)
-export const getSAMHeadEnquiryQueue = asyncHandler(async function getSAMHeadEnquiryQueue(req, res) {
-    if (!hasAnyRole(req.user, ['SAM_HEAD', 'SUPER_ADMIN'])) {
-      return res.status(403).json({ message: 'Access denied.' });
-    }
-
-    const enquiries = await prisma.customerEnquiry.findMany({
-      where: { status: 'SUBMITTED' },
-      select: {
-        id: true,
-        enquiryNumber: true,
-        companyName: true,
-        contactName: true,
-        phone: true,
-        email: true,
-        city: true,
-        state: true,
-        requirements: true,
-        status: true,
-        createdAt: true,
-        createdLeadId: true,
-        referredByLead: {
-          select: {
-            id: true,
-            campaignData: {
-              select: { company: true }
-            }
-          }
-        },
-        createdLead: {
-          select: {
-            id: true,
-            status: true,
-            campaignDataId: true,
-            campaignData: {
-              select: {
-                id: true,
-                company: true,
-                name: true,
-                phone: true,
-                email: true,
-                city: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    res.json({ enquiries, total: enquiries.length });
-});
-
-// Assign a customer referral enquiry to an ISR
-export const assignEnquiryToISR = asyncHandler(async function assignEnquiryToISR(req, res) {
-    if (!hasAnyRole(req.user, ['SAM_HEAD', 'SUPER_ADMIN'])) {
-      return res.status(403).json({ message: 'Access denied.' });
-    }
-
-    const { enquiryId, isrId } = req.body;
-
-    if (!enquiryId || !isrId) {
-      return res.status(400).json({ message: 'Enquiry ID and ISR ID are required.' });
-    }
-
-    // Verify ISR exists and has ISR role
-    const isrUser = await prisma.user.findUnique({
-      where: { id: isrId },
-      select: { id: true, name: true, role: true }
-    });
-    if (!isrUser || isrUser.role !== 'ISR') {
-      return res.status(400).json({ message: 'Invalid ISR user.' });
-    }
-
-    // Find the enquiry with its created lead
-    const enquiry = await prisma.customerEnquiry.findUnique({
-      where: { id: enquiryId },
-      include: {
-        createdLead: {
-          select: { id: true, campaignDataId: true }
-        }
-      }
-    });
-
-    if (!enquiry) {
-      return res.status(404).json({ message: 'Enquiry not found.' });
-    }
-
-    if (enquiry.status !== 'SUBMITTED') {
-      return res.status(400).json({ message: 'Enquiry is no longer pending.' });
-    }
-
-    // Find or create CUSTOMER-REFERRAL campaign
-    let referralCampaign = await prisma.campaign.findFirst({
-      where: { code: 'CUSTOMER-REFERRAL' }
-    });
-
-    if (!referralCampaign) {
-      referralCampaign = await prisma.campaign.create({
-        data: {
-          code: 'CUSTOMER-REFERRAL',
-          name: 'Customer Referral Leads',
-          description: 'Leads from customer referral enquiries',
-          type: 'ALL',
-          status: 'ACTIVE',
-          dataSource: 'Customer Referral',
-          isActive: true,
-          createdById: req.user.id
-        }
-      });
-    }
-
-    // Get the CampaignData ID from the created lead (if exists)
-    const campaignDataId = enquiry.createdLead?.campaignDataId;
-
-    if (campaignDataId) {
-      // Delete the pre-created Lead (ISR will re-create via convert flow)
-      if (enquiry.createdLeadId) {
-        await prisma.lead.delete({ where: { id: enquiry.createdLeadId } });
-      }
-
-      // Update CampaignData: reassign to ISR, reset status
-      await prisma.campaignData.update({
-        where: { id: campaignDataId },
-        data: {
-          assignedToId: isrId,
-          campaignId: referralCampaign.id,
-          status: 'NEW'
-        }
-      });
-    } else {
-      // No existing CampaignData — create one from enquiry data
-      // Delete the pre-created Lead if it exists
-      if (enquiry.createdLeadId) {
-        await prisma.lead.delete({ where: { id: enquiry.createdLeadId } });
-      }
-
-      const nameParts = enquiry.contactName.trim().split(' ');
-      const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || '';
-
-      await prisma.campaignData.create({
-        data: {
-          campaignId: referralCampaign.id,
-          company: enquiry.companyName,
-          firstName,
-          lastName,
-          name: enquiry.contactName,
-          title: 'Contact',
-          email: enquiry.email || null,
-          phone: enquiry.phone,
-          city: enquiry.city || null,
-          state: enquiry.state || null,
-          source: 'Customer Referral',
-          notes: enquiry.requirements || null,
-          isSelfGenerated: true,
-          createdById: req.user.id,
-          assignedToId: isrId,
-          status: 'NEW'
-        }
-      });
-    }
-
-    // Update enquiry status
-    await prisma.customerEnquiry.update({
-      where: { id: enquiryId },
-      data: {
-        status: 'UNDER_REVIEW',
-        createdLeadId: null
-      }
-    });
-
-    // Upsert CampaignAssignment for ISR → CUSTOMER-REFERRAL campaign
-    await prisma.campaignAssignment.upsert({
-      where: {
-        userId_campaignId: {
-          userId: isrId,
-          campaignId: referralCampaign.id
-        }
-      },
-      update: {},
-      create: {
-        userId: isrId,
-        campaignId: referralCampaign.id
-      }
-    });
-
-    // Notify ISR
-    await createNotification(
-      isrId,
-      'DATA_ASSIGNED',
-      'Customer Referral Assigned',
-      `${req.user.name} assigned a customer referral to you: ${enquiry.companyName} (${enquiry.contactName})`,
-      { enquiryId }
-    );
-    emitSidebarRefresh(isrId);
-    emitSidebarRefreshByRole('ISR');
-    emitSidebarRefreshByRole('SAM_HEAD');
-
-    res.json({
-      success: true,
-      message: `Enquiry assigned to ISR ${isrUser.name}.`
-    });
-});
-
 // ========== END CUSTOMER ENQUIRY FUNCTIONS ==========
 
 // ========== CHANNEL PARTNER LEADS ==========
@@ -12344,7 +12093,7 @@ export const getBDMColdLeads = asyncHandler(async function getBDMColdLeads(req, 
     const userRole = req.user.role;
     const isAdmin = isAdminOrTestUser(req.user);
     const isTL = userRole === 'BDM_TEAM_LEADER';
-    const isBDM = userRole === 'BDM';
+    const isBDM = isBdmLikeRole(userRole);
     const isBDMCP = userRole === 'BDM_CP';
 
     if (!isAdmin && !isTL && !isBDM && !isBDMCP) {
@@ -12456,7 +12205,7 @@ export const completeColdLead = asyncHandler(async function completeColdLead(req
     const userRole = req.user.role;
     const isAdmin = isAdminOrTestUser(req.user);
     const isTL = userRole === 'BDM_TEAM_LEADER';
-    const isBDM = userRole === 'BDM';
+    const isBDM = isBdmLikeRole(userRole);
     const isBDMCP = userRole === 'BDM_CP';
 
     if (!isAdmin && !isTL && !isBDM && !isBDMCP) {
@@ -12612,7 +12361,7 @@ export const createOpportunity = asyncHandler(async function createOpportunity(r
     const userName = req.user.name;
     const userRole = req.user.role;
 
-    if (!['BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'].includes(userRole)) {
+    if (![...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'].includes(userRole)) {
       return res.status(403).json({ message: 'Only BDM users can create opportunities.' });
     }
 
@@ -13124,7 +12873,6 @@ export const getLeadsByBucket = asyncHandler(async function getLeadsByBucket(req
         assignedTo: { select: { id: true, name: true, role: true } },
         feasibilityAssignedTo: { select: { id: true, name: true } },
         nocAssignedTo: { select: { id: true, name: true } },
-        samAssignment: { select: { samExecutive: { select: { name: true } } } },
         // Display fields
         campaignData: {
           select: {
@@ -13312,7 +13060,7 @@ async function resolveTeamMemberIds(req) {
   }
 
   const members = await prisma.user.findMany({
-    where: { teamLeaderId, isActive: true, role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] } },
+    where: { teamLeaderId, isActive: true, role: { in: [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'] } },
     select: { id: true, name: true, email: true, role: true },
     orderBy: { name: 'asc' },
   });
@@ -13473,7 +13221,7 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
   if (source === 'isr') {
     where.createdBy = { role: 'ISR' };
   } else if (source === 'bdm') {
-    where.createdBy = { role: { in: ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'] } };
+    where.createdBy = { role: { in: [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'] } };
   } else if (source === 'sam') {
     where.creationSource = { in: ['SAM_DISPATCH', 'SAM_REFERRAL'] };
   }
@@ -13515,7 +13263,6 @@ export const getTeamPerformanceLeads = asyncHandler(async function getTeamPerfor
     assignedTo: { select: { id: true, name: true, email: true } },
     feasibilityAssignedTo: { select: { name: true } },
     nocAssignedTo: { select: { name: true } },
-    samAssignment: { select: { samExecutive: { select: { name: true } } } },
     campaignData: { select: { company: true, name: true, firstName: true, lastName: true, email: true, phone: true } },
   };
 

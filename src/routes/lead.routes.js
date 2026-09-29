@@ -1,5 +1,6 @@
 import express from 'express';
 import { auth, requireRole } from '../middleware/auth.js';
+import { BDM_LIKE_ROLES } from '../utils/bdmRoles.js';
 import { uploadToCloudinary, uploadTypedDocument } from '../config/cloudinary.js';
 import {
   getLeads,
@@ -128,8 +129,6 @@ import {
   sendVendorPOEmail,
   // Customer Enquiry functions
   getCustomerEnquiryQueue,
-  getSAMHeadEnquiryQueue,
-  assignEnquiryToISR,
   // CP Leads
   getCPLeads
 } from '../controllers/lead.controller.js';
@@ -208,11 +207,11 @@ router.patch('/bdm/:id/location', updateLeadLocation);
 router.post('/bdm/:id/disposition', bdmDisposition);
 
 // Cold Lead Pipeline
-router.get('/bdm/cold-leads', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getBDMColdLeads);
-router.post('/bdm/cold-leads/:id/complete', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), completeColdLead);
+router.get('/bdm/cold-leads', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getBDMColdLeads);
+router.post('/bdm/cold-leads/:id/complete', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), completeColdLead);
 
 // Create Opportunity (fast path — skip calling/meeting, straight to feasibility)
-router.post('/bdm/create-opportunity', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createOpportunity);
+router.post('/bdm/create-opportunity', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createOpportunity);
 
 // Delivery vendor setup (mandatory before material request)
 router.post('/delivery/:id/acknowledge-docs', requireRole('DELIVERY_TEAM', 'SUPER_ADMIN'), acknowledgeDeliveryDocs);
@@ -226,10 +225,6 @@ router.post('/bdm/:id/reassign', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN'), 
 // Customer enquiry queue (Team Leader / Admin)
 router.get('/customer-enquiries', requireRole('BDM_TEAM_LEADER', 'SUPER_ADMIN'), getCustomerEnquiryQueue);
 
-// SAM Head customer referral enquiry routes
-router.get('/sam-head/customer-enquiries', requireRole('SAM_HEAD', 'SUPER_ADMIN'), getSAMHeadEnquiryQueue);
-router.post('/sam-head/assign-enquiry-to-isr', requireRole('SAM_HEAD', 'SUPER_ADMIN'), assignEnquiryToISR);
-
 // MOM (Minutes of Meeting) routes
 router.get('/:id/moms', getLeadMOMs);
 router.post('/:id/mom', addMOM);
@@ -237,7 +232,7 @@ router.put('/mom/:momId', updateMOM);
 router.delete('/mom/:momId', deleteMOM);
 
 // Push to document verification (with file uploads via Cloudinary) - Legacy
-router.post('/:id/push-to-verification', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), uploadToCloudinary.array('documents', 10), pushToDocsVerification);
+router.post('/:id/push-to-verification', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), uploadToCloudinary.array('documents', 10), pushToDocsVerification);
 
 // ========== TYPED DOCUMENT ROUTES ==========
 
@@ -251,15 +246,15 @@ router.delete('/:id/documents/:documentType', removeDocument);
 router.get('/:id/documents', getLeadDocuments);
 
 // Mark login complete (customer accepted quotation)
-router.post('/:id/mark-login-complete', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), markLoginComplete);
+router.post('/:id/mark-login-complete', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), markLoginComplete);
 
 // Push to verification with typed documents validation
-router.post('/:id/push-to-verification-typed', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), pushToDocsVerificationTyped);
+router.post('/:id/push-to-verification-typed', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), pushToDocsVerificationTyped);
 
 // ========== CUSTOMER UPLOAD LINK ROUTES ==========
 
 // Generate upload link for customer (BDM/Admin only)
-router.post('/:id/upload-link', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), generateUploadLink);
+router.post('/:id/upload-link', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), generateUploadLink);
 
 // Get all upload links for a lead
 router.get('/:id/upload-links', getUploadLinks);
@@ -556,7 +551,7 @@ router.get('/:id', getLead);
 
 // Convert campaign data to lead
 router.post('/convert', convertToLead);
-router.post('/bdm/direct-add', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createDirectLead);
+router.post('/bdm/direct-add', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), createDirectLead);
 
 // Create self-generated lead (ISR creates their own lead)
 router.post('/self-generate', createSelfGeneratedLead);

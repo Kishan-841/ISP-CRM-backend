@@ -1,3 +1,5 @@
+import { BDM_LIKE_ROLES } from './bdmRoles.js';
+
 /**
  * Lead contact masking.
  *
@@ -29,7 +31,7 @@ const UNMASKED_ROLES = new Set([
   'SALES_DIRECTOR',
   'ADMIN',
   'ISR',
-  'BDM',
+  ...BDM_LIKE_ROLES,
   'BDM_CP',
   'BDM_TEAM_LEADER',
   'ACCOUNTS_TEAM'

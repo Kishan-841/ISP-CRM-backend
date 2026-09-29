@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import { generateAnswer } from './gemini.service.js';
+import { BDM_LIKE_ROLES, isBdmLikeRole } from '../utils/bdmRoles.js';
 
 const SYSTEM_PROMPT = `You are NEXUS, an onboarding assistant built into an Internet Service Provider CRM.
 You help new users of every role — ISR, BDM, Feasibility, Docs, Ops, Accounts, Delivery, NOC, SAM, Store, customer portal users — learn how to use the system faster.
@@ -17,7 +18,7 @@ RULES:
 export const UNRESTRICTED_ROLES = new Set([
   'SUPER_ADMIN',
   'ADMIN',
-  'SAM_HEAD', // interim stand-in for "Sales Director" — swap for SALES_DIRECTOR if added to schema
+  'SALES_DIRECTOR',
 ]);
 
 // Tune these based on your Google project tier.
@@ -82,7 +83,7 @@ export const normalizeQuery = (text) => {
  * role-restricted answers never leak across roles via the cache.
  *
  * - Customers → their own bucket
- * - Unrestricted staff (SUPER_ADMIN, ADMIN, SAM_HEAD) → shared "UNRESTRICTED" bucket
+ * - Unrestricted staff (SUPER_ADMIN, ADMIN, SALES_DIRECTOR) → shared "UNRESTRICTED" bucket
  * - Every other staff role → its own bucket
  */
 const buildCacheKey = ({ normalized, audience, userRole }) => {
@@ -182,7 +183,9 @@ export const retrieveKnowledge = async ({ query, audience, userRole, limit = 3 }
   //   - Entries with roles[] are visible ONLY to users whose role is listed, OR to UNRESTRICTED_ROLES.
   //   - Customer audience ignores role filtering (customers have no staff role).
   if (audience === 'CUSTOMER' || isUnrestricted) return rows;
-  return rows.filter((r) => !r.roles?.length || r.roles.includes(userRole));
+  // SAM is a solo BDM: entries tagged for any BDM-like role are visible to both.
+  const visibleRoles = isBdmLikeRole(userRole) ? BDM_LIKE_ROLES : [userRole];
+  return rows.filter((r) => !r.roles?.length || r.roles.some((role) => visibleRoles.includes(role)));
 };
 
 // Strict exact-match lookup.

@@ -8,6 +8,7 @@ import { DOCUMENT_TYPES } from '../config/documentTypes.js';
 import { isLeadContactVisible, maskLeadContactFields, applyLeadContactMask, maskCompanyName, maskPersonName, maskMobileNumber } from '../utils/leadMasking.js';
 import { asyncHandler, parsePagination, paginatedResponse, buildSearchFilter } from '../utils/controllerHelper.js';
 import { deriveCurrentStage } from '../utils/leadStageDeriver.js';
+import { BDM_LIKE_ROLES, isBdmLikeRole } from '../utils/bdmRoles.js';
 
 // GET /api/customer-360/search?q=term&page=1&limit=20
 export const searchCustomers = asyncHandler(async function searchCustomers(req, res) {
@@ -77,7 +78,6 @@ export const searchCustomers = asyncHandler(async function searchCustomers(req, 
         assignedTo: { select: { name: true } },
         feasibilityAssignedTo: { select: { name: true } },
         nocAssignedTo: { select: { name: true } },
-        samAssignment: { select: { samExecutive: { select: { name: true } } } },
         campaignData: {
           select: {
             company: true,
@@ -485,18 +485,11 @@ export const getSummary = asyncHandler(async function getSummary(req, res) {
     return res.status(404).json({ message: 'Customer not found.' });
   }
 
-  const [latestLedger, samAssignment, totalComplaints, openComplaints, totalInvoices, overdueInvoices] = await Promise.all([
+  const [latestLedger, totalComplaints, openComplaints, totalInvoices, overdueInvoices] = await Promise.all([
     prisma.ledgerEntry.findFirst({
       where: { customerId: id },
       orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
       select: { runningBalance: true },
-    }),
-    prisma.sAMAssignment.findUnique({
-      where: { customerId: id },
-      select: {
-        samExecutive: { select: { id: true, name: true, email: true } },
-        assignedAt: true,
-      },
     }),
     prisma.complaint.count({ where: { leadId: id } }),
     prisma.complaint.count({
@@ -516,8 +509,6 @@ export const getSummary = asyncHandler(async function getSummary(req, res) {
     name: lead.campaignData?.name || `${lead.campaignData?.firstName || ''} ${lead.campaignData?.lastName || ''}`.trim(),
     company: lead.campaignData?.company || '',
     currentBalance: latestLedger?.runningBalance ?? 0,
-    samExecutive: samAssignment?.samExecutive || null,
-    samAssignedAt: samAssignment?.assignedAt || null,
     complaintsSummary: { total: totalComplaints, open: openComplaints },
     invoicesSummary: { total: totalInvoices, overdue: overdueInvoices },
   };
@@ -644,7 +635,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   const [
     callLogs, isrUser, docsVerifiedByUser, deliveryRequests, statusChangeLogs,
     uploadLinks, loginCompletedByUser, nocAssignedByUser, vendorSetupByUser,
-    samAssignment, firstInvoice, firstPayment,
+    firstInvoice, firstPayment,
   ] = await Promise.all([
     lead.campaignData?.id
       ? prisma.callLog.findMany({
@@ -755,17 +746,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
           select: { id: true, name: true, role: true },
         })
       : null,
-    // Post-activation events — SAM, first invoice, first payment. Each
+    // Post-activation events — first invoice, first payment. Each
     // returns null if absent, so the timeline skips the row cleanly.
-    // SAMAssignment uses customerId (=leadId) and has only one row per customer.
-    prisma.sAMAssignment.findUnique({
-      where: { customerId: id },
-      select: {
-        id: true, assignedAt: true,
-        samExecutive: { select: { id: true, name: true, role: true } },
-        assignedBy:   { select: { id: true, name: true, role: true } },
-      },
-    }),
     prisma.invoice.findFirst({
       where: { leadId: id },
       select: { id: true, invoiceNumber: true, invoiceDate: true, grandTotal: true },
@@ -837,7 +819,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     // the "ISR" for that row too — the pipeline uses the ISR slot, but the
     // human is a BDM. Re-label so the journey doesn't keep saying "ISR …"
     // for work the BDM actually did.
-    const bdmRoles = new Set(['BDM', 'BDM_TEAM_LEADER']);
+    const bdmRoles = new Set([...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER']);
     const callingRole = (u) => (u && bdmRoles.has(u.role) ? 'BDM' : 'ISR');
     const isrSlotRole = callingRole(isrUser);
     const converterRole = callingRole(lead.createdBy);
@@ -1132,7 +1114,7 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   // walks them through it), the actor is a staff user, not the customer.
   if (lead.loginCompletedAt) {
     const loginRole = loginCompletedByUser?.role;
-    const loginByBdm = loginRole === 'BDM' || loginRole === 'BDM_TEAM_LEADER';
+    const loginByBdm = isBdmLikeRole(loginRole) || loginRole === 'BDM_TEAM_LEADER';
     timeline.push({
       stage: 'LOGIN_COMPLETED',
       label: loginByBdm ? 'Login Completed by BDM' : 'Customer Completed Login',
@@ -1419,20 +1401,8 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
   }
 
   // ─── Post-activation events (optional, only render when data exists) ──
-  // These close the story of a customer's onboarding — SAM takes over, first
+  // These close the story of a customer's onboarding — first
   // invoice issued, first payment received. Missing rows simply don't render.
-  if (samAssignment) {
-    timeline.push({
-      stage: 'SAM_ASSIGNED',
-      label: 'SAM Executive Assigned',
-      timestamp: samAssignment.assignedAt,
-      user: samAssignment.assignedBy,
-      details: samAssignment.samExecutive
-        ? `${samAssignment.samExecutive.name} will handle post-sale service.`
-        : 'SAM Executive assigned for post-sale service.',
-      meta: { samExecutive: samAssignment.samExecutive },
-    });
-  }
   if (firstInvoice) {
     timeline.push({
       stage: 'FIRST_INVOICE',
@@ -1609,7 +1579,6 @@ export const getJourney = asyncHandler(async function getJourney(req, res) {
     CUSTOMER_ACCEPTED: 330,
     CUSTOMER_REJECTED: 330,
     ACTUAL_PLAN: 340,
-    SAM_ASSIGNED: 400,
     FIRST_INVOICE: 410,
     FIRST_PAYMENT: 420,
     REASSIGNMENT: 999, // pushed to the end — audit-style events
@@ -2192,88 +2161,6 @@ export const getComplaints = asyncHandler(async function getComplaints(req, res)
   });
 
   res.json({ complaints: complaintsWithSla, stats });
-});
-
-// GET /api/customer-360/:id/sam
-export const getSamActivity = asyncHandler(async function getSamActivity(req, res) {
-  const { id } = req.params;
-
-  const leadExists = await prisma.lead.findUnique({ where: { id }, select: { id: true } });
-  if (!leadExists) {
-    return res.status(404).json({ message: 'Customer not found.' });
-  }
-
-  const [assignment, meetings, visits, communications] = await Promise.all([
-    prisma.sAMAssignment.findUnique({
-      where: { customerId: id },
-      select: {
-        samExecutive: { select: { id: true, name: true, email: true } },
-        assignedBy: { select: { id: true, name: true } },
-        assignedAt: true,
-        notes: true,
-      },
-    }),
-
-    prisma.sAMMeeting.findMany({
-      where: { customerId: id },
-      select: {
-        id: true,
-        title: true,
-        meetingDate: true,
-        meetingType: true,
-        status: true,
-        location: true,
-        meetingLink: true,
-        attendees: true,
-        discussion: true,
-        actionItems: true,
-        followUpDate: true,
-        createdAt: true,
-        samExecutive: { select: { id: true, name: true } },
-      },
-      orderBy: { meetingDate: 'desc' },
-    }),
-
-    prisma.sAMVisit.findMany({
-      where: { customerId: id },
-      select: {
-        id: true,
-        visitDate: true,
-        visitType: true,
-        status: true,
-        purpose: true,
-        location: true,
-        outcome: true,
-        customerFeedback: true,
-        issuesIdentified: true,
-        actionRequired: true,
-        nextVisitDate: true,
-        nextVisitPurpose: true,
-        completedAt: true,
-        createdAt: true,
-        samExecutive: { select: { id: true, name: true } },
-      },
-      orderBy: { visitDate: 'desc' },
-    }),
-
-    prisma.customerCommunication.findMany({
-      where: { customerId: id },
-      select: {
-        id: true,
-        communicationType: true,
-        channel: true,
-        subject: true,
-        content: true,
-        status: true,
-        sentAt: true,
-        createdAt: true,
-        samExecutive: { select: { id: true, name: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    }),
-  ]);
-
-  res.json({ assignment, meetings, visits, communications });
 });
 
 // GET /api/customer-360/:id/feasibility

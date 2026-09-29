@@ -4,6 +4,7 @@ import { isAdminOrTestUser, hasRole, hasAnyRole } from '../utils/roleHelper.js';
 import { logAudit, logDelete, logCampaignDataUpdate } from '../services/auditLog.service.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
+import { BDM_LIKE_ROLES, isBdmLikeRole } from '../utils/bdmRoles.js';
 
 // Generate unique campaign code
 const generateCampaignCode = async () => {
@@ -49,7 +50,7 @@ export const getCampaigns = asyncHandler(async function getCampaigns(req, res) {
             { assignments: { some: { userId: { in: hierarchyUserIds } } } }
           ]
         });
-      } else if (userRole === 'BDM') {
+      } else if (isBdmLikeRole(userRole)) {
         conditions.push({
           OR: [
             { createdById: userId },
@@ -446,7 +447,7 @@ export const assignUsersToCampaign = asyncHandler(async function assignUsersToCa
             if (dataIdsForThisISR.length > 0) {
               const updateData = { assignedToId: userIds[i] };
               // If assigning user is a BDM or TL, set BDM binding
-              if (req.user.role === 'BDM' || req.user.role === 'BDM_TEAM_LEADER') {
+              if (isBdmLikeRole(req.user.role) || req.user.role === 'BDM_TEAM_LEADER') {
                 updateData.assignedByBdmId = req.user.id;
               }
               await prisma.campaignData.updateMany({
@@ -853,7 +854,7 @@ export const addCampaignData = asyncHandler(async function addCampaignData(req, 
     }
 
     // If BDM or TL is uploading data, tag records with BDM binding
-    if (req.user.role === 'BDM' || req.user.role === 'BDM_TEAM_LEADER') {
+    if (isBdmLikeRole(req.user.role) || req.user.role === 'BDM_TEAM_LEADER') {
       newRecords.forEach(r => { r.assignedByBdmId = req.user.id; });
     }
 
@@ -1758,7 +1759,7 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
     // Determine prefix and description based on role
     let prefix = '[Self]';
     let description = 'Self-created campaign by ISR';
-    if (userRole === 'BDM') {
+    if (isBdmLikeRole(userRole)) {
       prefix = '[BDM Self]';
       description = assignToId && assignToId !== userId
         ? 'Self-created campaign by BDM (assigned to ISR)'
@@ -1774,13 +1775,10 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
       }
       prefix = '[CP]';
       description = 'Channel Partner data uploaded by BDM(CP)';
-    } else if (userRole === 'SAM') {
-      prefix = '[SAM Self]';
-      description = 'Self-created campaign by SAM';
     }
 
     // If TL provides channelPartnerVendorId, treat as CP campaign
-    const isCPCampaign = userRole === 'BDM_CP' || (channelPartnerVendorId && (userRole === 'BDM_TEAM_LEADER' || userRole === 'BDM'));
+    const isCPCampaign = userRole === 'BDM_CP' || (channelPartnerVendorId && (userRole === 'BDM_TEAM_LEADER' || isBdmLikeRole(userRole)));
     if (isCPCampaign && userRole !== 'BDM_CP') {
       prefix = '[CP]';
       description = `Channel Partner data uploaded by ${userRole === 'BDM_TEAM_LEADER' ? 'Team Leader' : 'BDM'}`;
@@ -1995,7 +1993,7 @@ export const createSelfCampaign = asyncHandler(async function createSelfCampaign
         createdById: userId,            // Track who created the data (always the BDM/ISR who uploaded)
         isSelfGenerated: true,          // Mark as self-generated
         // If BDM/TL creates self data, set BDM binding (for auto-assignment in calling queue & lead conversion)
-        ...((userRole === 'BDM' || userRole === 'BDM_TEAM_LEADER') ? { assignedByBdmId: userId } : {}),
+        ...((isBdmLikeRole(userRole) || userRole === 'BDM_TEAM_LEADER') ? { assignedByBdmId: userId } : {}),
         // Channel Partner fields for BDM_CP
         ...(isCPCampaign && channelPartnerVendorId ? { channelPartnerVendorId, source: 'Channel Partner' } : {})
       });
@@ -2435,7 +2433,7 @@ export const deleteSelfCampaign = asyncHandler(async function deleteSelfCampaign
     // in-progress leads (Beck & Pollitzer Pvt. Ltd, ZEAL Education Society)
     // with no audit row. Only admin-tier roles can do this now; BDMs who
     // need a campaign removed must ask a SUPER_ADMIN.
-    if (!isAdmin && hasAnyRole(req.user, ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'])) {
+    if (!isAdmin && hasAnyRole(req.user, [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'])) {
       return res.status(403).json({
         message: 'Campaign deletion is restricted to admins. Ask a SUPER_ADMIN to remove this campaign.'
       });
@@ -4138,7 +4136,7 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
     const isAdmin = isAdminOrTestUser(req.user);
 
     // Only admins, BDM, BDM_CP, ISR, BDM_TEAM_LEADER can access
-    if (!isAdmin && userRole !== 'BDM' && userRole !== 'BDM_CP' && userRole !== 'ISR' && userRole !== 'BDM_TEAM_LEADER') {
+    if (!isAdmin && !isBdmLikeRole(userRole) && userRole !== 'BDM_CP' && userRole !== 'ISR' && userRole !== 'BDM_TEAM_LEADER') {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
@@ -4195,7 +4193,7 @@ export const getAllCampaignData = asyncHandler(async function getAllCampaignData
             { createdById: userId }
           ]
         });
-      } else if (userRole === 'BDM') {
+      } else if (isBdmLikeRole(userRole)) {
         conditions.push({
           OR: [
             { createdById: userId },

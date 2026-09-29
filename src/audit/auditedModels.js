@@ -5,7 +5,7 @@ export const AUDITED_MODELS = new Set([
   'Lead', 'Invoice', 'InvoicePayment', 'CreditNote', 'AdvancePayment',
   'LedgerEntry', 'Complaint', 'ServiceOrder', 'DeliveryRequest',
   'StorePurchaseOrder', 'VendorPurchaseOrder', 'Vendor', 'User',
-  'SAMAssignment', 'CustomerEnquiry',
+  'CustomerEnquiry',
   // New: bulk-import source (CampaignData) + complaint file attachments.
   // LeadDocument and ServiceOrderAttachment don't exist as separate models —
   // they're JSON columns on Lead / ServiceOrder so their changes are already
@@ -39,7 +39,6 @@ export function entityLabelFor(model, record) {
     case 'VendorPurchaseOrder':  return record.poNumber       || record.id;
     case 'Vendor':               return record.companyName    || record.id;
     case 'User':                 return record.name           || record.email || record.id;
-    case 'SAMAssignment':        return `SAM ${record.id}`;
     case 'CustomerEnquiry':      return record.enquiryNumber  || record.id;
     case 'CampaignData': {
       return record.company || record.name || record.phone || record.id;

@@ -2,9 +2,10 @@ import prisma from '../config/db.js';
 import crypto from 'crypto';
 import { DOCUMENT_TYPES, isValidDocumentType, getAllDocumentTypes, getRequiredDocumentTypes } from '../config/documentTypes.js';
 import { deleteFromCloudinary, getResourceType } from '../config/cloudinary.js';
-import { isAdminOrTestUser, hasRole } from '../utils/roleHelper.js';
+import { isAdminOrTestUser } from '../utils/roleHelper.js';
 import { emitToUser, emitSidebarRefresh } from '../sockets/index.js';
 import { asyncHandler } from '../utils/controllerHelper.js';
+import { isBdmLike } from '../utils/bdmRoles.js';
 
 // Generate a secure random token
 const generateToken = () => {
@@ -35,7 +36,7 @@ export const generateUploadLink = asyncHandler(async function generateUploadLink
   const isCreator = lead.createdById === req.user.id;
   const isAssigned = lead.assignedToId === req.user.id;
   const isAdmin = isAdminOrTestUser(req.user);
-  const isBDM = hasRole(req.user, 'BDM');
+  const isBDM = isBdmLike(req.user);
 
   if (!isCreator && !isAssigned && !isAdmin && !isBDM) {
     return res.status(403).json({ message: 'Not authorized to generate upload link for this lead' });

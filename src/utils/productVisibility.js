@@ -1,3 +1,5 @@
+import { BDM_LIKE_ROLES } from './bdmRoles.js';
+
 // The ONLY place that knows which products a user may see or attach.
 //
 // Rule: a product with NO assignments is visible to everyone; a product with
@@ -9,10 +11,11 @@
 // each carry their own copy of a rule is exactly how the delivery-material bug
 // happened, where a UI hid something the API still accepted.
 
-// Roles whose product list is narrowed. Everyone else — ISR, SAM, OPS,
-// Accounts, Admin, Master, Sales Director, Super Admin — is unfiltered BY
-// CONSTRUCTION, so there is no bypass list to keep in sync with this one.
-export const PRODUCT_RESTRICTED_ROLES = ['BDM', 'BDM_CP', 'BDM_TEAM_LEADER'];
+// Roles whose product list is narrowed (BDM and SAM, which share BDM rules,
+// plus BDM_CP and BDM_TEAM_LEADER). Everyone else — ISR, OPS, Accounts, Admin,
+// Master, Sales Director, Super Admin — is unfiltered BY CONSTRUCTION, so
+// there is no bypass list to keep in sync with this one.
+export const PRODUCT_RESTRICTED_ROLES = [...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'];
 
 export const isProductRestrictedRole = (user) =>
   PRODUCT_RESTRICTED_ROLES.includes(user?.role);

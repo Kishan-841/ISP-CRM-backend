@@ -188,7 +188,7 @@ export function deriveCurrentStage(lead) {
   if (lead.actualPlanIsActive) {
     return {
       stage: 'Active Customer',
-      owner: lead.samAssignment?.samExecutive?.name || 'SAM',
+      owner: lead.assignedTo?.name || 'Account',
     };
   }
   if (lead.actualPlanName) {

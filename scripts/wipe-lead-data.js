@@ -33,13 +33,6 @@ const run = async () => {
     // Service orders
     ['serviceOrder',                       () => prisma.serviceOrder.deleteMany({})],
 
-    // SAM
-    ['customerCommunication',              () => prisma.customerCommunication.deleteMany({})],
-    ['sAMVisit',                           () => prisma.sAMVisit.deleteMany({})],
-    ['sAMMeeting',                         () => prisma.sAMMeeting.deleteMany({})],
-    ['sAMAssignmentHistory',               () => prisma.sAMAssignmentHistory.deleteMany({})],
-    ['sAMAssignment',                      () => prisma.sAMAssignment.deleteMany({})],
-
     // Customer enquiries
     ['customerEnquiry',                    () => prisma.customerEnquiry.deleteMany({})],
 

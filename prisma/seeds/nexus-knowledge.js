@@ -34,7 +34,6 @@ Every role in the company has their own view of the system tuned to the work the
     tags: ['glossary', 'terminology'],
     content: `**ISR** — Inside Sales Rep. Makes the first calls on campaign data.
 **BDM** — Business Development Manager. Qualifies leads that ISRs surface.
-**SAM** — Service Account Manager. Owns the customer relationship after sale.
 **NOC** — Network Operations Center. Configures the actual internet connection.
 **Feasibility** — Team that checks if we can physically deliver service at a customer location.
 **OTC** — One-Time Charge (installation, setup fee).
@@ -43,6 +42,13 @@ Every role in the company has their own view of the system tuned to the work the
 **Actual Plan** — The paid plan that the customer signed up for.
 **Circuit ID** — Unique identifier for a customer's internet circuit.
 **Ledger** — Append-only record of every invoice, payment, and credit for a customer.`,
+  },
+  {
+    title: 'Glossary — SAM role',
+    audience: 'STAFF',
+    roles: [],
+    tags: ['glossary', 'terminology'],
+    content: `**SAM** — Sales Account Manager; works exactly like a solo BDM (no team leader).`,
   },
   {
     title: 'How to log in',
@@ -429,7 +435,7 @@ Additional documents may be required by the Accounts team.`,
     content: `1. Open the lead from your Ops queue.
 2. Review commercials, docs, and Accounts verification result.
 3. Click **Approve** — lead advances to NOC for account creation. Or click **Reject** with a reason.
-4. Approval triggers notifications to NOC and SAM teams.`,
+4. Approval triggers a notification to the NOC team.`,
   },
   {
     title: 'Ops: What happens after you approve',
@@ -530,7 +536,7 @@ Enter amount and notes. A CN number is generated (format CN/DD/MM/YY-XXXX) and t
     audience: 'STAFF',
     roles: ['ACCOUNTS_TEAM'],
     tags: ['accounts', 'overdue', 'collections'],
-    content: `Invoices past their due date are marked **Overdue** by the system at 1 AM daily. Check the **Accounts Dashboard → Ageing Report** to see overdue by bucket (0-30, 31-60, 60+). Use **Collection Calls** to log outreach. Escalate long-overdue accounts to the SAM team.`,
+    content: `Invoices past their due date are marked **Overdue** by the system at 1 AM daily. Check the **Accounts Dashboard → Ageing Report** to see overdue by bucket (0-30, 31-60, 60+). Use **Collection Calls** to log outreach. Escalate long-overdue accounts to management.`,
   },
 
   // ------- DELIVERY -------
@@ -618,107 +624,6 @@ Enter amount and notes. A CN number is generated (format CN/DD/MM/YY-XXXX) and t
 2. Share results with the customer.
 3. Customer clicks **Accept** in the portal (or you record acceptance on their behalf with proof).
 4. Actual plan activation becomes available.`,
-  },
-
-  // ------- SAM EXECUTIVE -------
-  {
-    title: 'SAM: The SAM queue',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE'],
-    tags: ['sam', 'queue'],
-    content: `Your SAM queue lists the customers assigned to you. These are paying customers you nurture post-sale — meetings, visits, renewals, upsells, complaint oversight.`,
-  },
-  {
-    title: 'SAM: How to schedule a meeting',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE'],
-    tags: ['sam', 'meeting'],
-    content: `1. Open the customer.
-2. Click **Schedule Meeting**.
-3. Pick type (review, escalation, sales, renewal), date/time, participants.
-4. Save — a reminder is added to your calendar view.
-5. After the meeting, click **Log Minutes** to record outcomes.`,
-  },
-  {
-    title: 'SAM: How to log a customer visit',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE'],
-    tags: ['sam', 'visit'],
-    content: `For in-person visits:
-1. Open the customer → **Visits → Log Visit**.
-2. Pick visit type (site survey, escalation, service), date, and status.
-3. Add notes, photos, or action items.
-4. Submit — the visit appears in the customer's timeline.`,
-  },
-  {
-    title: 'SAM: How to log customer communication',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE'],
-    tags: ['sam', 'communication'],
-    content: `Log every call, email, or message with the customer:
-1. Customer page → **Communications → Log**.
-2. Pick type, channel (phone, email, whatsapp), status.
-3. Add summary.
-
-This builds the customer's relationship history.`,
-  },
-  {
-    title: 'SAM: How to view the Customer 360',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE', 'SAM_HEAD'],
-    tags: ['sam', 'customer-360'],
-    content: `Customer 360 is a unified view: profile, plan, invoices, payments, complaints, meetings, visits, communications. Open **Customer 360** from the sidebar, search by name/phone/customer username, and click a customer to see everything in one place.`,
-  },
-  {
-    title: 'SAM: Creating an upgrade or downgrade service order',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE'],
-    tags: ['sam', 'service-order'],
-    content: `When a customer wants to change their plan:
-1. Customer page → **Service Orders → Create**.
-2. Type = Upgrade / Downgrade / Rate Revision / Disconnection.
-3. Pick the new plan and effective date.
-4. Submit. The order goes through approvals (SAM Head, then Accounts, then NOC).
-5. Once processed, the customer's plan updates, and pro-rated billing kicks in.`,
-  },
-  {
-    title: 'SAM: Handling disconnection requests',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE'],
-    tags: ['sam', 'disconnection'],
-    content: `1. Customer page → **Service Orders → Create → Type: Disconnection**.
-2. Add reason (category + subcategory) and effective date.
-3. Submit for approval. Final invoices and refund (if any) are handled by Accounts.`,
-  },
-  {
-    title: 'SAM: Contract renewal reminders',
-    audience: 'STAFF',
-    roles: ['SAM_EXECUTIVE', 'SAM_HEAD'],
-    tags: ['sam', 'renewal'],
-    content: `The system alerts you at **30, 15, and 7 days** before contract expiry. Notifications go to you (SAM Executive) and at the 30-day mark also to SAM_HEAD. Reach out to the customer, propose renewal terms, and create a service order if needed.`,
-  },
-
-  // ------- SAM_HEAD -------
-  {
-    title: 'SAM Head: Team oversight',
-    audience: 'STAFF',
-    roles: ['SAM_HEAD'],
-    tags: ['sam-head', 'oversight'],
-    content: `You oversee the SAM team. Use **Team Dashboard & Reports** to see SAM Executive activity — meetings logged, visits completed, complaints closed, renewal outcomes. Drill into specific executives to review their pipeline.`,
-  },
-  {
-    title: 'SAM Head: Approving service orders',
-    audience: 'STAFF',
-    roles: ['SAM_HEAD'],
-    tags: ['sam-head', 'service-order'],
-    content: `Service orders created by SAM Executives need your approval (for upgrades/downgrades above a threshold). Open **Service Orders → Pending Approval**. Review pricing, effective date, and customer reason. Approve or reject with notes.`,
-  },
-  {
-    title: 'SAM Head: Escalation handling',
-    audience: 'STAFF',
-    roles: ['SAM_HEAD'],
-    tags: ['sam-head', 'escalation'],
-    content: `Critical complaints and long-overdue accounts escalate to you. Check **Complaints (Critical)** and **Ageing Report (60+ days)**. Coordinate with the executive and Accounts team to resolve or drive collection.`,
   },
 
   // ------- STORE -------

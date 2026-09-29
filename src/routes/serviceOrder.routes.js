@@ -14,7 +14,6 @@ import {
   docsReviewServiceOrder,
   getNocServiceOrderQueue,
   nocProcessServiceOrder,
-  setActivationDate,
   accountsProcessServiceOrder,
   approveDateChange,
   rejectDateChange,
@@ -28,21 +27,21 @@ router.use(auth);
 // Disconnection reason categories (must be before /:id)
 router.get(
   '/disconnection-reasons',
-  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'),
+  requireRole('SAM_INTEGRATION', 'SUPER_ADMIN'),
   getDisconnectionReasons
 );
 
 // List orders (role-based filtering inside controller)
 router.get(
   '/',
-  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'DOCS_TEAM', 'SALES_DIRECTOR', 'DELIVERY_TEAM'),
+  requireRole('SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'DOCS_TEAM', 'SALES_DIRECTOR', 'DELIVERY_TEAM'),
   getServiceOrders
 );
 
 // Create order
 router.post(
   '/',
-  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'),
+  requireRole('SAM_INTEGRATION', 'SUPER_ADMIN'),
   createServiceOrder
 );
 
@@ -71,13 +70,6 @@ router.post(
   nocProcessServiceOrder
 );
 
-// Set activation date (SAM gets date from customer after NOC completes)
-router.post(
-  '/:id/set-activation-date',
-  requireRole('SAM_EXECUTIVE', 'SAM_HEAD', 'SUPER_ADMIN'),
-  setActivationDate
-);
-
 // Accounts processes order (applies plan change + starts billing)
 router.post(
   '/:id/accounts-process',
@@ -100,7 +92,7 @@ router.post(
 // Get single order (must be after static routes, before :id param routes)
 router.get(
   '/:id',
-  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'DOCS_TEAM', 'SALES_DIRECTOR', 'DELIVERY_TEAM'),
+  requireRole('SUPER_ADMIN', 'ACCOUNTS_TEAM', 'NOC', 'DOCS_TEAM', 'SALES_DIRECTOR', 'DELIVERY_TEAM'),
   getServiceOrderById
 );
 
@@ -135,7 +127,7 @@ router.post(
 // Upload attachment
 router.post(
   '/:id/upload',
-  requireRole('SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'),
+  requireRole('SUPER_ADMIN'),
   uploadOrderAttachments.single('file'),
   uploadOrderAttachment
 );

@@ -1,5 +1,6 @@
 import express from 'express';
 import { auth, requireRole } from '../middleware/auth.js';
+import { BDM_LIKE_ROLES } from '../utils/bdmRoles.js';
 import {
   getCampaigns,
   getCampaign,
@@ -51,12 +52,12 @@ const router = express.Router();
 router.use(auth);
 
 // Admin + BDM + BDM_TEAM_LEADER campaign routes
-router.get('/', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), getCampaigns);
-router.post('/', requireRole('SUPER_ADMIN', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), createCampaign);
+router.get('/', requireRole('SUPER_ADMIN', 'SALES_DIRECTOR', ...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'), getCampaigns);
+router.post('/', requireRole('SUPER_ADMIN', ...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'), createCampaign);
 router.put('/:id', requireRole('SUPER_ADMIN'), updateCampaign);
 router.delete('/:id', requireRole('SUPER_ADMIN'), deleteCampaign);
-router.post('/:id/assign', requireRole('SUPER_ADMIN', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), assignUsersToCampaign);
-router.post('/:id/data', requireRole('SUPER_ADMIN', 'BDM', 'BDM_CP', 'BDM_TEAM_LEADER'), addCampaignData);
+router.post('/:id/assign', requireRole('SUPER_ADMIN', ...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'), assignUsersToCampaign);
+router.post('/:id/data', requireRole('SUPER_ADMIN', ...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER'), addCampaignData);
 
 // All data route (must be before /:id routes)
 router.get('/all-data', getAllCampaignData);
@@ -66,8 +67,8 @@ router.get('/my-data/all', getAllMyCampaignData);
 
 // Self Leads page (BDM /dashboard/self-leads) — stats + paginated queue
 // for either a single BDM Self campaign or aggregated across all of them.
-router.get('/self-leads/stats', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getSelfLeadsStats);
-router.get('/self-leads/queue', requireRole('BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getSelfLeadsQueue);
+router.get('/self-leads/stats', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getSelfLeadsStats);
+router.get('/self-leads/queue', requireRole(...BDM_LIKE_ROLES, 'BDM_CP', 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getSelfLeadsQueue);
 
 // ISR routes
 router.get('/my-campaigns', getMyAssignedCampaigns);

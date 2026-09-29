@@ -2,9 +2,10 @@ import prisma from '../config/db.js';
 import { sendEmail } from '../services/email.service.js';
 import { isAdminOrTestUser } from '../utils/roleHelper.js';
 import { asyncHandler, parsePagination, paginatedResponse } from '../utils/controllerHelper.js';
+import { BDM_LIKE_ROLES } from '../utils/bdmRoles.js';
 
 // Allowed roles that can send emails
-const ALLOWED_ROLES = ['SUPER_ADMIN', 'BDM', 'SAM'];
+const ALLOWED_ROLES = ['SUPER_ADMIN', ...BDM_LIKE_ROLES];
 
 // Send quotation email
 export const sendQuotationEmail = asyncHandler(async function sendQuotationEmail(req, res) {

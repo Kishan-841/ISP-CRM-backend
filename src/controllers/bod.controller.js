@@ -3,6 +3,7 @@ import { asyncHandler, parsePagination } from '../utils/controllerHelper.js';
 import { generateBODNumber, generateInvoiceNumber } from '../services/documentNumber.service.js';
 import { createNotification, notifyAllByRole } from '../services/notification.service.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
+import { BDM_LIKE_ROLES } from '../utils/bdmRoles.js';
 
 // ─── Bandwidth on Demand ─────────────────────────────────────────────────────
 //
@@ -12,7 +13,7 @@ import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.j
 // (+ SENT_BACK / CANCELLED). BILLED→ACTIVE→EXPIRED is driven by
 // jobs/bodLifecycle.js.
 
-export const BOD_CREATOR_ROLES = ['BDM', 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'];
+export const BOD_CREATOR_ROLES = [...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER', 'SUPER_ADMIN', 'MASTER'];
 export const BOD_ACCOUNTS_ROLES = ['ACCOUNTS_TEAM', 'SUPER_ADMIN', 'MASTER'];
 const ADMIN_ROLES = ['SUPER_ADMIN', 'MASTER'];
 const isAdmin = (user) => ADMIN_ROLES.includes(user.role);

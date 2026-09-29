@@ -33,7 +33,7 @@ export const getDisconnectionReasons = asyncHandler(async function getDisconnect
 
 /**
  * Create a new service order (Upgrade / Downgrade / Disconnection)
- * Roles: SAM_HEAD, SAM_EXECUTIVE, SUPER_ADMIN
+ * Roles: SUPER_ADMIN and other service-order owners
  */
 export const createServiceOrder = asyncHandler(async function createServiceOrder(req, res) {
   const {
@@ -100,16 +100,6 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     });
     if (!subCategory) {
       return res.status(400).json({ message: 'Invalid disconnection category or sub-category.' });
-    }
-  }
-
-  // SAM_EXECUTIVE: verify customer is assigned to them (MASTER/admin bypasses)
-  if (hasRole(req.user, 'SAM_EXECUTIVE') && req.user.role === 'SAM_EXECUTIVE') {
-    const assignment = await prisma.sAMAssignment.findFirst({
-      where: { samExecutiveId: req.user.id, customerId }
-    });
-    if (!assignment) {
-      return res.status(403).json({ message: 'You can only create orders for your assigned customers.' });
     }
   }
 
@@ -257,7 +247,7 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
     ? 'delivery approval'
     : 'Sales Director approval';
   await notifyAllAdmins(
-    'SAM_ASSIGNMENT',
+    'SERVICE_ORDER',
     'New Service Order',
     `${orderTypeLabel} request for "${companyName}" (${orderNumber}) requires ${firstGateLabel}.`,
     { serviceOrderId: order.id, orderNumber, orderType }
@@ -273,7 +263,7 @@ export const createServiceOrder = asyncHandler(async function createServiceOrder
 
 /**
  * Get service orders with role-based filtering
- * All 5 roles: SAM_EXECUTIVE, SAM_HEAD, SUPER_ADMIN, ACCOUNTS_TEAM, NOC
+ * Roles: SUPER_ADMIN, ACCOUNTS_TEAM, NOC, DOCS_TEAM, SALES_DIRECTOR, DELIVERY_TEAM
  */
 export const getServiceOrders = asyncHandler(async function getServiceOrders(req, res) {
   const { orderType, status, search } = req.query;
@@ -282,10 +272,8 @@ export const getServiceOrders = asyncHandler(async function getServiceOrders(req
   let where = {};
 
   // Role-based filtering. Each role sees only what's pending their action.
-  // SUPER_ADMIN and SAM_HEAD see everything.
-  if (hasRole(req.user, 'SAM_EXECUTIVE')) {
-    where.createdById = req.user.id;
-  } else if (hasRole(req.user, 'DOCS_TEAM')) {
+  // SUPER_ADMIN sees everything.
+  if (hasRole(req.user, 'DOCS_TEAM')) {
     where.status = 'PENDING_DOCS_REVIEW';
     where.orderType = { in: ['UPGRADE', 'DOWNGRADE', 'RATE_REVISION', 'DISCONNECTION'] };
   } else if (hasRole(req.user, 'ACCOUNTS_TEAM')) {
@@ -303,7 +291,7 @@ export const getServiceOrders = asyncHandler(async function getServiceOrders(req
     where.status = 'PENDING_DELIVERY_APPROVAL';
     where.orderType = { in: ['UPGRADE', 'DOWNGRADE'] };
   }
-  // SAM_HEAD and SUPER_ADMIN see all
+  // SUPER_ADMIN sees all
 
   // Additional filters — use AND to combine with role-based where clause
   // so query params can't override role-based access scoping
@@ -419,11 +407,6 @@ export const getServiceOrderById = asyncHandler(async function getServiceOrderBy
     return res.status(404).json({ message: 'Service order not found.' });
   }
 
-  // SAM_EXECUTIVE can only see their own orders
-  if (hasRole(req.user, 'SAM_EXECUTIVE') && order.createdById !== req.user.id) {
-    return res.status(403).json({ message: 'Access denied.' });
-  }
-
   res.json({ data: order });
 });
 
@@ -472,7 +455,7 @@ export const approveServiceOrder = asyncHandler(async function approveServiceOrd
   const companyName = order.customer?.campaignData?.company || 'Customer';
   await createNotification(
     order.createdById,
-    'SAM_ASSIGNMENT',
+    'SERVICE_ORDER',
     'Sales Director Approved — Pending Docs Review',
     `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" was approved and is now pending docs review.`,
     { serviceOrderId: id, orderNumber: order.orderNumber }
@@ -496,7 +479,6 @@ export const approveServiceOrder = asyncHandler(async function approveServiceOrd
   await emitSidebarRefreshByRole('DOCS_TEAM');
   await emitSidebarRefreshByRole('SALES_DIRECTOR');
   await emitSidebarRefreshByRole('SUPER_ADMIN');
-  await emitSidebarRefreshByRole('SAM_HEAD');
 
   res.json({ message: 'Service order approved.', data: updated });
 });
@@ -538,7 +520,7 @@ export const deliveryApproveServiceOrder = asyncHandler(async function deliveryA
   const companyName = order.customer?.campaignData?.company || 'Customer';
   await createNotification(
     order.createdById,
-    'SAM_ASSIGNMENT',
+    'SERVICE_ORDER',
     'Delivery Approved — Pending Sales Director',
     `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" was approved by delivery and is now pending Sales Director approval.`,
     { serviceOrderId: id, orderNumber: order.orderNumber }
@@ -599,7 +581,7 @@ export const rejectServiceOrder = asyncHandler(async function rejectServiceOrder
   const rejector = order.status === 'PENDING_DELIVERY_APPROVAL' ? 'Delivery' : 'Sales Director';
   await createNotification(
     order.createdById,
-    'SAM_ASSIGNMENT',
+    'SERVICE_ORDER',
     'Service Order Rejected',
     `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" was rejected by ${rejector}: ${rejectionReason}`,
     { serviceOrderId: id, orderNumber: order.orderNumber }
@@ -608,7 +590,6 @@ export const rejectServiceOrder = asyncHandler(async function rejectServiceOrder
   await emitSidebarRefreshByRole('SUPER_ADMIN');
   await emitSidebarRefreshByRole('SALES_DIRECTOR');
   await emitSidebarRefreshByRole('DELIVERY_TEAM');
-  await emitSidebarRefreshByRole('SAM_HEAD');
 
   res.json({ message: 'Service order rejected.', data: updated });
 });
@@ -658,14 +639,13 @@ export const processServiceOrder = asyncHandler(async function processServiceOrd
   const companyName = order.customer?.campaignData?.company || 'Customer';
   await createNotification(
     order.createdById,
-    'SAM_ASSIGNMENT',
+    'SERVICE_ORDER',
     'Service Order Completed',
     `Your ${order.orderType} order (${order.orderNumber}) for "${companyName}" has been processed.`,
     { serviceOrderId: id, orderNumber: order.orderNumber }
   );
   emitSidebarRefresh(order.createdById);
   await emitSidebarRefreshByRole('SUPER_ADMIN');
-  await emitSidebarRefreshByRole('SAM_HEAD');
   await emitSidebarRefreshByRole('ACCOUNTS_TEAM');
   await emitSidebarRefreshByRole('NOC');
 
@@ -826,7 +806,6 @@ export const docsReviewServiceOrder = asyncHandler(async function docsReviewServ
   }
 
   emitSidebarRefreshByRole('DOCS_TEAM');
-  emitSidebarRefreshByRole('SAM_HEAD');
   emitSidebarRefreshByRole('SUPER_ADMIN');
 
   // Fire commercialChange.statusChanged if this SO was created off a QUICK
@@ -978,7 +957,6 @@ export const nocProcessServiceOrder = asyncHandler(async function nocProcessServ
   emitSidebarRefresh(order.createdBy.id);
   emitSidebarRefreshByRole('NOC');
   emitSidebarRefreshByRole('ACCOUNTS_TEAM');
-  emitSidebarRefreshByRole('SAM_HEAD');
   emitSidebarRefreshByRole('SUPER_ADMIN');
 
   // QUICK-originated orders bubble the stage transition to SAM.
@@ -992,19 +970,6 @@ export const nocProcessServiceOrder = asyncHandler(async function nocProcessServ
   if (ccWebhookLog) attemptDeliveryInBackground(ccWebhookLog.id);
 
   res.json({ message: 'NOC processing completed. Order moved to accounts.', data: updated });
-});
-
-/**
- * DEPRECATED: SAM no longer sets activation dates. The new flow goes
- * NOC → ACCOUNTS → COMPLETED automatically; the 10-day notice is enforced
- * SAM-side via scheduled_termination_at and CRM only mirrors on COMPLETED.
- *
- * Endpoint kept mounted to return 410 for any clients still calling it.
- */
-export const setActivationDate = asyncHandler(async function setActivationDate(req, res) {
-  return res.status(410).json({
-    message: 'set-activation-date is deprecated. The new flow goes NOC → ACCOUNTS → COMPLETED automatically.',
-  });
 });
 
 /**
@@ -1264,8 +1229,6 @@ export const accountsProcessServiceOrder = asyncHandler(async function accountsP
   );
   emitSidebarRefresh(order.createdBy.id);
   emitSidebarRefreshByRole('ACCOUNTS_TEAM');
-  emitSidebarRefreshByRole('SAM_HEAD');
-  emitSidebarRefreshByRole('SAM_EXECUTIVE');
   emitSidebarRefreshByRole('SUPER_ADMIN');
 
   // QUICK-originated disconnection just hit COMPLETED — bubble it to SAM so
@@ -1361,8 +1324,6 @@ export const approveDateChange = asyncHandler(async function approveDateChange(r
   emitSidebarRefresh(order.createdBy.id);
   emitSidebarRefreshByRole('SUPER_ADMIN');
   emitSidebarRefreshByRole('ACCOUNTS_TEAM');
-  emitSidebarRefreshByRole('SAM_HEAD');
-  emitSidebarRefreshByRole('SAM_EXECUTIVE');
 
   res.json({ message: 'Date change approved and order completed.', data: finalOrder });
 });
@@ -1425,7 +1386,7 @@ export const rejectDateChange = asyncHandler(async function rejectDateChange(req
 
 /**
  * Upload attachment to a service order
- * Roles: SAM_HEAD, SAM_EXECUTIVE, SUPER_ADMIN
+ * Roles: SUPER_ADMIN and other service-order owners
  */
 export const uploadOrderAttachment = asyncHandler(async function uploadOrderAttachment(req, res) {
   const { id } = req.params;
@@ -1437,11 +1398,6 @@ export const uploadOrderAttachment = asyncHandler(async function uploadOrderAtta
 
   if (!order) {
     return res.status(404).json({ message: 'Service order not found.' });
-  }
-
-  // SAM_EXECUTIVE can only upload to their own orders
-  if (hasRole(req.user, 'SAM_EXECUTIVE') && order.createdById !== req.user.id) {
-    return res.status(403).json({ message: 'Access denied.' });
   }
 
   if (!req.file) {

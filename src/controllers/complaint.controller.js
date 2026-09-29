@@ -116,7 +116,6 @@ const complaintDetailSelect = {
       customerUserId: true,
       billingAddress: true,
       installationAddress: true,
-      serviceType: true,
       actualPlanName: true,
       actualPlanIsActive: true,
       campaignData: {
@@ -541,7 +540,7 @@ export const getDashboardStats = asyncHandler(async function getDashboardStats(r
 
 // GET /api/complaints/customer/:leadId
 export const getCustomerComplaints = asyncHandler(async function getCustomerComplaints(req, res) {
-  if (!hasAnyRole(req.user, [...CREATOR_ROLES, 'SAM_EXECUTIVE', 'SAM_HEAD', 'ACCOUNTS_TEAM', 'OPS_TEAM'])) {
+  if (!hasAnyRole(req.user, [...CREATOR_ROLES, 'ACCOUNTS_TEAM', 'OPS_TEAM'])) {
     return res.status(403).json({ message: 'Access denied.' });
   }
 
@@ -601,7 +600,6 @@ export const getCustomersWithComplaints = asyncHandler(async function getCustome
         circuitId: true,
         actualPlanName: true,
         actualPlanIsActive: true,
-        serviceType: true,
         campaignData: {
           select: {
             company: true,
@@ -638,7 +636,6 @@ export const getCustomersWithComplaints = asyncHandler(async function getCustome
       email: lead.campaignData?.email || null,
       actualPlanName: lead.actualPlanName,
       actualPlanIsActive: lead.actualPlanIsActive,
-      serviceType: lead.serviceType,
       totalComplaints: lead._count.complaints,
       openComplaints: openCount,
       lastComplaintDate: lastComplaint,

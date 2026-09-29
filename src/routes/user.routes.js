@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { auth, requireRole } from '../middleware/auth.js';
+import { BDM_LIKE_ROLES } from '../utils/bdmRoles.js';
 import {
   getUsers,
   getUserById,
@@ -32,10 +33,10 @@ const blockSalesDirector = (req, res, next) => {
 router.get('/sidebar-counts', getSidebarCounts);
 
 // ISR users list for assignment - accessible by BDM, BDM Team Leader, SAM, and Admin
-router.get('/isr-list', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN'), getISRUsersForAssignment);
+router.get('/isr-list', requireRole(...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER', 'SUPER_ADMIN'), getISRUsersForAssignment);
 
 // Users by role - accessible by BDM (for delivery user assignment), complaint-handling roles, and SUPER_ADMIN
-router.get('/by-role', requireRole('BDM', 'BDM_TEAM_LEADER', 'SAM', 'SAM_HEAD', 'SAM_EXECUTIVE', 'NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'OPS_TEAM', 'SUPER_ADMIN', 'SALES_DIRECTOR'), getUsersByRole);
+router.get('/by-role', requireRole(...BDM_LIKE_ROLES, 'BDM_TEAM_LEADER', 'NOC', 'NOC_HEAD', 'SUPPORT_TEAM', 'OPS_TEAM', 'SUPER_ADMIN', 'SALES_DIRECTOR'), getUsersByRole);
 
 // Per-user dashboard read + single-user lookup — open to OPS_TEAM (read-only
 // viewer) in addition to the roles below. Gated explicitly so they sit above

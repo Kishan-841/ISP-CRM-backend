@@ -16,7 +16,7 @@
  * Cache key format MUST match buildCacheKey() in nexus.service.js exactly:
  *   CUSTOMER audience      →  `CUSTOMER|<normalized>`
  *   UNRESTRICTED roles     →  `UNRESTRICTED|STAFF|<normalized>`
- *                              (SUPER_ADMIN, ADMIN, SAM_HEAD share this bucket)
+ *                              (SUPER_ADMIN, ADMIN share this bucket)
  *   Every other staff role →  `<ROLE>|STAFF|<normalized>`
  */
 
@@ -51,12 +51,12 @@ const normalize = (text) => {
   return tokens.length ? tokens.join(' ') : cleaned;
 };
 
-const UNRESTRICTED_ROLE_NAMES = ['SUPER_ADMIN', 'ADMIN', 'SAM_HEAD', 'MASTER', 'SALES_DIRECTOR'];
+const UNRESTRICTED_ROLE_NAMES = ['SUPER_ADMIN', 'ADMIN', 'MASTER', 'SALES_DIRECTOR'];
 const ALL_STAFF_ROLES = [
   'BDM', 'BDM_CP', 'BDM_TEAM_LEADER', 'ISR',
   'FEASIBILITY_TEAM', 'DOCS_TEAM', 'OPS_TEAM', 'ACCOUNTS_TEAM',
   'DELIVERY_TEAM', 'NOC_TEAM', 'NOC', 'NOC_HEAD',
-  'SAM_EXECUTIVE', 'SAM', 'STORE_ADMIN', 'STORE_MANAGER',
+  'SAM', 'STORE_ADMIN', 'STORE_MANAGER',
   'SUPPORT_TEAM', 'INSTALLATION_TEAM', 'TEST_USER',
 ];
 // Unrestricted bucket is shared across these — seeding once as 'UNRESTRICTED' covers them all.
@@ -115,7 +115,7 @@ const CACHED_QUESTIONS = [
 4. **Billing setup** — Accounts verification, GST, invoicing
 5. **Installation** — NOC customer account, delivery, vendor setup
 6. **Activation** — speed test, customer acceptance, actual plan
-7. **Service** — post-sale SAM, complaints, upgrades, renewals
+7. **Service** — post-sale service, complaints, upgrades, renewals
 
 Each role sees only the screens relevant to their work.`,
   },
@@ -706,64 +706,6 @@ The actual numbers show on Customer 360 side-by-side with feasibility's tentativ
 4. Submit
 
 The request gets a number (DR-XXXX) and enters the approval chain: Super Admin → Area Head → Store Manager. You'll see the status on the request detail page and get notifications as it moves forward.`,
-  },
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // SAM EXECUTIVE
-  // ═══════════════════════════════════════════════════════════════════════
-  {
-    audience: 'STAFF',
-    targetRoles: ['SAM_EXECUTIVE', 'SAM', ...UNRESTRICTED_BUCKET],
-    variants: [
-      'what is sam',
-      'sam role',
-      'service account manager',
-      'what does a sam do',
-    ],
-    answer: `A SAM (Service Account Manager) owns the post-sale customer relationship. Once a customer is activated, they're assigned to a SAM. Your job:
-
-- **Nurture** — regular check-ins, meetings, visits
-- **Upsell/renew** — propose upgrades, watch contract expiry dates
-- **Resolve complaints** — coordinate with Support team on issues
-- **Manage disconnections** — handle service orders when customers leave
-
-You see your assigned customers in the **SAM Queue**. Customer 360 is your primary tool.`,
-  },
-  {
-    audience: 'STAFF',
-    targetRoles: ['SAM_EXECUTIVE', 'SAM', ...UNRESTRICTED_BUCKET],
-    variants: [
-      'how to schedule meeting',
-      'sam meeting',
-      'schedule customer meeting',
-      'how to log meeting',
-    ],
-    answer: `1. Open the customer
-2. Click **Schedule Meeting**
-3. Pick type (Review / Escalation / Sales / Renewal), date + time, participants
-4. Save — it shows on your calendar view
-5. After the meeting, click **Log Minutes** on that meeting entry to record outcomes + next steps
-
-Meetings show on Customer 360's journey so future SAMs can see relationship history.`,
-  },
-  {
-    audience: 'STAFF',
-    targetRoles: ['SAM_EXECUTIVE', 'SAM', ...UNRESTRICTED_BUCKET],
-    variants: [
-      'how to create service order',
-      'upgrade downgrade customer plan',
-      'service order flow',
-      'plan change',
-      'disconnection',
-    ],
-    answer: `Service orders change the customer's plan post-sale. Types: **Upgrade / Downgrade / Rate Revision / Disconnection**.
-
-1. Customer page → **Service Orders → Create**
-2. Pick type + new plan + effective date
-3. Add reason + any supporting docs
-4. Submit
-
-The order goes through approvals (SAM Head for value changes, then Accounts, then NOC for activation). Pro-rated billing applies automatically when the plan changes mid-cycle.`,
   },
 
   // ═══════════════════════════════════════════════════════════════════════

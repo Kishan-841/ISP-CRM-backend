@@ -4,6 +4,7 @@ import { hasAnyRole } from '../utils/roleHelper.js';
 import { createNotification } from '../services/notification.service.js';
 import { emitSidebarRefresh, emitSidebarRefreshByRole } from '../sockets/index.js';
 import { generateLeadNumber } from '../services/documentNumber.service.js';
+import { BDM_LIKE_ROLES } from '../utils/bdmRoles.js';
 
 // SAM → CRM Create-Lead integration. SAM operators pick a BDM in their UI
 // and fill a form; we receive the lead here, assign it to the chosen BDM,
@@ -13,7 +14,7 @@ import { generateLeadNumber } from '../services/documentNumber.service.js';
 // Both endpoints sit behind the existing SAM-service JWT (same auth SAM
 // already uses for POST /service-orders) — see routes/samIntegration.routes.js.
 
-const ALLOWED_BDM_ROLES = ['BDM_TEAM_LEADER', 'BDM', 'BDM_CP'];
+const ALLOWED_BDM_ROLES = ['BDM_TEAM_LEADER', ...BDM_LIKE_ROLES, 'BDM_CP'];
 
 // Maps internal Role enum values → the type strings the SAM dropdown groups
 // by. BDM_CP collapses into SOLO_BDM because the SAM contract (§1) only
@@ -30,7 +31,7 @@ function roleToSamType(role) {
 // its Assign-To dropdown. Sorted: TLs first, then solo BDMs alphabetically.
 export const getBdmList = asyncHandler(async function getBdmList(req, res) {
   // Same auth surface SAM already uses for POST /service-orders — see route.
-  if (!hasAnyRole(req.user, ['SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'MASTER'])) {
+  if (!hasAnyRole(req.user, ['SAM_INTEGRATION', 'SUPER_ADMIN', 'MASTER'])) {
     return res.status(403).json({ message: 'Access denied.' });
   }
 
@@ -66,7 +67,7 @@ export const getBdmList = asyncHandler(async function getBdmList(req, res) {
 // click on the same form returns 200 { deduped: true } with the original
 // lead's reference.
 export const createSamLead = asyncHandler(async function createSamLead(req, res) {
-  if (!hasAnyRole(req.user, ['SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'MASTER'])) {
+  if (!hasAnyRole(req.user, ['SAM_INTEGRATION', 'SUPER_ADMIN', 'MASTER'])) {
     return res.status(403).json({ message: 'Access denied.' });
   }
 
@@ -292,7 +293,7 @@ export const createSamLead = asyncHandler(async function createSamLead(req, res)
 // GET /api/integrations/sam/leads
 //
 // Lists every Lead originally created via the SAM-dispatch flow so the SAM
-// platform can show its operators (and SAM_HEAD / ADMIN) what happened to
+// platform can show its operators (and ADMIN) what happened to
 // each one — most importantly *which BDM currently owns it* after any
 // CRM-side reassignment.
 //
@@ -306,7 +307,7 @@ export const createSamLead = asyncHandler(async function createSamLead(req, res)
 // Returns the rows sorted by Lead.updatedAt DESC so SAM's "most recent
 // activity" sort is the natural default with no extra processing needed.
 export const listSamLeads = asyncHandler(async function listSamLeads(req, res) {
-  if (!hasAnyRole(req.user, ['SAM_HEAD', 'SAM_EXECUTIVE', 'SUPER_ADMIN', 'MASTER'])) {
+  if (!hasAnyRole(req.user, ['SAM_INTEGRATION', 'SUPER_ADMIN', 'MASTER'])) {
     return res.status(403).json({ message: 'Access denied.' });
   }
 

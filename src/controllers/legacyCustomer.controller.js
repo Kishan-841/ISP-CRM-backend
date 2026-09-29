@@ -9,7 +9,7 @@ import { notifyAllByRole } from '../services/notification.service.js';
  *
  * Isolated from the Lead pipeline: these rows exist purely to showcase old /
  * existing customer data on the Accounts dashboard. No Lead / CampaignData /
- * SAMAssignment is ever created. Only ACCOUNTS_TEAM and DELIVERY_TEAM (and
+ * SAM record is ever created. Only ACCOUNTS_TEAM and DELIVERY_TEAM (and
  * SUPER_ADMIN for oversight) interact with these records.
  */
 

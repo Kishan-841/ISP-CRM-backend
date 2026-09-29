@@ -9,7 +9,7 @@ const REQUIRED_FIELDS = [
   'billingAddress', 'billingPincode', 'poNumber', 'poExpiryDate',
   'billDate', 'billingCycle', 'techInchargeMobile', 'techInchargeEmail',
   'accountsInchargeMobile', 'accountsInchargeEmail', 'bdmName',
-  'serviceManager', 'numberOfIPs', 'ipAddresses', 'samExecutiveName',
+  'serviceManager', 'numberOfIPs', 'ipAddresses',
   'bandwidth', 'username'
 ];
 
@@ -115,7 +115,6 @@ const validateRow = (row, rowIndex) => {
   cleaned.accountsInchargeEmail = String(row.accountsInchargeEmail).trim();
   cleaned.bdmName = String(row.bdmName).trim();
   cleaned.serviceManager = String(row.serviceManager).trim();
-  cleaned.samExecutiveName = String(row.samExecutiveName).trim();
   cleaned.username = String(row.username).trim();
 
   // Date validations
@@ -192,8 +191,8 @@ const getNextCircuitSerial = async (tx) => {
 };
 
 /**
- * Create a single customer import (CampaignData + Lead + optional SAMAssignment)
- * Returns { lead, samWarning }
+ * Create a single customer import (CampaignData + Lead)
+ * Returns { lead, customerUserId, customerUsername, circuitId }
  */
 const createImportedCustomer = async (tx, cleaned, campaign, leadNumber, customerSerial, circuitSerial, userId) => {
   const now = new Date();
@@ -280,31 +279,7 @@ const createImportedCustomer = async (tx, cleaned, campaign, leadNumber, custome
     }
   });
 
-  // SAM Assignment
-  let samWarning = null;
-  if (cleaned.samExecutiveName) {
-    const samUser = await tx.user.findFirst({
-      where: {
-        name: { equals: cleaned.samExecutiveName, mode: 'insensitive' },
-        role: { in: ['SAM_EXECUTIVE', 'SAM_HEAD'] },
-        isActive: true
-      }
-    });
-
-    if (samUser) {
-      await tx.sAMAssignment.create({
-        data: {
-          customerId: lead.id,
-          samExecutiveId: samUser.id,
-          assignedById: userId
-        }
-      });
-    } else {
-      samWarning = `SAM executive "${cleaned.samExecutiveName}" not found`;
-    }
-  }
-
-  return { lead, customerUserId, customerUsername, circuitId, samWarning };
+  return { lead, customerUserId, customerUsername, circuitId };
 };
 
 /**
@@ -366,15 +341,13 @@ export const bulkImportCustomers = async (req, res) => {
         message: 'No customers to import.',
         invalidRows,
         duplicateRows,
-        samAssignmentErrors: [],
         imported: [],
         summary: {
           total: rows.length,
           valid: validRows.length,
           invalid: invalidRows.length,
           duplicates: duplicateRows.length,
-          imported: 0,
-          samWarnings: 0
+          imported: 0
         }
       });
     }
@@ -388,7 +361,6 @@ export const bulkImportCustomers = async (req, res) => {
 
     // Phase 4: Import inside transaction
     const imported = [];
-    const samAssignmentErrors = [];
 
     await prisma.$transaction(async (tx) => {
       const campaign = await getOrCreateImportCampaign(tx);
@@ -412,14 +384,6 @@ export const bulkImportCustomers = async (req, res) => {
           company: cleaned.companyName
         });
 
-        if (result.samWarning) {
-          samAssignmentErrors.push({
-            row: rowIndex,
-            samName: cleaned.samExecutiveName,
-            reason: result.samWarning
-          });
-        }
-
         customerSerial++;
         circuitSerial++;
       }
@@ -429,15 +393,13 @@ export const bulkImportCustomers = async (req, res) => {
       message: `Successfully imported ${imported.length} customers.`,
       invalidRows,
       duplicateRows,
-      samAssignmentErrors,
       imported,
       summary: {
         total: rows.length,
         valid: validRows.length,
         invalid: invalidRows.length,
         duplicates: duplicateRows.length,
-        imported: imported.length,
-        samWarnings: samAssignmentErrors.length
+        imported: imported.length
       }
     });
   } catch (error) {
@@ -492,9 +454,7 @@ export const importSingleCustomer = async (req, res) => {
       data: {
         customerUserId: result.customerUserId,
         customerUsername: result.customerUsername,
-        circuitId: result.circuitId,
-        samAssigned: !result.samWarning,
-        samWarning: result.samWarning || undefined
+        circuitId: result.circuitId
       }
     };
 
@@ -550,20 +510,17 @@ export const getTemplateHeaders = async (req, res) => {
           serviceManager: 'Service manager name',
           numberOfIPs: 'Number of IP addresses',
           ipAddresses: 'Comma-separated IP addresses',
-          samExecutiveName: 'SAM executive name',
           bandwidth: 'Bandwidth in Mbps (e.g. 100)',
           username: 'Customer username (from old software)'
         },
         notes: [
-          'All 32 fields are required — rows with missing fields will be rejected.',
+          'All 31 fields are required — rows with missing fields will be rejected.',
           'Phone must be exactly 10 digits (non-digit characters are stripped automatically).',
           'arcAmount and otcAmount must be valid numbers.',
           'numberOfIPs must be a number and must match the count of comma-separated ipAddresses.',
           'billingCycle must be one of: MONTHLY, QUARTERLY, HALF_YEARLY, YEARLY.',
           'poExpiryDate and billDate must be valid date strings (recommended format: YYYY-MM-DD).',
-          'Duplicate rows (phone already exists in the system) will be skipped.',
-          'samExecutiveName is matched case-insensitively against active SAM_EXECUTIVE or SAM_HEAD users.',
-          'If SAM executive is not found, the customer is still imported but without SAM assignment.'
+          'Duplicate rows (phone already exists in the system) will be skipped.'
         ]
       }
     });

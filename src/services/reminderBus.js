@@ -26,7 +26,7 @@ export function cleanExpired() {
 /**
  * @param {Object} params
  * @param {string} params.userId          — recipient
- * @param {string} params.type            — 'MEETING_BDM' | 'MEETING_SAM' | 'FOLLOW_UP_ISR' | 'FOLLOW_UP_BDM' | 'SAM_VISIT' | 'COMPLAINT_TAT' | 'INVOICE_DUE'
+ * @param {string} params.type            — 'MEETING_BDM' | 'FOLLOW_UP_ISR' | 'FOLLOW_UP_BDM' | 'COMPLAINT_TAT' | 'INVOICE_DUE'
  * @param {string} params.recordId        — DB id of the underlying record (for dedup)
  * @param {string} params.title           — main line shown in modal
  * @param {string} [params.subtitle]      — secondary line (e.g. customer/company)
