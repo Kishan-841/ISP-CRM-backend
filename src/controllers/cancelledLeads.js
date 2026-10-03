@@ -9,7 +9,7 @@
  */
 import prisma from '../config/db.js';
 import { asyncHandler } from '../utils/controllerHelper.js';
-import { isAdminOrTestUser } from '../utils/roleHelper.js';
+import { isAdminOrTestUser, hasRole } from '../utils/roleHelper.js';
 
 const SELECT = {
   id: true,
@@ -83,10 +83,22 @@ const respond = async (res, where, query) => {
   });
 };
 
-/** Delivery board Cancelled tab: own + unassigned, or everything for an admin. */
+/**
+ * Delivery board Cancelled tab. Same gate and scoping as getDeliveryQueue:
+ * a delivery user sees own + unassigned; a BDM team leader (read-only board
+ * view) and admins see everything.
+ */
 export const getDeliveryCancelledLeads = asyncHandler(async function getDeliveryCancelledLeads(req, res) {
+  const isDeliveryTeam = hasRole(req.user, 'DELIVERY_TEAM');
+  const isTL = hasRole(req.user, 'BDM_TEAM_LEADER');
+  const isAdmin = isAdminOrTestUser(req.user);
+
+  if (!isDeliveryTeam && !isTL && !isAdmin) {
+    return res.status(403).json({ message: 'Only Delivery Team can access this endpoint.' });
+  }
+
   const where = { ...buildFilters(req.query), pushedToInstallationAt: { not: null } };
-  if (!isAdminOrTestUser(req.user)) {
+  if (isDeliveryTeam && !isAdmin) {
     where.OR = [{ deliveryAssignedToId: req.user.id }, { deliveryAssignedToId: null }];
   }
   await respond(res, where, req.query);
