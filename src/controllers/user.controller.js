@@ -801,7 +801,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
 
   if (isBdmLikeRole(userRole) || isMaster) {
     // BDM counts: queue, calling queue, retry queue, meetings, follow-ups, delivery completed, opportunity pipeline, cold leads
-    const [queue, bdmCallingQueue, bdmRetryQueue, meetings, bdmFollowUps, deliveryCompleted, leadPipeline, coldLeadsPending] = await Promise.all([
+    const [queue, bdmCallingQueue, bdmRetryQueue, meetings, bdmFollowUps, deliveryCompleted, leadPipeline, coldLeadsPending, cancelledLeads] = await Promise.all([
       prisma.lead.count({
         where: { ...(!isMaster && { assignedToId: userId }), status: 'NEW', isColdLead: false }
       }),
@@ -847,18 +847,19 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       }),
       prisma.lead.count({
         where: { ...(!isMaster && { assignedToId: userId }), isColdLead: true }
-      })
+      }),
+      prisma.lead.count({ where: { ...(!isMaster && { assignedToId: userId }), cancelledAt: { not: null } } })
     ]);
     if (isMaster) {
-      Object.assign(counts, { queue, bdmCallingQueue, bdmRetryQueue, meetings, bdmFollowUps, deliveryCompleted, leadPipeline, coldLeadsPending });
+      Object.assign(counts, { queue, bdmCallingQueue, bdmRetryQueue, meetings, bdmFollowUps, deliveryCompleted, leadPipeline, coldLeadsPending, cancelledLeads });
     } else {
-      Object.assign(counts, { queue, callingQueue: bdmCallingQueue, retryQueue: bdmRetryQueue, meetings, followUps: bdmFollowUps, deliveryCompleted, leadPipeline, coldLeadsPending });
+      Object.assign(counts, { queue, callingQueue: bdmCallingQueue, retryQueue: bdmRetryQueue, meetings, followUps: bdmFollowUps, deliveryCompleted, leadPipeline, coldLeadsPending, cancelledLeads });
     }
   }
 
   if (userRole === 'BDM_CP' || isMaster) {
     // BDM_CP counts: similar to BDM but only CP-sourced data
-    const [cpCallingQueue, cpQueue, cpFollowUps, cpMeetings, cpLeadPipeline, cpDeliveryCompleted, cpColdLeadsPending] = await Promise.all([
+    const [cpCallingQueue, cpQueue, cpFollowUps, cpMeetings, cpLeadPipeline, cpDeliveryCompleted, cpColdLeadsPending, cpCancelledLeads] = await Promise.all([
       prisma.campaignData.count({
         where: {
           ...(!isMaster && { assignedToId: userId }),
@@ -898,12 +899,13 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       }),
       prisma.lead.count({
         where: { ...(!isMaster && { assignedToId: userId }), isColdLead: true }
-      })
+      }),
+      prisma.lead.count({ where: { ...(!isMaster && { assignedToId: userId }), cancelledAt: { not: null } } })
     ]);
     if (isMaster) {
       Object.assign(counts, { cpCallingQueue, cpQueue, cpFollowUps, cpMeetings, cpLeadPipeline, cpDeliveryCompleted, cpColdLeadsPending });
     } else {
-      Object.assign(counts, { callingQueue: cpCallingQueue, queue: cpQueue, followUps: cpFollowUps, meetings: cpMeetings, leadPipeline: cpLeadPipeline, deliveryCompleted: cpDeliveryCompleted, coldLeadsPending: cpColdLeadsPending });
+      Object.assign(counts, { callingQueue: cpCallingQueue, queue: cpQueue, followUps: cpFollowUps, meetings: cpMeetings, leadPipeline: cpLeadPipeline, deliveryCompleted: cpDeliveryCompleted, coldLeadsPending: cpColdLeadsPending, cancelledLeads: cpCancelledLeads });
     }
   }
 
@@ -913,7 +915,7 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
       where: { teamLeaderId: userId, isActive: true },
       select: { id: true }
     })).map((u) => u.id);
-    const [btlQueue, btlMeetings, btlFollowUps, btlColdLeadsPending, btlFeasibilityPending] = await Promise.all([
+    const [btlQueue, btlMeetings, btlFollowUps, btlColdLeadsPending, btlFeasibilityPending, btlCancelledLeads] = await Promise.all([
       prisma.lead.count({
         where: { ...(!isMaster && { assignedToId: userId }), status: 'NEW', isColdLead: false }
       }),
@@ -950,12 +952,13 @@ export const getSidebarCounts = asyncHandler(async function getSidebarCounts(req
           status: 'QUALIFIED',
           isColdLead: false
         }
-      })
+      }),
+      prisma.lead.count({ where: { ...(!isMaster && { assignedToId: userId }), cancelledAt: { not: null } } })
     ]);
     if (isMaster) {
       Object.assign(counts, { btlQueue, btlMeetings, btlFollowUps, btlColdLeadsPending, btlFeasibilityPending });
     } else {
-      Object.assign(counts, { queue: btlQueue, meetings: btlMeetings, followUps: btlFollowUps, coldLeadsPending: btlColdLeadsPending, feasibilityPending: btlFeasibilityPending });
+      Object.assign(counts, { queue: btlQueue, meetings: btlMeetings, followUps: btlFollowUps, coldLeadsPending: btlColdLeadsPending, feasibilityPending: btlFeasibilityPending, cancelledLeads: btlCancelledLeads });
     }
   }
 
