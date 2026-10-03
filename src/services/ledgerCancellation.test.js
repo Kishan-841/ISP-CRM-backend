@@ -28,3 +28,24 @@ test('treats missing numeric fields as zero', () => {
   assert.equal(unpaidRemainderOf({ grandTotal: 500 }), 500);
   assert.equal(unpaidRemainderOf({}), 0);
 });
+
+import { ledgerBucketOf, genuineCreditNoteLedgerTotal } from './ledger.service.js';
+
+test('cancellation entries get their own bucket, not creditNotes', () => {
+  assert.equal(ledgerBucketOf('CREDIT_NOTE', 'INVOICE_CANCELLATION'), 'invoiceCancellations');
+  assert.equal(ledgerBucketOf('CREDIT_NOTE', 'CREDIT_NOTE'), 'creditNotes');
+});
+
+test('other entry types keep their buckets', () => {
+  assert.equal(ledgerBucketOf('INVOICE', 'INVOICE'), 'invoices');
+  assert.equal(ledgerBucketOf('PAYMENT', 'PAYMENT'), 'payments');
+  assert.equal(ledgerBucketOf('REFUND', 'REFUND'), 'refunds');
+  assert.equal(ledgerBucketOf('SOMETHING', null), null);
+});
+
+test('credit-note reconciliation total excludes cancellations', () => {
+  assert.equal(genuineCreditNoteLedgerTotal(1500, 700), 800);
+  assert.equal(genuineCreditNoteLedgerTotal(700, 700), 0);
+  assert.equal(genuineCreditNoteLedgerTotal(300, 0), 300);
+  assert.equal(genuineCreditNoteLedgerTotal(undefined, undefined), 0);
+});
