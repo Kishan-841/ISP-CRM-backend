@@ -143,6 +143,7 @@ import {
   deleteLeadEntirelyHandler,
   getDeletionAuditList,
 } from '../controllers/leadDeletion.controller.js';
+import { cancelDeliveryLead } from '../controllers/cancelDeliveryLead.js';
 
 const router = express.Router();
 
@@ -464,6 +465,10 @@ router.patch('/delivery-team/:id/status', updateDeliveryStatus);
 
 // Start installation with material verification
 router.patch('/delivery-team/:id/start-installation', startInstallation);
+
+// Cancel a lead out of the delivery pipeline (delivery team + admin).
+// Role check is in the controller, matching the other /delivery-team routes.
+router.post('/delivery-team/:id/cancel', cancelDeliveryLead);
 
 // ========== SPEED TEST & CUSTOMER ACCEPTANCE ROUTES ==========
 
