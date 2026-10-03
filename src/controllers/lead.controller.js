@@ -18,6 +18,7 @@ import { deriveCurrentStage, bucketFromLead, BUCKETS, VISIBLE_BUCKETS } from '..
 import { logStatusChange } from '../services/statusChangeLog.service.js';
 import { enqueueActivationWebhook, attemptDeliveryInBackground } from '../services/samWebhook.service.js';
 import { logAudit, logDelete, logLeadUpdate } from '../services/auditLog.service.js';
+import { getLeadStage } from '../utils/deliveryStage.js';
 
 // ─── Opportunity Pipeline (BDM /dashboard/quotation-mgmt) stage filters ───
 //
@@ -8149,47 +8150,6 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
       },
       orderBy: { pushedToInstallationAt: 'desc' }
     });
-
-    // Helper function to determine which stage a lead belongs to
-    const getLeadStage = (lead) => {
-      const status = lead.deliveryStatus;
-      const activeRequest = lead.deliveryRequests?.[0];
-
-      // Check explicit statuses first (higher priority)
-      if (status === 'COMPLETED') return 'completed';
-      if (status === 'MATERIAL_REJECTED') return 'material_rejected';
-      if (status === 'REJECTED') return 'rejected';
-      if (status === 'CUSTOMER_ACCEPTANCE') return 'customer_acceptance';
-      if (status === 'SPEED_TEST') return 'speed_test';
-      if (status === 'DEMO_PLAN_PENDING') return 'demo_plan_pending';
-      if (status === 'INSTALLING') return 'installing';
-      if (status === 'ACTIVATION_READY') return 'noc_completed';
-      if (status === 'PUSHED_TO_NOC') return 'pushed_to_noc';
-
-      // Check based on delivery request status
-      if (activeRequest) {
-        // Material received but not pushed to NOC yet
-        if (activeRequest.status === 'ASSIGNED' && !activeRequest.pushedToNocAt) {
-          return 'material_received';
-        }
-        // Pushed to NOC (via delivery request)
-        if (activeRequest.pushedToNocAt) {
-          return 'pushed_to_noc';
-        }
-        // Material requested, awaiting approval
-        if (['PENDING_APPROVAL', 'APPROVED'].includes(activeRequest.status)) {
-          return 'material_requested';
-        }
-      }
-
-      // Vendor setup must be done before material request
-      if (!lead.deliveryVendorSetupDone) {
-        return 'vendor_setup';
-      }
-
-      // Default: Pending (no request yet)
-      return 'pending';
-    };
 
     // Calculate stats for all stages
     const stats = {
