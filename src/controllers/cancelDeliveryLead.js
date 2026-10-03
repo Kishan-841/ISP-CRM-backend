@@ -81,10 +81,17 @@ export const cancelDeliveryLead = asyncHandler(async function cancelDeliveryLead
     include: {
       campaignData: { select: { company: true } },
       deliveryRequests: {
+        // Newest first, matching getDeliveryQueue - getLeadStage reads
+        // deliveryRequests[0], so the order here decides which request the
+        // recorded stage is derived from. Unlike the queue we do NOT filter or
+        // `take: 1`: every request is needed below, open ones to void and
+        // supplementary ones because they still hold material to return.
+        orderBy: { createdAt: 'desc' },
         select: {
           id: true,
           status: true,
           pushedToNocAt: true,
+          isSupplementary: true,
           items: {
             where: { isAssigned: true },
             select: {
@@ -109,10 +116,29 @@ export const cancelDeliveryLead = asyncHandler(async function cancelDeliveryLead
 
   // Captured BEFORE deliveryStatus is overwritten - afterwards the board stage
   // is unrecoverable.
-  const stageAtCancellation = getLeadStage(lead);
+  //
+  // Supplementary ("Add More Material") requests are excluded so the stage is
+  // derived from the same request the board showed the user: getDeliveryQueue
+  // filters `isSupplementary: false`, and without this a lead with a null
+  // deliveryStatus plus a supplementary request would record a stage nobody saw.
+  const stageAtCancellation = getLeadStage({
+    ...lead,
+    deliveryRequests: lead.deliveryRequests.filter(r => !r.isSupplementary)
+  });
+  // Deliberately ALL requests, supplementary included - they hold material that
+  // must come back to stock and still need voiding.
   const plan = planCancellation(lead);
   const trimmedReason = String(reason).trim();
 
+  // Every effect below is one transaction by design: committing some and not
+  // others would release hardware for a live lead, or credit a ledger for an
+  // invoice still open.
+  //
+  // The budget is raised from Prisma's 5s interactive default because each
+  // serial costs ~5 sequential round trips (in-stock check, batch lookup, batch
+  // update, item update, MaterialReturn create) - a lead carrying many serials
+  // would otherwise hit P2028. That rollback is the correct failure, but the
+  // operation should fit rather than depend on the lead being small.
   const returnedSerials = await prisma.$transaction(async (tx) => {
     const done = [];
 
@@ -186,7 +212,7 @@ export const cancelDeliveryLead = asyncHandler(async function cancelDeliveryLead
     });
 
     return done;
-  });
+  }, { timeout: 30000, maxWait: 10000 });
 
   logStatusChange({
     entityType: 'LEAD',
