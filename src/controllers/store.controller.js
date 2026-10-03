@@ -5,6 +5,7 @@ import { isAdminOrTestUser, hasRole } from '../utils/roleHelper.js';
 import { emitSidebarRefreshByRole } from '../sockets/index.js';
 import { asyncHandler } from '../utils/controllerHelper.js';
 import { generateDocumentNumber } from '../services/documentNumber.service.js';
+import { returnSerialToStock } from '../services/materialReturn.service.js';
 
 // Generate PO number (atomic, race-condition safe)
 const generatePONumber = async () => {
@@ -2594,64 +2595,6 @@ export const getLeadsWithReturnableMaterial = asyncHandler(async function getLea
 });
 
 /**
- * Move a serial into stock. Runs ONLY when an admin approves a return — that's
- * the point at which recovered material becomes real inventory.
- *
- * GOOD  -> the batch it was assigned from when that batch is reliably known,
- *          else a PO-less RETURN batch. assignedFromPOItemId records only the
- *          FIRST source PO, so for a multi-PO assignment it may not be this
- *          serial's true origin — fall back rather than credit a batch it never
- *          came from.
- * FAULTY -> a per-product FAULTY batch, never the original: POItemStatus is
- *          per-BATCH, so flagging the original would quarantine its good
- *          serials too.
- */
-const moveReturnedSerialIntoStock = async (tx, { deliveryItem, productId, serialNumber, condition, userId }) => {
-  let targetBatch = null;
-
-  if (condition === 'GOOD') {
-    if (deliveryItem?.assignedFromPOItemId) {
-      targetBatch = await tx.storePurchaseOrderItem.findFirst({
-        where: { id: deliveryItem.assignedFromPOItemId, productId, status: 'IN_STORE' }
-      });
-    }
-    if (!targetBatch) {
-      targetBatch = await tx.storePurchaseOrderItem.findFirst({
-        where: { poId: null, productId, status: 'IN_STORE' }
-      });
-    }
-    if (!targetBatch) {
-      targetBatch = await tx.storePurchaseOrderItem.create({
-        data: {
-          productId, poId: null, quantity: 0, serialNumbers: [], receivedQuantity: 0,
-          status: 'IN_STORE', addedToStoreAt: new Date(), directEntryById: userId
-        }
-      });
-    }
-  } else {
-    targetBatch = await tx.storePurchaseOrderItem.findFirst({
-      where: { poId: null, productId, status: 'FAULTY' }
-    });
-    if (!targetBatch) {
-      targetBatch = await tx.storePurchaseOrderItem.create({
-        data: {
-          productId, poId: null, quantity: 0, serialNumbers: [], receivedQuantity: 0,
-          status: 'FAULTY', addedToStoreAt: new Date(), directEntryById: userId
-        }
-      });
-    }
-  }
-
-  const nextSerials = [...new Set([...(targetBatch.serialNumbers || []), serialNumber])];
-  await tx.storePurchaseOrderItem.update({
-    where: { id: targetBatch.id },
-    data: { serialNumbers: nextSerials, receivedQuantity: nextSerials.length, quantity: nextSerials.length }
-  });
-
-  return targetBatch.id;
-};
-
-/**
  * GET /store/material-returns/pending
  * Returns awaiting admin sign-off — drives the Approvals page + its badge.
  */
@@ -2705,7 +2648,7 @@ export const approveMaterialReturn = asyncHandler(async function approveMaterial
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const targetPOItemId = await moveReturnedSerialIntoStock(tx, {
+    const targetPOItemId = await returnSerialToStock(tx, {
       deliveryItem: materialReturn.deliveryRequestItem,
       productId: materialReturn.productId,
       serialNumber: materialReturn.serialNumber,
