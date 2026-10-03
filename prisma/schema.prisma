@@ -50,6 +50,7 @@ model User {
   deliveryAssignedLeads              Lead[]                   @relation("DeliveryAssignedTo")
   demoPlanAssignedLeads              Lead[]                   @relation("DemoPlanAssignedBy")
   feasibilityAssignedLeads           Lead[]                   @relation("FeasibilityAssignedTo")
+  cancelledLeads                     Lead[]                   @relation("LeadCancelledBy")
   nocAssignedLeads                   Lead[]                   @relation("NocAssignedTo")
   nocConfiguredLeads                 Lead[]                   @relation("NocConfiguredBy")
   nocPushedToDeliveryLeads           Lead[]                   @relation("NocPushedToDelivery")
@@ -402,6 +403,16 @@ model Lead {
   deliveryProducts             Json?
   deliveryStatus               String?
   deliveryCompletedViewedAt    DateTime?
+  // ─── Cancellation (delivery stage) ──────────────────────────────────────
+  // A lead that died inside the delivery pipeline. Terminal: there is no
+  // un-cancel. `cancelledAt != null` is the canonical "is cancelled" test;
+  // deliveryStatus is also set to 'CANCELLED' for the board's stage derivation.
+  // `cancelledAtStage` snapshots the board stage BEFORE deliveryStatus is
+  // overwritten, so reporting can still answer "where are we losing them".
+  cancelledAt                  DateTime?
+  cancelledById                String?
+  cancelledReason              String?   @db.Text
+  cancelledAtStage             String?
   fromAddress                  String?
   fromLatitude                 Float?
   fromLongitude                Float?
@@ -525,6 +536,7 @@ model Lead {
   installationStartedBy        User?                      @relation("LeadInstallStarted", fields: [installationStartedById], references: [id], onDelete: SetNull)
   installationCompletedBy      User?                      @relation("LeadInstallCompleted", fields: [installationCompletedById], references: [id], onDelete: SetNull)
   deliveryDocsReviewedBy       User?                      @relation("LeadDeliveryDocsReviewed", fields: [deliveryDocsReviewedById], references: [id], onDelete: SetNull)
+  cancelledBy                  User?                      @relation("LeadCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
   products                     LeadProduct[]
   moms                         MOM[]
 
@@ -579,6 +591,8 @@ model Lead {
   @@index([superAdmin2ApprovalStatus, status])
   @@index([isColdLead, assignedToId])
   @@index([creationSource])
+  @@index([cancelledAt])
+  @@index([assignedToId, cancelledAt])
 }
 
 model LeadProduct {
@@ -1488,6 +1502,10 @@ enum DeliveryRequestStatus {
   ASSIGNED
   DISPATCHED
   COMPLETED
+  // Request voided because its lead was cancelled. Distinct from REJECTED,
+  // which means Super Admin declined the material request and drives a
+  // re-request flow (deliveryRequest.controller.js:484-528).
+  CANCELLED
 }
 
 // ─── Contact form messages ───────────────────────────────────────────────────
