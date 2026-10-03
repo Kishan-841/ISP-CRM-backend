@@ -144,6 +144,7 @@ import {
   getDeletionAuditList,
 } from '../controllers/leadDeletion.controller.js';
 import { cancelDeliveryLead } from '../controllers/cancelDeliveryLead.js';
+import { getDeliveryCancelledLeads, getCancelledLeads } from '../controllers/cancelledLeads.js';
 
 const router = express.Router();
 
@@ -451,6 +452,9 @@ router.get('/delivery-team/report', getDeliveryReport);
 // Get Delivery Team queue (leads pushed to installation)
 router.get('/delivery-team/queue', getDeliveryQueue);
 
+// Delivery board - Cancelled tab (must stay above any /delivery-team/:id route)
+router.get('/delivery-team/cancelled', getDeliveryCancelledLeads);
+
 // Get detailed lead info for delivery team
 router.get('/delivery-team/:id/details', getDeliveryLeadDetails);
 
@@ -550,6 +554,9 @@ router.get('/buckets', getLeadsByBucket);
 // Opportunity Pipeline tab badges (per-stage counts) — see
 // OPPORTUNITY_STAGE_FILTERS in lead.controller.js for stage definitions.
 router.get('/opportunity-pipeline/stats', getOpportunityPipelineStats);
+
+// Sales owner - Cancelled Leads page (must stay above '/:id')
+router.get('/cancelled', getCancelledLeads);
 
 // Get single lead
 router.get('/:id', getLead);

@@ -8013,7 +8013,10 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
 
     // First, get ALL leads pushed to installation with their delivery requests
     const allLeadsWithRequests = await prisma.lead.findMany({
-      where: { pushedToInstallationAt: { not: null } },
+      // Cancelled leads are served by their own paginated endpoint. This query
+      // loads every matching lead into memory on each tab click and socket
+      // refresh, so cancelled ones must not accumulate in it.
+      where: { pushedToInstallationAt: { not: null }, cancelledAt: null },
       select: {
         id: true,
         requirements: true,
@@ -8039,6 +8042,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         pushedToInstallationAt: true,
         installationNotes: true,
         deliveryStatus: true,
+        cancelledAt: true,
         deliveryAssignedToId: true,
         deliveryAssignedAt: true,
         deliveryNotes: true,
@@ -8164,7 +8168,8 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
       speedTest: 0,
       customerAcceptance: 0,
       completed: 0,
-      rejected: 0
+      rejected: 0,
+      cancelled: 0
     };
 
     // Categorize all leads
@@ -8276,6 +8281,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         pushedToInstallationBy: lead.pushedToInstallationBy,
         installationNotes: lead.installationNotes,
         deliveryStatus: lead.deliveryStatus || 'PENDING',
+        cancelledAt: lead.cancelledAt,
         deliveryAssignedTo: lead.deliveryAssignedTo,
         deliveryAssignedAt: lead.deliveryAssignedAt,
         deliveryNotes: lead.deliveryNotes,
@@ -8331,6 +8337,16 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         createdAt: lead.createdAt,
         updatedAt: lead.updatedAt
       };
+    });
+
+    // Cancelled leads are excluded from the in-memory list above, so count them separately.
+    // Scoped exactly like the queue's own delivery-user scoping.
+    stats.cancelled = await prisma.lead.count({
+      where: {
+        pushedToInstallationAt: { not: null },
+        cancelledAt: { not: null },
+        ...(isDeliveryTeam && !isAdmin ? { OR: [{ deliveryAssignedToId: userId }, { deliveryAssignedToId: null }] } : {})
+      }
     });
 
     res.json(paginatedResponse({ data: formattedLeads, total: deliveryTotal, page, limit, dataKey: 'leads', extra: { stats } }));
