@@ -5610,6 +5610,16 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         assignedToName: lead.assignedTo?.name || null,
       }));
 
+    // Cancelled leads. Scoped to the period like the other money tiles, by
+    // cancelledAt rather than createdAt - a lead created in March and cancelled
+    // in October is October's loss.
+    const cancelledLeads = allLeads.filter(l =>
+      l.cancelledAt && (!dateFrom || new Date(l.cancelledAt) >= dateFrom) && (!dateTo || new Date(l.cancelledAt) <= dateTo)
+    );
+    const cancelledCount = cancelledLeads.length;
+    const cancelledArcAmount = cancelledLeads.reduce((sum, l) => sum + (l.arcAmount || 0), 0);
+    const cancelledOtcAmount = cancelledLeads.reduce((sum, l) => sum + (l.otcAmount || 0), 0);
+
     // OTC view — parallel to funnelLeads. Drives the Total OTC card's
     // drill-down: every lead with a positive otcAmount, period-scoped via
     // periodLeads (matches the totalOtcAmount aggregate). One-time charge
@@ -5701,6 +5711,9 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         totalOtcAmount,
         funnelLeads,
         otcLeads,
+        cancelledCount,
+        cancelledArcAmount,
+        cancelledOtcAmount,
         quotationCount,
         totalQuotationAmount,
         // Pipeline stat cards
