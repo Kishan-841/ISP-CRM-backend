@@ -18,6 +18,7 @@ import { deriveCurrentStage, bucketFromLead, BUCKETS, VISIBLE_BUCKETS } from '..
 import { logStatusChange } from '../services/statusChangeLog.service.js';
 import { enqueueActivationWebhook, attemptDeliveryInBackground } from '../services/samWebhook.service.js';
 import { logAudit, logDelete, logLeadUpdate } from '../services/auditLog.service.js';
+import { getLeadStage } from '../utils/deliveryStage.js';
 
 // ─── Opportunity Pipeline (BDM /dashboard/quotation-mgmt) stage filters ───
 //
@@ -5609,6 +5610,16 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         assignedToName: lead.assignedTo?.name || null,
       }));
 
+    // Cancelled leads. Scoped to the period like the other money tiles, by
+    // cancelledAt rather than createdAt - a lead created in March and cancelled
+    // in October is October's loss.
+    const cancelledLeads = allLeads.filter(l =>
+      l.cancelledAt && (!dateFrom || new Date(l.cancelledAt) >= dateFrom) && (!dateTo || new Date(l.cancelledAt) <= dateTo)
+    );
+    const cancelledCount = cancelledLeads.length;
+    const cancelledArcAmount = cancelledLeads.reduce((sum, l) => sum + (l.arcAmount || 0), 0);
+    const cancelledOtcAmount = cancelledLeads.reduce((sum, l) => sum + (l.otcAmount || 0), 0);
+
     // OTC view — parallel to funnelLeads. Drives the Total OTC card's
     // drill-down: every lead with a positive otcAmount, period-scoped via
     // periodLeads (matches the totalOtcAmount aggregate). One-time charge
@@ -5700,6 +5711,9 @@ export const getBDMDashboardStats = asyncHandler(async function getBDMDashboardS
         totalOtcAmount,
         funnelLeads,
         otcLeads,
+        cancelledCount,
+        cancelledArcAmount,
+        cancelledOtcAmount,
         quotationCount,
         totalQuotationAmount,
         // Pipeline stat cards
@@ -8012,7 +8026,10 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
 
     // First, get ALL leads pushed to installation with their delivery requests
     const allLeadsWithRequests = await prisma.lead.findMany({
-      where: { pushedToInstallationAt: { not: null } },
+      // Cancelled leads are served by their own paginated endpoint. This query
+      // loads every matching lead into memory on each tab click and socket
+      // refresh, so cancelled ones must not accumulate in it.
+      where: { pushedToInstallationAt: { not: null }, cancelledAt: null },
       select: {
         id: true,
         requirements: true,
@@ -8038,6 +8055,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         pushedToInstallationAt: true,
         installationNotes: true,
         deliveryStatus: true,
+        cancelledAt: true,
         deliveryAssignedToId: true,
         deliveryAssignedAt: true,
         deliveryNotes: true,
@@ -8150,47 +8168,6 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
       orderBy: { pushedToInstallationAt: 'desc' }
     });
 
-    // Helper function to determine which stage a lead belongs to
-    const getLeadStage = (lead) => {
-      const status = lead.deliveryStatus;
-      const activeRequest = lead.deliveryRequests?.[0];
-
-      // Check explicit statuses first (higher priority)
-      if (status === 'COMPLETED') return 'completed';
-      if (status === 'MATERIAL_REJECTED') return 'material_rejected';
-      if (status === 'REJECTED') return 'rejected';
-      if (status === 'CUSTOMER_ACCEPTANCE') return 'customer_acceptance';
-      if (status === 'SPEED_TEST') return 'speed_test';
-      if (status === 'DEMO_PLAN_PENDING') return 'demo_plan_pending';
-      if (status === 'INSTALLING') return 'installing';
-      if (status === 'ACTIVATION_READY') return 'noc_completed';
-      if (status === 'PUSHED_TO_NOC') return 'pushed_to_noc';
-
-      // Check based on delivery request status
-      if (activeRequest) {
-        // Material received but not pushed to NOC yet
-        if (activeRequest.status === 'ASSIGNED' && !activeRequest.pushedToNocAt) {
-          return 'material_received';
-        }
-        // Pushed to NOC (via delivery request)
-        if (activeRequest.pushedToNocAt) {
-          return 'pushed_to_noc';
-        }
-        // Material requested, awaiting approval
-        if (['PENDING_APPROVAL', 'APPROVED'].includes(activeRequest.status)) {
-          return 'material_requested';
-        }
-      }
-
-      // Vendor setup must be done before material request
-      if (!lead.deliveryVendorSetupDone) {
-        return 'vendor_setup';
-      }
-
-      // Default: Pending (no request yet)
-      return 'pending';
-    };
-
     // Calculate stats for all stages
     const stats = {
       vendorSetup: 0,
@@ -8204,7 +8181,8 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
       speedTest: 0,
       customerAcceptance: 0,
       completed: 0,
-      rejected: 0
+      rejected: 0,
+      cancelled: 0
     };
 
     // Categorize all leads
@@ -8316,6 +8294,7 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         pushedToInstallationBy: lead.pushedToInstallationBy,
         installationNotes: lead.installationNotes,
         deliveryStatus: lead.deliveryStatus || 'PENDING',
+        cancelledAt: lead.cancelledAt,
         deliveryAssignedTo: lead.deliveryAssignedTo,
         deliveryAssignedAt: lead.deliveryAssignedAt,
         deliveryNotes: lead.deliveryNotes,
@@ -8371,6 +8350,16 @@ export const getDeliveryQueue = asyncHandler(async function getDeliveryQueue(req
         createdAt: lead.createdAt,
         updatedAt: lead.updatedAt
       };
+    });
+
+    // Cancelled leads are excluded from the in-memory list above, so count them separately.
+    // Scoped exactly like the queue's own delivery-user scoping.
+    stats.cancelled = await prisma.lead.count({
+      where: {
+        pushedToInstallationAt: { not: null },
+        cancelledAt: { not: null },
+        ...(isDeliveryTeam && !isAdmin ? { OR: [{ deliveryAssignedToId: userId }, { deliveryAssignedToId: null }] } : {})
+      }
     });
 
     res.json(paginatedResponse({ data: formattedLeads, total: deliveryTotal, page, limit, dataKey: 'leads', extra: { stats } }));

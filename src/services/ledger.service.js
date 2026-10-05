@@ -223,6 +223,89 @@ export const createCreditNoteLedgerEntry = async (creditNote, invoice, customerI
 };
 
 /**
+ * The part of an invoice the customer still owes.
+ * Pure - exported so it can be tested without a database.
+ */
+export const unpaidRemainderOf = (invoice) => {
+  const stored = invoice?.remainingAmount;
+  const remainder = (stored !== null && stored !== undefined)
+    ? Number(stored)
+    : Number(invoice?.grandTotal || 0) - Number(invoice?.totalPaidAmount || 0) - Number(invoice?.totalCreditAmount || 0);
+  // An overpaid invoice has nothing to reverse; a negative credit would be a debit.
+  return remainder > 0 ? remainder : 0;
+};
+
+/**
+ * Which summary bucket a ledger entry belongs to.
+ * Invoice cancellations are stored as CREDIT_NOTE entries (no other credit-side
+ * enum value exists) but have no CreditNote row, so they get their own bucket.
+ * Pure - exported for testing.
+ */
+export const ledgerBucketOf = (entryType, referenceType) => {
+  if (entryType === 'CREDIT_NOTE' && referenceType === 'INVOICE_CANCELLATION') return 'invoiceCancellations';
+  switch (entryType) {
+    case 'INVOICE': return 'invoices';
+    case 'PAYMENT': return 'payments';
+    case 'CREDIT_NOTE': return 'creditNotes';
+    case 'REFUND': return 'refunds';
+    default: return null;
+  }
+};
+
+/**
+ * Credit-note total as the ledger sees it, excluding invoice cancellations,
+ * so it can be compared against the CreditNote table. Pure - exported for testing.
+ */
+export const genuineCreditNoteLedgerTotal = (creditNoteEntryTotal, cancellationTotal) =>
+  (Number(creditNoteEntryTotal) || 0) - (Number(cancellationTotal) || 0);
+
+/**
+ * Reverse the debit left behind by an invoice that is being CANCELLED.
+ *
+ * Used when a lead is cancelled out of the delivery pipeline: the invoice row
+ * becomes CANCELLED, but the INVOICE debit entry already written to the ledger
+ * cannot be edited or removed (append-only), so the balance is corrected by
+ * appending an offsetting credit.
+ *
+ * Only the UNPAID remainder is credited. Money the customer actually paid is
+ * not reversed here - that is a refund or credit note decision for Accounts.
+ *
+ * @param {object} invoice
+ * @param {string} customerId - Lead ID
+ * @param {string|null} userId
+ * @param {object|null} tx - caller's transaction client; one is opened if omitted
+ */
+export const createInvoiceCancellationLedgerEntry = async (invoice, customerId, userId = null, tx = null) => {
+  const creditAmount = unpaidRemainderOf(invoice);
+  if (creditAmount <= 0) return null;
+
+  const write = async (client) => {
+    const previousBalance = await getCustomerBalanceTx(client, customerId);
+    const runningBalance = calculateRunningBalance(previousBalance, 0, creditAmount);
+
+    return client.ledgerEntry.create({
+      data: {
+        customerId,
+        entryDate: new Date(),
+        entryType: 'CREDIT_NOTE',
+        referenceType: 'INVOICE_CANCELLATION',
+        referenceId: invoice.id,
+        referenceNumber: invoice.invoiceNumber,
+        debitAmount: 0,
+        creditAmount,
+        runningBalance,
+        description: `Invoice ${invoice.invoiceNumber} cancelled - lead cancelled at delivery stage`,
+        createdById: userId
+      }
+    });
+  };
+
+  const entry = tx ? await write(tx) : await withSerializableRetry(write);
+  console.log(`[Ledger] Invoice cancellation entry: ${invoice.invoiceNumber}, Credit: ₹${entry.creditAmount}, Balance: ₹${entry.runningBalance}`);
+  return entry;
+};
+
+/**
  * Create a ledger entry for a refund
  * Called when a refund is processed
  */
@@ -318,7 +401,7 @@ export const getCustomerLedger = async (customerId, options = {}) => {
 
   // Get entry counts by type
   const entryCounts = await prisma.ledgerEntry.groupBy({
-    by: ['entryType'],
+    by: ['entryType', 'referenceType'],
     where: { customerId },
     _count: { id: true },
     _sum: { debitAmount: true, creditAmount: true }
@@ -328,24 +411,22 @@ export const getCustomerLedger = async (customerId, options = {}) => {
     invoices: { count: 0, total: 0 },
     payments: { count: 0, total: 0 },
     creditNotes: { count: 0, total: 0 },
-    refunds: { count: 0, total: 0 }
+    refunds: { count: 0, total: 0 },
+    invoiceCancellations: { count: 0, total: 0 }
   };
 
+  // Grouped by (entryType, referenceType), so several groups can map to one
+  // bucket (e.g. CREDIT_NOTE rows with different referenceTypes): accumulate.
   entryCounts.forEach(item => {
-    switch (item.entryType) {
-      case 'INVOICE':
-        typeBreakdown.invoices = { count: item._count.id, total: Number(item._sum.debitAmount) || 0 };
-        break;
-      case 'PAYMENT':
-        typeBreakdown.payments = { count: item._count.id, total: Number(item._sum.creditAmount) || 0 };
-        break;
-      case 'CREDIT_NOTE':
-        typeBreakdown.creditNotes = { count: item._count.id, total: Number(item._sum.creditAmount) || 0 };
-        break;
-      case 'REFUND':
-        typeBreakdown.refunds = { count: item._count.id, total: Number(item._sum.debitAmount) || 0 };
-        break;
-    }
+    const bucket = ledgerBucketOf(item.entryType, item.referenceType);
+    if (!bucket) return;
+    const amount = (bucket === 'invoices' || bucket === 'refunds')
+      ? Number(item._sum.debitAmount) || 0
+      : Number(item._sum.creditAmount) || 0;
+    typeBreakdown[bucket] = {
+      count: typeBreakdown[bucket].count + item._count.id,
+      total: typeBreakdown[bucket].total + amount
+    };
   });
 
   return {
@@ -401,6 +482,15 @@ export const verifyLedgerReconciliation = async (customerId = null) => {
     if (item.entryType === 'CREDIT_NOTE') ledgerCreditNoteTotal = Number(item._sum.creditAmount) || 0;
   });
 
+  // Invoice cancellations are CREDIT_NOTE entries with no CreditNote row;
+  // separate them so the credit-note comparison stays ledger-vs-CreditNote-table.
+  const cancellationAgg = await prisma.ledgerEntry.aggregate({
+    where: { ...where, entryType: 'CREDIT_NOTE', referenceType: 'INVOICE_CANCELLATION' },
+    _sum: { creditAmount: true }
+  });
+  const ledgerCancellationTotal = Number(cancellationAgg._sum.creditAmount) || 0;
+  ledgerCreditNoteTotal = genuineCreditNoteLedgerTotal(ledgerCreditNoteTotal, ledgerCancellationTotal);
+
   // Get source table totals
   const invoiceTotal = await prisma.invoice.aggregate({
     where: customerWhere,
@@ -445,6 +535,9 @@ export const verifyLedgerReconciliation = async (customerId = null) => {
       source: sourceCreditNoteTotal,
       match: creditNoteMatch,
       difference: ledgerCreditNoteTotal - sourceCreditNoteTotal
+    },
+    cancellations: {
+      ledgerTotal: ledgerCancellationTotal
     }
   };
 };
@@ -618,6 +711,7 @@ export default {
   createInvoiceLedgerEntry,
   createPaymentLedgerEntry,
   createCreditNoteLedgerEntry,
+  createInvoiceCancellationLedgerEntry,
   createRefundLedgerEntry,
   getCustomerLedger,
   verifyLedgerReconciliation,
