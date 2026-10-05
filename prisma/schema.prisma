@@ -1306,6 +1306,16 @@ enum Role {
   BDM_CP
   TEST_USER
   SAM_INTEGRATION // machine login for the external SAM software (API only)
+
+  // DEPRECATED — the in-CRM SAM feature was retired and replaced by the `SAM`
+  // role, which behaves as a solo BDM. These two are kept ONLY because
+  // production still has User rows holding them: dropping an enum value forces
+  // Postgres to rebuild the type, which fails while any row still uses it.
+  // Assign them to nobody. Remove both once those accounts have been migrated
+  // and `SELECT count(*) FROM "User" WHERE role IN ('SAM_HEAD','SAM_EXECUTIVE')`
+  // returns 0.
+  SAM_HEAD
+  SAM_EXECUTIVE
 }
 
 enum OpsApprovalStatus {
@@ -1427,6 +1437,12 @@ enum NotificationType {
   COMPLAINT_RESOLVED
   CUSTOMER_REFERRAL
   SERVICE_ORDER
+
+  // DEPRECATED — see the note on Role.SAM_HEAD. Kept only because production
+  // still has Notification rows of this type from the retired in-CRM SAM
+  // feature. Never emit it. Remove once
+  // `SELECT count(*) FROM "Notification" WHERE type = 'SAM_ASSIGNMENT'` is 0.
+  SAM_ASSIGNMENT
 }
 
 enum EmailStatus {
