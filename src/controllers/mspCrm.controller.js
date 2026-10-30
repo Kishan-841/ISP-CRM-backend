@@ -25,6 +25,37 @@ function canSend(user) {
 }
 
 /**
+ * May this user act on THIS lead?
+ *
+ * Holding a sales role is not enough. Without this, any BDM could send any
+ * lead by guessing an id — and because sending pushes company, contact, phone,
+ * email and GST to an external system, that would be data leaving the building,
+ * not merely an unauthorised read.
+ *
+ * Mirrors the scoping getLeads uses (lead.controller.js ~192-205): admins see
+ * everything, everyone else sees leads they own or created. Team leaders are
+ * deliberately NOT widened to their team here, because the regular leads
+ * listing does not widen for them either — the team-oversight surfaces are
+ * separate.
+ *
+ * @returns {{ ok: true, lead: object } | { ok: false, status: number, message: string }}
+ */
+async function loadAccessibleLead(user, id) {
+  const lead = await prisma.lead.findUnique({
+    where: { id },
+    select: { id: true, assignedToId: true, createdById: true },
+  });
+  if (!lead) return { ok: false, status: 404, message: 'Lead not found.' };
+
+  if (isAdminOrTestUser(user)) return { ok: true, lead };
+  if (lead.assignedToId === user.id || lead.createdById === user.id) return { ok: true, lead };
+
+  // 404 rather than 403: a 403 would confirm the lead exists to someone who
+  // is not allowed to know that.
+  return { ok: false, status: 404, message: 'Lead not found.' };
+}
+
+/**
  * POST /api/leads/:id/send-to-msp
  *
  * Calls their API inline so the user gets a real answer rather than a
@@ -43,6 +74,11 @@ export const sendLeadToMspCrm = asyncHandler(async function sendLeadToMspCrm(req
       message: 'MSP CRM integration is not configured on the server (MSP_CRM_API_URL / MSP_CRM_API_KEY).',
     });
   }
+
+  // Holding a sales role is not permission to send SOMEONE ELSE'S lead to an
+  // external system.
+  const access = await loadAccessibleLead(req.user, id);
+  if (!access.ok) return res.status(access.status).json({ message: access.message });
 
   const result = await sendLeadToMsp(id, req.user);
 
@@ -66,6 +102,12 @@ export const sendLeadToMspCrm = asyncHandler(async function sendLeadToMspCrm(req
  */
 export const getLeadMspStatus = asyncHandler(async function getLeadMspStatus(req, res) {
   const { id } = req.params;
+
+  if (!canSend(req.user)) {
+    return res.status(403).json({ message: 'You do not have permission to view MSP CRM status.' });
+  }
+  const access = await loadAccessibleLead(req.user, id);
+  if (!access.ok) return res.status(access.status).json({ message: access.message });
 
   const lead = await prisma.lead.findUnique({
     where: { id },
