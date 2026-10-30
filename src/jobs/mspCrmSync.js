@@ -4,6 +4,8 @@ import {
   syncMspStatuses,
   sendLeadToMsp,
   findDueSends,
+  sendMspLead,
+  findDueMspLeadSends,
 } from '../services/mspCrm.service.js';
 
 const SEND_BATCH_LIMIT = 25;
@@ -48,6 +50,19 @@ export function startMspCrmSyncJob() {
     } catch (err) {
       // A failure here must not stop the status sync below.
       console.error('[MspCrm] Send retry sweep error:', err);
+    }
+
+    // ── 1b. retry pending MSP-native lead sends ──────────────────────────
+    try {
+      const dueMsp = await findDueMspLeadSends(SEND_BATCH_LIMIT);
+      if (dueMsp.length > 0) {
+        console.log(`[MspCrm] Retrying ${dueMsp.length} pending MSP lead send(s)`);
+        for (const row of dueMsp) {
+          await sendMspLead(row.id);
+        }
+      }
+    } catch (err) {
+      console.error('[MspCrm] MSP lead retry sweep error:', err);
     }
 
     // ── 2. pull status changes ───────────────────────────────────────────

@@ -11,6 +11,7 @@ import userRoutes from './routes/user.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
 import productRoutes from './routes/product.routes.js';
 import leadRoutes from './routes/lead.routes.js';
+import mspLeadRoutes from './routes/mspLead.routes.js';
 import bodRoutes from './routes/bod.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import emailRoutes from './routes/email.routes.js';
@@ -172,6 +173,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/leads', leadRoutes);
+app.use('/api/msp-leads', mspLeadRoutes);
 app.use('/api/bod', bodRoutes);
 app.use('/api/website-leads', websiteLeadRouter);
 app.use('/api/contact-messages', contactMessageRouter);
@@ -250,7 +252,7 @@ process.on('uncaughtException', (error) => {
   setTimeout(() => process.exit(1), 1000);
 });
 
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5002;
 
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

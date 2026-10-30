@@ -52,6 +52,7 @@ model User {
   feasibilityAssignedLeads           Lead[]                   @relation("FeasibilityAssignedTo")
   cancelledLeads                     Lead[]                   @relation("LeadCancelledBy")
   mspSentLeads                       Lead[]                   @relation("LeadMspSentBy")
+  mspLeadsCreated                    MspLead[]                @relation("MspLeadsCreatedBy")
   nocAssignedLeads                   Lead[]                   @relation("NocAssignedTo")
   nocConfiguredLeads                 Lead[]                   @relation("NocConfiguredBy")
   nocPushedToDeliveryLeads           Lead[]                   @relation("NocPushedToDelivery")
@@ -1670,6 +1671,70 @@ enum MspSendStatus {
   PENDING // queued or transiently failed; the sweep will retry
   SENT
   FAILED // rejected as invalid — needs a human, not a retry
+}
+
+// A lead that belongs to the MSP business, not the ISP one.
+//
+// Deliberately NOT a Lead. An MSP lead has no ISP pipeline — no feasibility,
+// no delivery, no ARC — so putting it in Lead would quietly inflate every
+// pipeline count, funnel report and ARC total with work that is not ours, and
+// leave "except the MSP ones" filters scattered across reports forever.
+//
+// Its `id` is the externalRef we send, exactly as Lead.id is for an ISP lead
+// handed over from the leads list. Both paths end up in the MSP CRM; they just
+// do not share a table here.
+model MspLead {
+  id String @id @default(uuid())
+
+  // Their four required fields.
+  companyName   String
+  contactPerson String
+  phone         String
+  email         String
+
+  // Optional on their side and on ours.
+  gstin          String?
+  state          String?
+  billingAddress String? @db.Text
+  requirement    String? @db.Text
+  notes          String? @db.Text
+
+  // What the customer is asking for. Subcategories are a free list rather than
+  // an enum so the MSP side can add one without a migration here.
+  classification MspClassification
+  subcategories  String[]
+
+  // ─── Send side (mirrors the same fields on Lead) ──────────────────────
+  sendStatus    MspSendStatus @default(NOT_SENT)
+  sendAttempts  Int           @default(0)
+  nextAttemptAt DateTime?
+  lastError     String?       @db.Text
+  sentAt        DateTime?
+  mspLeadId     String? // their id for this lead
+
+  // ─── Status side, owned by the 5-minute poll ──────────────────────────
+  mspStatus      String? // free text: they may add statuses
+  mspStatusLabel String?
+  mspAssignedTo  String?
+  mspOrderNo     Int?
+  mspDropReason  String? @db.Text
+  syncedAt       DateTime?
+  removedAt      DateTime?
+
+  createdById String
+  createdBy   User     @relation("MspLeadsCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sendStatus, nextAttemptAt])
+  @@index([createdById])
+  @@index([createdAt])
+  @@index([mspStatus])
+}
+
+enum MspClassification {
+  HARDWARE
+  SOFTWARE
 }
 
 // Cursor store for outbound integrations that poll.

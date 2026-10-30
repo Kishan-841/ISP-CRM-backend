@@ -334,10 +334,18 @@ export async function syncMspStatuses() {
   return { ok: true, updated, removed: removedCount, pages: totalPages };
 }
 
-/** Write one status object onto our lead. Returns 1 if a row matched. */
+/**
+ * Write one status object onto whichever table owns that externalRef.
+ *
+ * An externalRef is either a Lead.id (an ISP lead handed over from the leads
+ * list) or an MspLead.id (captured in the MSP Lead tab). Both are uuids and we
+ * cannot tell which from the ref alone, so both are attempted; exactly one
+ * matches. Returns 1 if a row was updated anywhere.
+ */
 async function applyStatus(item) {
   if (!item?.externalRef) return 0;
-  const result = await prisma.lead.updateMany({
+
+  const lead = await prisma.lead.updateMany({
     where: { id: item.externalRef },
     data: {
       ...applyStatusFields(item),
@@ -348,21 +356,181 @@ async function applyStatus(item) {
       ...(item.status === 'REMOVED' ? { mspRemovedAt: new Date() } : {}),
     },
   });
-  return result.count;
+  if (lead.count > 0) return lead.count;
+
+  const mspLead = await prisma.mspLead.updateMany({
+    where: { id: item.externalRef },
+    data: {
+      ...applyMspLeadStatusFields(item),
+      sendStatus: 'SENT',
+      ...(item.leadId ? { mspLeadId: item.leadId } : {}),
+      ...(item.status === 'REMOVED' ? { removedAt: new Date() } : {}),
+    },
+  });
+  return mspLead.count;
 }
 
 async function markRemoved(externalRef, removedAt) {
   if (!externalRef) return 0;
-  const result = await prisma.lead.updateMany({
+  const at = removedAt ? new Date(removedAt) : new Date();
+
+  const lead = await prisma.lead.updateMany({
     where: { id: externalRef },
     data: {
       mspStatus: 'REMOVED',
       mspStatusLabel: 'Removed in MSP CRM',
-      mspRemovedAt: removedAt ? new Date(removedAt) : new Date(),
+      mspRemovedAt: at,
       mspSyncedAt: new Date(),
     },
   });
-  return result.count;
+  if (lead.count > 0) return lead.count;
+
+  const mspLead = await prisma.mspLead.updateMany({
+    where: { id: externalRef },
+    data: {
+      mspStatus: 'REMOVED',
+      mspStatusLabel: 'Removed in MSP CRM',
+      removedAt: at,
+      syncedAt: new Date(),
+    },
+  });
+  return mspLead.count;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MSP-native leads
+//
+// Leads captured in the MSP Lead tab. Same API, same retry rules, but they
+// live in MspLead rather than Lead because they have no ISP pipeline. The
+// duplication below is deliberate: the two tables have different columns and
+// collapsing them behind one abstraction obscured more than it saved.
+// ════════════════════════════════════════════════════════════════════════════
+
+const SUBCATEGORIES_BY_CLASSIFICATION = {
+  HARDWARE: ['Firewall', 'Access Point', 'Servers', 'Switches', 'Routers', 'NAS'],
+  SOFTWARE: ['Cloud'],
+};
+
+export function allowedSubcategories(classification) {
+  return SUBCATEGORIES_BY_CLASSIFICATION[classification] || [];
+}
+
+/** Build their payload from an MspLead row. */
+export function buildMspLeadPayload(row, user) {
+  // Their documented payload has no classification/subcategory fields, and a
+  // probe showed the API accepts them without echoing them back — so we cannot
+  // tell whether they are stored or dropped. The readable summary therefore
+  // goes into `requirement`, which IS documented and definitely arrives; the
+  // structured keys ride along in case their side does read them.
+  const label = row.classification === 'SOFTWARE' ? 'Software' : 'Hardware';
+  const picked = (row.subcategories || []).join(', ');
+  const summary = picked ? `${label} — ${picked}` : label;
+  const requirement = row.requirement ? `${summary}. ${row.requirement}` : summary;
+
+  return {
+    externalRef: row.id,
+    companyName: row.companyName,
+    contactPerson: row.contactPerson,
+    phone: row.phone,
+    email: row.email,
+    requirement,
+    notes: row.notes || undefined,
+    customerGstin: row.gstin || undefined,
+    customerState: row.state || undefined,
+    billingAddress: row.billingAddress || undefined,
+    classification: row.classification,
+    subcategories: row.subcategories || [],
+    ...(user ? { submittedBy: { name: user.name, email: user.email } } : {}),
+  };
+}
+
+/**
+ * Push an MspLead to the MSP CRM. Same classification of outcomes as
+ * sendLeadToMsp: 400 is permanent, everything else retryable.
+ */
+export async function sendMspLead(mspLeadId, user = null) {
+  if (!isConfigured()) {
+    return { ok: false, permanent: false, message: 'MSP CRM integration is not configured.' };
+  }
+
+  const row = await prisma.mspLead.findUnique({ where: { id: mspLeadId } });
+  if (!row) return { ok: false, permanent: true, message: 'MSP lead not found.' };
+  if (row.sendStatus === 'SENT') {
+    return { ok: true, message: 'Already sent to MSP CRM.', data: { mspLeadId: row.mspLeadId } };
+  }
+
+  const res = await request('/leads', { method: 'POST', body: buildMspLeadPayload(row, user) });
+  const attempts = row.sendAttempts + 1;
+
+  if (res.ok) {
+    const data = res.body?.data || {};
+    await prisma.mspLead.update({
+      where: { id: row.id },
+      data: {
+        sendStatus: 'SENT',
+        sendAttempts: attempts,
+        nextAttemptAt: null,
+        lastError: null,
+        sentAt: row.sentAt || new Date(),
+        mspLeadId: data.leadId || row.mspLeadId || null,
+        ...applyMspLeadStatusFields(data),
+      },
+    });
+    return { ok: true, message: 'Sent to MSP CRM.', data };
+  }
+
+  const message = res.body?.message || res.networkError || `HTTP ${res.status}`;
+
+  if (res.status === 400) {
+    await prisma.mspLead.update({
+      where: { id: row.id },
+      data: { sendStatus: 'FAILED', sendAttempts: attempts, nextAttemptAt: null, lastError: truncate(message) },
+    });
+    return { ok: false, permanent: true, message };
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    console.error(`[MspCrm] Auth failure (${res.status}) — check MSP_CRM_API_KEY. ${message}`);
+  }
+  if (res.status === 404) {
+    console.error(
+      `[MspCrm] POST /leads returned 404 — MSP_CRM_API_URL is probably wrong ` +
+      `(currently "${process.env.MSP_CRM_API_URL}").`
+    );
+  }
+
+  const exhausted = attempts >= MAX_ATTEMPTS;
+  await prisma.mspLead.update({
+    where: { id: row.id },
+    data: {
+      sendStatus: exhausted ? 'FAILED' : 'PENDING',
+      sendAttempts: attempts,
+      nextAttemptAt: exhausted ? null : new Date(Date.now() + backoffFor(row.sendAttempts) * 1000),
+      lastError: truncate(exhausted ? `Gave up after ${attempts} attempts. Last error: ${message}` : message),
+    },
+  });
+  return { ok: false, permanent: exhausted, message };
+}
+
+function applyMspLeadStatusFields(s) {
+  return {
+    mspStatus: s.status ?? undefined,
+    mspStatusLabel: s.statusLabel ?? undefined,
+    mspAssignedTo: s.assignedTo ?? null,
+    mspOrderNo: typeof s.orderNo === 'number' ? s.orderNo : undefined,
+    mspDropReason: s.dropReason ?? null,
+    syncedAt: new Date(),
+  };
+}
+
+/** MspLeads whose send is due for another attempt. */
+export async function findDueMspLeadSends(limit = 25) {
+  return prisma.mspLead.findMany({
+    where: { sendStatus: 'PENDING', nextAttemptAt: { lte: new Date() } },
+    orderBy: { nextAttemptAt: 'asc' },
+    take: limit,
+    select: { id: true },
+  });
 }
 
 /** Leads whose send is due for another attempt. Used by the cron sweep. */
