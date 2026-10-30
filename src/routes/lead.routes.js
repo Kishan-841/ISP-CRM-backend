@@ -144,6 +144,7 @@ import {
   getDeletionAuditList,
 } from '../controllers/leadDeletion.controller.js';
 import { cancelDeliveryLead } from '../controllers/cancelDeliveryLead.js';
+import { sendLeadToMspCrm, getLeadMspStatus, syncMspNow } from '../controllers/mspCrm.controller.js';
 import { getDeliveryCancelledLeads, getCancelledLeads } from '../controllers/cancelledLeads.js';
 
 const router = express.Router();
@@ -559,6 +560,13 @@ router.get('/opportunity-pipeline/stats', getOpportunityPipelineStats);
 router.get('/cancelled', getCancelledLeads);
 
 // Get single lead
+// ===== MSP CRM INTEGRATION =====
+// Registered ahead of the '/:id' catch-all so '/msp/sync-now' is not matched
+// as a lead id. Role checks live in the controller, as elsewhere in this file.
+router.post('/msp/sync-now', syncMspNow);
+router.post('/:id/send-to-msp', sendLeadToMspCrm);
+router.get('/:id/msp-status', getLeadMspStatus);
+
 router.get('/:id', getLead);
 
 // Convert campaign data to lead

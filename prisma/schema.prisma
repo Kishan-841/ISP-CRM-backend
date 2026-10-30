@@ -51,6 +51,7 @@ model User {
   demoPlanAssignedLeads              Lead[]                   @relation("DemoPlanAssignedBy")
   feasibilityAssignedLeads           Lead[]                   @relation("FeasibilityAssignedTo")
   cancelledLeads                     Lead[]                   @relation("LeadCancelledBy")
+  mspSentLeads                       Lead[]                   @relation("LeadMspSentBy")
   nocAssignedLeads                   Lead[]                   @relation("NocAssignedTo")
   nocConfiguredLeads                 Lead[]                   @relation("NocConfiguredBy")
   nocPushedToDeliveryLeads           Lead[]                   @relation("NocPushedToDelivery")
@@ -413,6 +414,41 @@ model Lead {
   cancelledById                String?
   cancelledReason              String?   @db.Text
   cancelledAtStage             String?
+
+  // ─── MSP CRM integration ────────────────────────────────────────────────
+  // This lead has also been handed to the separate MSP CRM (firewalls, managed
+  // services). We own the send; they own the status. `lead.id` is the
+  // externalRef we send, so there is no separate ref column — it is stable,
+  // always present, and unique, which leadNumber is not (it is nullable).
+  //
+  // Send side (an outbox folded onto the lead, since one lead maps to at most
+  // one MSP lead): mspSendStatus drives the retry sweep. Retrying is safe —
+  // the same externalRef never creates a second lead on their side.
+  mspSendStatus                MspSendStatus @default(NOT_SENT)
+  mspSendAttempts              Int           @default(0)
+  mspNextAttemptAt             DateTime?
+  mspLastError                 String?       @db.Text
+  mspSentAt                    DateTime?
+  mspSentById                  String?
+  // Their id for this lead, returned by POST /leads.
+  mspLeadId                    String?
+
+  // Status side, overwritten by the 5-minute poll. `mspStatus` is free text,
+  // NOT an enum: their docs say new statuses may be added and that we should
+  // fall back to showing statusLabel, so an enum here would reject values the
+  // integration is explicitly told to tolerate.
+  mspStatus                    String?
+  mspStatusLabel               String?
+  mspAssignedTo                String?
+  mspOrderNo                   Int?
+  mspDropReason                String?       @db.Text
+  mspSyncedAt                  DateTime?
+  // Set when they report the lead under `removed`; kept rather than nulling
+  // the other fields so the history of what happened stays readable.
+  mspRemovedAt                 DateTime?
+
+  mspSentBy                    User?         @relation("LeadMspSentBy", fields: [mspSentById], references: [id], onDelete: SetNull)
+
   fromAddress                  String?
   fromLatitude                 Float?
   fromLongitude                Float?
@@ -592,6 +628,9 @@ model Lead {
   @@index([isColdLead, assignedToId])
   @@index([creationSource])
   @@index([cancelledAt])
+  // Drives the retry sweep: pending sends whose backoff has elapsed.
+  @@index([mspSendStatus, mspNextAttemptAt])
+  @@index([mspStatus])
   @@index([assignedToId, cancelledAt])
 }
 
@@ -1618,6 +1657,32 @@ enum CreditNoteStatus {
   ISSUED // Approved and applied
   ADJUSTED // Used against future invoice
   REFUNDED // Money returned to customer
+}
+
+// Where a lead stands in the handoff to the MSP CRM.
+//
+// This is OUR send state, not their pipeline status — their status lives in
+// Lead.mspStatus as free text. FAILED means a 400: their API rejected the
+// data and retrying the same payload would just fail again, so the sweep
+// leaves it alone and a human has to fix the lead and resend.
+enum MspSendStatus {
+  NOT_SENT
+  PENDING // queued or transiently failed; the sweep will retry
+  SENT
+  FAILED // rejected as invalid — needs a human, not a retry
+}
+
+// Cursor store for outbound integrations that poll.
+//
+// The MSP status sync must resume from the `serverTime` THEY reported, never
+// from our own clock — clock skew between the two servers would silently skip
+// updates that landed in the gap. One row per cursor, keyed by name.
+model IntegrationSyncState {
+  id        String   @id @default(uuid())
+  key       String   @unique // e.g. 'msp_last_synced_at'
+  value     String // opaque to this table; the owning service parses it
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
 }
 
 // Document sequence counter for generating unique document numbers

@@ -54,6 +54,7 @@ import { startFollowUpPopupJob } from './jobs/followUpPopupReminder.js';
 import { startComplaintTatReminderJob } from './jobs/complaintTatReminder.js';
 import { startInvoiceDueReminderJob } from './jobs/invoiceDueReminder.js';
 import { startSamWebhookRetryJob } from './jobs/samWebhookRetry.js';
+import { startMspCrmSyncJob } from './jobs/mspCrmSync.js';
 
 // Fail fast on missing critical env vars — much better than silent runtime
 // auth failures hours later. DATABASE_URL is validated by Prisma on first
@@ -265,4 +266,5 @@ httpServer.listen(PORT, () => {
   startComplaintTatReminderJob();
   startInvoiceDueReminderJob();
   startSamWebhookRetryJob();
+  startMspCrmSyncJob();
 });

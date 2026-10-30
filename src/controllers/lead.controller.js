@@ -329,6 +329,11 @@ export const getLeads = asyncHandler(async function getLeads(req, res) {
       requirements: lead.requirements,
       status: lead.status,
       type: lead.type,
+      // MSP CRM handoff — enough for the list to show where a lead stands
+      // without a second request per row.
+      mspSendStatus: lead.mspSendStatus,
+      mspStatus: lead.mspStatus,
+      mspStatusLabel: lead.mspStatusLabel,
       sharedVia: lead.sharedVia || '',
       linkedinUrl: lead.linkedinUrl || lead.campaignData.linkedinUrl,
       createdAt: lead.createdAt,
