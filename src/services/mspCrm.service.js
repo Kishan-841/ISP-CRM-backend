@@ -202,6 +202,21 @@ export async function sendLeadToMsp(leadId, user = null) {
     console.error(`[MspCrm] Auth failure (${res.status}) — check MSP_CRM_API_KEY. ${message}`);
   }
 
+  // A 404 on the SEND endpoint means MSP_CRM_API_URL does not point at their
+  // integrations API — their 404 is documented only for fetching one lead by
+  // ref, never for creating one. Easy to do by pointing the URL at this very
+  // backend, which answers on the same port in local setups and has no such
+  // route. The lead stays retryable (it recovers once the URL is fixed) but
+  // this must be loud: silently backing off would look like a slow MSP CRM
+  // rather than a typo.
+  if (res.status === 404) {
+    console.error(
+      `[MspCrm] POST /leads returned 404 — MSP_CRM_API_URL is probably wrong ` +
+      `(currently "${process.env.MSP_CRM_API_URL}"). It must point at the MSP CRM backend's ` +
+      `/api/v1/integrations, not at this CRM.`
+    );
+  }
+
   // Everything else (429, 5xx, timeout, DNS) is transient.
   const exhausted = attempts >= MAX_ATTEMPTS;
   await prisma.lead.update({
