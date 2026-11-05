@@ -3,6 +3,7 @@ import { auth, requireRole } from '../middleware/auth.js';
 import {
   replaySamWebhook,
   listSamWebhooks,
+  resyncSamCustomers,
   listAuditLog,
   listAuditLogActors,
 } from '../controllers/admin.controller.js';
@@ -18,6 +19,7 @@ router.use(requireRole('SUPER_ADMIN'));
 
 router.get('/sam-webhook', listSamWebhooks);
 router.post('/sam-webhook/replay/:id', replaySamWebhook);
+router.post('/sam-webhook/resync', resyncSamCustomers);
 
 router.get('/audit-log', listAuditLog);
 router.get('/audit-log/actors', listAuditLogActors);

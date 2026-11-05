@@ -67,7 +67,64 @@ function toIsoDate(value) {
   return d.toISOString().slice(0, 10);
 }
 
-function buildPayload(lead) {
+// Every field the activation payload needs, declared once here rather than at
+// the four call sites. Each caller used to pass whatever its own `include`
+// happened to fetch, so a narrow include silently shipped a half-empty
+// customer record to SAM — the reason LEAD ID / USER NAME / ADDRESS showed
+// "—" on their side. enqueueActivationWebhook now re-reads the lead with
+// this select so the payload is complete no matter who calls it.
+const LEAD_PAYLOAD_SELECT = {
+  id: true,
+  leadNumber: true,
+  circuitId: true,
+  actualPlanName: true,
+  actualPlanBandwidth: true,
+  actualPlanPrice: true,
+  actualPlanStartDate: true,
+  arcAmount: true,
+  customerUsername: true,
+  customerGstNo: true,
+  installationAddress: true,
+  fullAddress: true,
+  billingAddress: true,
+  customerIpAddresses: true,
+  customerIpAssigned: true,
+  campaignData: {
+    select: {
+      company: true,
+      name: true,
+      email: true,
+      phone: true,
+      city: true,
+      industry: true,
+    },
+  },
+};
+
+// First value that is a non-blank string, trimmed. Returns null rather than
+// '' so SAM's "don't overwrite with a blank" rule has something unambiguous
+// to test.
+function firstNonEmpty(...values) {
+  for (const v of values) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+// SAM keeps IPs as one free-text comma-separated string (accounts.ip_details)
+// — it doesn't model them individually. NOC may have assigned several;
+// customerIpAssigned is the legacy single-IP column kept in sync with the
+// first entry, so it's only a fallback for rows predating the array.
+function formatIpDetails(lead) {
+  const list = Array.isArray(lead.customerIpAddresses) ? lead.customerIpAddresses : [];
+  const cleaned = list
+    .filter((ip) => typeof ip === 'string' && ip.trim())
+    .map((ip) => ip.trim());
+  if (cleaned.length > 0) return cleaned.join(', ');
+  return firstNonEmpty(lead.customerIpAssigned);
+}
+
+export function buildPayload(lead) {
   const cd = lead.campaignData || {};
   return {
     eventId: crypto.randomUUID(),
@@ -78,11 +135,23 @@ function buildPayload(lead) {
       // Human-readable CRM lead number (e.g. "GLL-001"). Useful for SAM
       // operators when cross-referencing tickets — externalId is the
       // canonical UUID, leadNumber is the friendly label.
+      //
+      // Sent under both names during the cutover: `leadNumber` is what older
+      // SAM builds read, `leadId` is the key their accounts.lead_id column
+      // actually binds to. Drop `leadNumber` once SAM prod is on the wider
+      // schema.
       leadNumber: lead.leadNumber || null,
+      leadId: lead.leadNumber || null,
       companyName: cd.company || null,
+      // contactName drives SAM's clientName; contactPersonName is the
+      // separate "Contact person" field on their Contact card.
       contactName: cd.name || null,
+      contactPersonName: firstNonEmpty(cd.name),
       email: cd.email || null,
       phone: cd.phone || null,
+      // The connection's internal username (e.g. "dwl_undri"), set by NOC at
+      // customer-account creation.
+      userName: firstNonEmpty(lead.customerUsername),
       circuitId: lead.circuitId || null,
       bandwidthMbps: lead.actualPlanBandwidth ?? null,
       currentPlan: lead.actualPlanName || null,
@@ -93,6 +162,25 @@ function buildPayload(lead) {
       currentMrr: lead.actualPlanPrice ?? null,
       currentArc: lead.arcAmount ?? null,
       onboardingDate: toIsoDate(lead.actualPlanStartDate) || toIsoDate(new Date()),
+
+      // ── Business details (SAM's "Business details" card) ──
+      // Service address first: that is what SAM's address field documents
+      // itself as. fullAddress / billingAddress are fallbacks for leads that
+      // never had an installation address captured.
+      address: firstNonEmpty(
+        lead.installationAddress,
+        lead.fullAddress,
+        lead.billingAddress
+      ),
+      city: firstNonEmpty(cd.city),
+      gstNumber: firstNonEmpty(lead.customerGstNo),
+      industryType: firstNonEmpty(cd.industry),
+      ipDetails: formatIpDetails(lead),
+      // Network zone — SAM calls it "circle". There is no zone field on the
+      // CRM Lead yet; the whole path is wired so that adding `zone` to the
+      // schema and to LEAD_PAYLOAD_SELECT above is all it takes to start
+      // populating it. Until then this sends null, which SAM leaves alone.
+      circle: firstNonEmpty(lead.zone),
     },
   };
 }
@@ -106,7 +194,14 @@ export async function enqueueActivationWebhook(tx, lead) {
     console.warn('[SamWebhook] SAM_WEBHOOK_URL / SAM_WEBHOOK_SECRET not set; skipping enqueue.');
     return null;
   }
-  const payload = buildPayload(lead);
+  // Re-read through the caller's transaction with the full field set. The
+  // caller passes whatever its own `include` fetched, which is rarely
+  // everything SAM wants; this makes the payload complete regardless.
+  const full = await tx.lead.findUnique({
+    where: { id: lead.id },
+    select: LEAD_PAYLOAD_SELECT,
+  });
+  const payload = buildPayload(full || lead);
   return tx.samWebhookLog.create({
     data: {
       eventId: payload.eventId,
@@ -116,6 +211,73 @@ export async function enqueueActivationWebhook(tx, lead) {
       nextAttemptAt: new Date(),
     },
   });
+}
+
+/**
+ * Backfill for customers SAM already holds.
+ *
+ * The activation webhook only fires once, the first time a lead's actual plan
+ * goes live. Any field we started sending afterwards is therefore missing on
+ * every customer activated before that — which is why accounts already in SAM
+ * show "—" for address, GST, industry and the rest.
+ *
+ * This re-enqueues a FRESH customer.activated event (new eventId, payload
+ * rebuilt from today's lead data) for each target. A fresh eventId matters:
+ * replaying the stored one hits SAM's idempotency check and returns DUPLICATE
+ * without touching the account. SAM upserts on externalCrmId, so a resync
+ * fills in the blanks on the existing row rather than creating a second one.
+ *
+ * Delivery is deliberately left to the existing retry cron (every minute, 50
+ * rows a sweep). That keeps the HTTP request fast, reuses the backoff and
+ * status machinery, and makes progress visible in GET /api/admin/sam-webhook.
+ *
+ * Scope defaults to leads SAM has already been told about — a lead with a
+ * DELIVERED activation in the outbox. Without that guard a resync would
+ * create accounts in SAM for every active customer, including ones that were
+ * deliberately never sent, and dump them all into SAM's triage queue.
+ */
+export async function findResyncTargets({ leadIds = null, includeNeverSent = false, limit = 500 } = {}) {
+  const where = { actualPlanIsActive: true };
+
+  if (Array.isArray(leadIds) && leadIds.length > 0) {
+    // An explicit list is an explicit instruction — honour it as given.
+    where.id = { in: leadIds };
+  } else if (!includeNeverSent) {
+    // SamWebhookLog.leadId is an orphaned string, not a relation, so this
+    // can't be expressed as a nested filter.
+    const alreadySent = await prisma.samWebhookLog.findMany({
+      where: {
+        status: 'DELIVERED',
+        payload: { path: ['eventType'], equals: 'customer.activated' },
+      },
+      distinct: ['leadId'],
+      select: { leadId: true },
+    });
+    where.id = { in: alreadySent.map((r) => r.leadId) };
+  }
+
+  return prisma.lead.findMany({
+    where,
+    select: { id: true },
+    orderBy: { actualPlanStartDate: 'asc' },
+    take: Math.min(Math.max(1, limit), 2000),
+  });
+}
+
+export async function resyncActivations(options = {}) {
+  if (!envConfigured()) {
+    return { configured: false, scanned: 0, enqueued: 0, rows: [] };
+  }
+
+  const targets = await findResyncTargets(options);
+  const rows = [];
+  for (const lead of targets) {
+    const log = await enqueueActivationWebhook(prisma, lead);
+    if (log) rows.push({ leadId: lead.id, logId: log.id, eventId: log.eventId });
+  }
+
+  console.log(`[SamWebhook] Resync enqueued ${rows.length} activation event(s) for redelivery`);
+  return { configured: true, scanned: targets.length, enqueued: rows.length, rows };
 }
 
 // Build the outbound payload for commercialChange.statusChanged. Fires on

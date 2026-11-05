@@ -1,5 +1,5 @@
 import prisma from '../config/db.js';
-import { attemptDelivery } from '../services/samWebhook.service.js';
+import { attemptDelivery, resyncActivations } from '../services/samWebhook.service.js';
 
 // Dev/admin endpoints for the SAM webhook outbox. Behind staff auth +
 // SUPER_ADMIN. Mainly used to (a) inspect what the cron is sweeping and
@@ -28,6 +28,38 @@ export const replaySamWebhook = async (req, res) => {
 
   const row = await prisma.samWebhookLog.findUnique({ where: { id } });
   res.json(row);
+};
+
+// Backfill the extra customer fields (lead number, username, address, city,
+// GST, industry, IP details) onto customers SAM already holds. Each target
+// gets a brand-new customer.activated event built from today's lead data —
+// replaying the stored payload would only hit SAM's dedup and change nothing.
+//
+// Returns as soon as the outbox rows exist; the retry cron delivers them at
+// 50/minute. Watch progress with GET /api/admin/sam-webhook?status=PENDING.
+export const resyncSamCustomers = async (req, res) => {
+  const { leadIds, includeNeverSent, limit } = req.body || {};
+
+  if (leadIds !== undefined && !Array.isArray(leadIds)) {
+    return res.status(400).json({ message: 'leadIds must be an array of lead ids.' });
+  }
+
+  const result = await resyncActivations({
+    leadIds: leadIds || null,
+    includeNeverSent: includeNeverSent === true,
+    limit: Number(limit) || 500,
+  });
+
+  if (!result.configured) {
+    return res.status(503).json({
+      message: 'SAM_WEBHOOK_URL / SAM_WEBHOOK_SECRET are not set on this server.',
+    });
+  }
+
+  res.json({
+    message: `Queued ${result.enqueued} customer(s) for redelivery to SAM. The retry job sends them within a few minutes.`,
+    ...result,
+  });
 };
 
 export const listSamWebhooks = async (req, res) => {
