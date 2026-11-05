@@ -347,74 +347,74 @@ model Lead {
   gstVerifiedById   String? // Who verified it
 
   // Additional Customer Details (Accounts Review)
-  panCardNo                    String? // PAN Card number
-  tanNumber                    String? // TAN number
-  installationAddress          String? // Installation address (100 char limit)
-  installationPincode          String? // Installation pincode
-  poNumber                     String? // Purchase Order number
-  poExpiryDate                 DateTime? // PO expiry date
-  billDate                     DateTime? // Bill date
-  technicalInchargeMobile      String? // Technical incharge mobile
-  technicalInchargeEmail       String? // Technical incharge email
-  accountsInchargeMobile       String? // Accounts incharge mobile
-  accountsInchargeEmail        String? // Accounts incharge email
-  bdmName                      String? // BDM name
-  serviceManager               String? // Service manager name
-  advanceAmount                Float?
-  arcAmount                    Float?
-  originalArcAmount            Float?
-  otcAmount                    Float?
-  quotationAttachments         Json?
-  otcInvoiceId                 String?                    @unique
-  otcInvoiceGeneratedAt        DateTime?
-  paymentTerms                 String?
-  interestLevel                InterestLevel?
-  installationNotes            String?
-  pushedToInstallationAt       DateTime?
-  pushedToInstallationById     String?
-  verificationAttempts         Int                        @default(0)
-  opsApprovalStatus            OpsApprovalStatus?
-  opsApprovedAt                DateTime?
-  opsApprovedById              String?
-  opsRejectedReason            String?
+  panCardNo                 String? // PAN Card number
+  tanNumber                 String? // TAN number
+  installationAddress       String? // Installation address (100 char limit)
+  installationPincode       String? // Installation pincode
+  poNumber                  String? // Purchase Order number
+  poExpiryDate              DateTime? // PO expiry date
+  billDate                  DateTime? // Bill date
+  technicalInchargeMobile   String? // Technical incharge mobile
+  technicalInchargeEmail    String? // Technical incharge email
+  accountsInchargeMobile    String? // Accounts incharge mobile
+  accountsInchargeEmail     String? // Accounts incharge email
+  bdmName                   String? // BDM name
+  serviceManager            String? // Service manager name
+  advanceAmount             Float?
+  arcAmount                 Float?
+  originalArcAmount         Float?
+  otcAmount                 Float?
+  quotationAttachments      Json?
+  otcInvoiceId              String?                    @unique
+  otcInvoiceGeneratedAt     DateTime?
+  paymentTerms              String?
+  interestLevel             InterestLevel?
+  installationNotes         String?
+  pushedToInstallationAt    DateTime?
+  pushedToInstallationById  String?
+  verificationAttempts      Int                        @default(0)
+  opsApprovalStatus         OpsApprovalStatus?
+  opsApprovedAt             DateTime?
+  opsApprovedById           String?
+  opsRejectedReason         String?
   // Optional approval notes captured by OPS at decision-time. Unlike
   // rejection reasons these apply to both APPROVED and REJECTED — they
   // forward context to the Sales Director (next step) and to the BDM.
-  opsApprovalNotes             String?
-  superAdmin2ApprovalStatus    SuperAdmin2ApprovalStatus?
-  superAdmin2ApprovedAt        DateTime?
-  superAdmin2ApprovedById      String?
-  superAdmin2RejectedReason    String?
+  opsApprovalNotes          String?
+  superAdmin2ApprovalStatus SuperAdmin2ApprovalStatus?
+  superAdmin2ApprovedAt     DateTime?
+  superAdmin2ApprovedById   String?
+  superAdmin2RejectedReason String?
   // Same pattern for Sales Director — surfaced to the Docs team + BDM.
-  superAdmin2ApprovalNotes     String?
+  superAdmin2ApprovalNotes  String?
   // Post-approval pricing revision — Sales Director is the ONLY role allowed
   // to change arcAmount/otcAmount after SA2 approval. Every revision is
   // stamped here so a "Quotation Revised" badge can surface across the UI
   // (with the reason as a tooltip), and the count survives multiple revisions.
-  quotationRevisedAt           DateTime?
-  quotationRevisedById         String?
-  quotationRevisedReason       String?
-  quotationRevisionCount       Int                        @default(0)
-  loginCompletedAt             DateTime?
-  loginCompletedById           String?
-  docUploadMethod              String?
-  tentativePrice               Float?
-  deliveryAssignedAt           DateTime?
-  deliveryAssignedToId         String?
-  deliveryNotes                String?
-  deliveryProducts             Json?
-  deliveryStatus               String?
-  deliveryCompletedViewedAt    DateTime?
+  quotationRevisedAt        DateTime?
+  quotationRevisedById      String?
+  quotationRevisedReason    String?
+  quotationRevisionCount    Int                        @default(0)
+  loginCompletedAt          DateTime?
+  loginCompletedById        String?
+  docUploadMethod           String?
+  tentativePrice            Float?
+  deliveryAssignedAt        DateTime?
+  deliveryAssignedToId      String?
+  deliveryNotes             String?
+  deliveryProducts          Json?
+  deliveryStatus            String?
+  deliveryCompletedViewedAt DateTime?
   // ─── Cancellation (delivery stage) ──────────────────────────────────────
   // A lead that died inside the delivery pipeline. Terminal: there is no
   // un-cancel. `cancelledAt != null` is the canonical "is cancelled" test;
   // deliveryStatus is also set to 'CANCELLED' for the board's stage derivation.
   // `cancelledAtStage` snapshots the board stage BEFORE deliveryStatus is
   // overwritten, so reporting can still answer "where are we losing them".
-  cancelledAt                  DateTime?
-  cancelledById                String?
-  cancelledReason              String?   @db.Text
-  cancelledAtStage             String?
+  cancelledAt               DateTime?
+  cancelledById             String?
+  cancelledReason           String?                    @db.Text
+  cancelledAtStage          String?
 
   // ─── MSP CRM integration ────────────────────────────────────────────────
   // This lead has also been handed to the separate MSP CRM (firewalls, managed
@@ -425,30 +425,30 @@ model Lead {
   // Send side (an outbox folded onto the lead, since one lead maps to at most
   // one MSP lead): mspSendStatus drives the retry sweep. Retrying is safe —
   // the same externalRef never creates a second lead on their side.
-  mspSendStatus                MspSendStatus @default(NOT_SENT)
-  mspSendAttempts              Int           @default(0)
-  mspNextAttemptAt             DateTime?
-  mspLastError                 String?       @db.Text
-  mspSentAt                    DateTime?
-  mspSentById                  String?
+  mspSendStatus    MspSendStatus @default(NOT_SENT)
+  mspSendAttempts  Int           @default(0)
+  mspNextAttemptAt DateTime?
+  mspLastError     String?       @db.Text
+  mspSentAt        DateTime?
+  mspSentById      String?
   // Their id for this lead, returned by POST /leads.
-  mspLeadId                    String?
+  mspLeadId        String?
 
   // Status side, overwritten by the 5-minute poll. `mspStatus` is free text,
   // NOT an enum: their docs say new statuses may be added and that we should
   // fall back to showing statusLabel, so an enum here would reject values the
   // integration is explicitly told to tolerate.
-  mspStatus                    String?
-  mspStatusLabel               String?
-  mspAssignedTo                String?
-  mspOrderNo                   Int?
-  mspDropReason                String?       @db.Text
-  mspSyncedAt                  DateTime?
+  mspStatus      String?
+  mspStatusLabel String?
+  mspAssignedTo  String?
+  mspOrderNo     Int?
+  mspDropReason  String?   @db.Text
+  mspSyncedAt    DateTime?
   // Set when they report the lead under `removed`; kept rather than nulling
   // the other fields so the history of what happened stays readable.
-  mspRemovedAt                 DateTime?
+  mspRemovedAt   DateTime?
 
-  mspSentBy                    User?         @relation("LeadMspSentBy", fields: [mspSentById], references: [id], onDelete: SetNull)
+  mspSentBy User? @relation("LeadMspSentBy", fields: [mspSentById], references: [id], onDelete: SetNull)
 
   fromAddress                  String?
   fromLatitude                 Float?
@@ -459,8 +459,8 @@ model Lead {
   customerIpAssigned           String?
   customerPassword             String?
   customerSwitchPort           String?
-  customerUserId               String?                    @unique
-  customerUsername             String?                    @unique
+  customerUserId               String?              @unique
+  customerUsername             String?              @unique
   nocAssignedToId              String?
   nocAssignedAt                DateTime?
   nocConfiguredAt              DateTime?
@@ -471,36 +471,45 @@ model Lead {
   // Cold Lead flag: true when BDM parked a lead with partial details after
   // a lukewarm meeting. Cold leads live in the Lead Pipeline tab and are
   // excluded from the Opportunity Pipeline until the BDM completes them.
-  isColdLead                   Boolean                    @default(false)
+  isColdLead                   Boolean              @default(false)
   // Origin of the lead — set once at creation, never inferred. Used by the
   // Customer 360 journey tab to show the correct lead source and opening
   // events. Replaces the old inference block that couldn't distinguish
   // "Add Lead" from "Create Opportunity" (both set isSelfGenerated=true).
-  creationSource               LeadCreationSource         @default(UNKNOWN)
+  creationSource               LeadCreationSource   @default(UNKNOWN)
   // SAM-dispatch attribution — populated only when creationSource = SAM_DISPATCH.
   // samLeadId is SAM's UUID, used as the idempotency key on POST /api/integrations
   // /sam/leads so duplicate clicks return the original row instead of creating two.
   // The createdBy fields are denormalised from SAM's payload because we don't
   // have a User record for the SAM operator on this side — they're informational.
-  samLeadId                    String?                    @unique
+  samLeadId                    String?              @unique
   samCreatedById               String?
   samCreatedByName             String?
   samCreatedByEmail            String?
   samCreatedAt                 DateTime?
   // Simplified feasibility review fields (vendor setup moved to delivery)
+  // Service zone and city, chosen by the feasibility team from the admin-
+  // managed Zone/City lists. Structured on purpose: CampaignData.city is a
+  // free-text box that produced 215 spellings of ~20 real values, and SAM
+  // needs the zone as its "circle". Nullable because leads that predate this
+  // are backfilled through /dashboard/zone-city rather than being blocked.
+  zoneId                       String?
+  zone                         Zone?                @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  cityId                       String?
+  city                         City?                @relation(fields: [cityId], references: [id], onDelete: SetNull)
   feasibilityVendorType        String? // ownNetwork | fiberVendor | commissionVendor | thirdParty | telco
   tentativeCapex               Float? // Feasibility team's CAPEX estimate
   tentativeOpex                Float? // Feasibility team's OPEX estimate
   actualCapex                  Float? // Delivery team's final CAPEX from materials
   actualOpex                   Float? // Delivery team's final OPEX from vendor setup
   feasibilityDescription       String? // Free-text notes from FT review
-  deliveryVendorSetupDone      Boolean                    @default(false) // Must be true before material request
+  deliveryVendorSetupDone      Boolean              @default(false) // Must be true before material request
   // Delivery team must review PO + IIL Protocol Sheet before proceeding to
   // vendor setup. Set once via acknowledge-docs endpoint; vendor-setup
   // controller refuses to run until this is non-null.
   deliveryDocsReviewedAt       DateTime?
   deliveryDocsReviewedById     String?
-  circuitId                    String?                    @unique
+  circuitId                    String?              @unique
   customerIpAddresses          Json?
   nocPushedToDeliveryAt        DateTime?
   nocPushedToDeliveryById      String?
@@ -521,7 +530,7 @@ model Lead {
   demoPlanAssignedById         String?
   demoPlanBandwidth            Int?
   demoPlanDataLimit            Int?
-  demoPlanIsActive             Boolean                    @default(false)
+  demoPlanIsActive             Boolean              @default(false)
   demoPlanName                 String?
   demoPlanNotes                String?
   demoPlanUploadBandwidth      Int?
@@ -531,7 +540,7 @@ model Lead {
   actualPlanCreatedById        String?
   actualPlanDataLimit          Int?
   actualPlanEndDate            DateTime?
-  actualPlanIsActive           Boolean                    @default(false)
+  actualPlanIsActive           Boolean              @default(false)
   actualPlanName               String?
   actualPlanNotes              String?
   actualPlanPrice              Float?
@@ -539,41 +548,41 @@ model Lead {
   actualPlanUploadBandwidth    Int?
   actualPlanValidityDays       Int?
   actualPlanBillingType        String?
-  actualPlanBillingCycle       BillingCycle?              @default(MONTHLY)
+  actualPlanBillingCycle       BillingCycle?        @default(MONTHLY)
   demoPlanBillingType          String?
   demoPlanEndDate              DateTime?
   demoPlanStartDate            DateTime?
   demoPlanPrice                Float?
-  deliveryRequests             DeliveryRequest[]          @relation("DeliveryRequestLead")
-  materialReturns              MaterialReturn[]           @relation("MaterialReturns")
+  deliveryRequests             DeliveryRequest[]    @relation("DeliveryRequestLead")
+  materialReturns              MaterialReturn[]     @relation("MaterialReturns")
   uploadLinks                  DocumentUploadLink[]
-  invoices                     Invoice[]                  @relation("LeadInvoices")
-  bodRequests                  BandwidthOnDemand[]        @relation("LeadBodRequests")
-  ledgerEntries                LedgerEntry[]              @relation("CustomerLedger")
-  advancePayments              AdvancePayment[]           @relation("AdvancePayments")
-  accountsVerifiedBy           User?                      @relation("AccountsVerifiedBy", fields: [accountsVerifiedById], references: [id], onDelete: SetNull)
-  gstVerifiedBy                User?                      @relation("GstVerifiedBy", fields: [gstVerifiedById], references: [id], onDelete: SetNull)
-  actualPlanCreatedBy          User?                      @relation("ActualPlanCreatedBy", fields: [actualPlanCreatedById], references: [id], onDelete: SetNull)
-  assignedTo                   User?                      @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
-  campaignData                 CampaignData               @relation(fields: [campaignDataId], references: [id], onDelete: Cascade)
-  createdBy                    User                       @relation("CreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  customerAcceptanceBy         User?                      @relation("CustomerAcceptanceBy", fields: [customerAcceptanceById], references: [id], onDelete: SetNull)
-  customerCreatedBy            User?                      @relation("CustomerCreatedBy", fields: [customerCreatedById], references: [id], onDelete: SetNull)
-  deliveryAssignedTo           User?                      @relation("DeliveryAssignedTo", fields: [deliveryAssignedToId], references: [id], onDelete: SetNull)
-  demoPlanAssignedBy           User?                      @relation("DemoPlanAssignedBy", fields: [demoPlanAssignedById], references: [id], onDelete: SetNull)
-  feasibilityAssignedTo        User?                      @relation("FeasibilityAssignedTo", fields: [feasibilityAssignedToId], references: [id], onDelete: SetNull)
-  nocAssignedTo                User?                      @relation("NocAssignedTo", fields: [nocAssignedToId], references: [id], onDelete: SetNull)
-  nocConfiguredBy              User?                      @relation("NocConfiguredBy", fields: [nocConfiguredById], references: [id], onDelete: SetNull)
-  nocPushedToDeliveryBy        User?                      @relation("NocPushedToDelivery", fields: [nocPushedToDeliveryById], references: [id], onDelete: SetNull)
-  opsApprovedBy                User?                      @relation("OpsApprovedBy", fields: [opsApprovedById], references: [id], onDelete: SetNull)
-  superAdmin2ApprovedBy        User?                      @relation("SuperAdmin2ApprovedBy", fields: [superAdmin2ApprovedById], references: [id], onDelete: SetNull)
-  quotationRevisedBy           User?                      @relation("LeadQuotationRevisedBy", fields: [quotationRevisedById], references: [id], onDelete: SetNull)
-  pushedToInstallationBy       User?                      @relation("PushedToInstallation", fields: [pushedToInstallationById], references: [id], onDelete: SetNull)
-  speedTestUploadedBy          User?                      @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
-  installationStartedBy        User?                      @relation("LeadInstallStarted", fields: [installationStartedById], references: [id], onDelete: SetNull)
-  installationCompletedBy      User?                      @relation("LeadInstallCompleted", fields: [installationCompletedById], references: [id], onDelete: SetNull)
-  deliveryDocsReviewedBy       User?                      @relation("LeadDeliveryDocsReviewed", fields: [deliveryDocsReviewedById], references: [id], onDelete: SetNull)
-  cancelledBy                  User?                      @relation("LeadCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  invoices                     Invoice[]            @relation("LeadInvoices")
+  bodRequests                  BandwidthOnDemand[]  @relation("LeadBodRequests")
+  ledgerEntries                LedgerEntry[]        @relation("CustomerLedger")
+  advancePayments              AdvancePayment[]     @relation("AdvancePayments")
+  accountsVerifiedBy           User?                @relation("AccountsVerifiedBy", fields: [accountsVerifiedById], references: [id], onDelete: SetNull)
+  gstVerifiedBy                User?                @relation("GstVerifiedBy", fields: [gstVerifiedById], references: [id], onDelete: SetNull)
+  actualPlanCreatedBy          User?                @relation("ActualPlanCreatedBy", fields: [actualPlanCreatedById], references: [id], onDelete: SetNull)
+  assignedTo                   User?                @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  campaignData                 CampaignData         @relation(fields: [campaignDataId], references: [id], onDelete: Cascade)
+  createdBy                    User                 @relation("CreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  customerAcceptanceBy         User?                @relation("CustomerAcceptanceBy", fields: [customerAcceptanceById], references: [id], onDelete: SetNull)
+  customerCreatedBy            User?                @relation("CustomerCreatedBy", fields: [customerCreatedById], references: [id], onDelete: SetNull)
+  deliveryAssignedTo           User?                @relation("DeliveryAssignedTo", fields: [deliveryAssignedToId], references: [id], onDelete: SetNull)
+  demoPlanAssignedBy           User?                @relation("DemoPlanAssignedBy", fields: [demoPlanAssignedById], references: [id], onDelete: SetNull)
+  feasibilityAssignedTo        User?                @relation("FeasibilityAssignedTo", fields: [feasibilityAssignedToId], references: [id], onDelete: SetNull)
+  nocAssignedTo                User?                @relation("NocAssignedTo", fields: [nocAssignedToId], references: [id], onDelete: SetNull)
+  nocConfiguredBy              User?                @relation("NocConfiguredBy", fields: [nocConfiguredById], references: [id], onDelete: SetNull)
+  nocPushedToDeliveryBy        User?                @relation("NocPushedToDelivery", fields: [nocPushedToDeliveryById], references: [id], onDelete: SetNull)
+  opsApprovedBy                User?                @relation("OpsApprovedBy", fields: [opsApprovedById], references: [id], onDelete: SetNull)
+  superAdmin2ApprovedBy        User?                @relation("SuperAdmin2ApprovedBy", fields: [superAdmin2ApprovedById], references: [id], onDelete: SetNull)
+  quotationRevisedBy           User?                @relation("LeadQuotationRevisedBy", fields: [quotationRevisedById], references: [id], onDelete: SetNull)
+  pushedToInstallationBy       User?                @relation("PushedToInstallation", fields: [pushedToInstallationById], references: [id], onDelete: SetNull)
+  speedTestUploadedBy          User?                @relation("SpeedTestUploadedBy", fields: [speedTestUploadedById], references: [id], onDelete: SetNull)
+  installationStartedBy        User?                @relation("LeadInstallStarted", fields: [installationStartedById], references: [id], onDelete: SetNull)
+  installationCompletedBy      User?                @relation("LeadInstallCompleted", fields: [installationCompletedById], references: [id], onDelete: SetNull)
+  deliveryDocsReviewedBy       User?                @relation("LeadDeliveryDocsReviewed", fields: [deliveryDocsReviewedById], references: [id], onDelete: SetNull)
+  cancelledBy                  User?                @relation("LeadCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
   products                     LeadProduct[]
   moms                         MOM[]
 
@@ -625,6 +634,8 @@ model Lead {
   @@index([type, status])
   @@index([actualPlanIsActive, customerCreatedAt])
   @@index([customerGstNo])
+  @@index([zoneId])
+  @@index([cityId])
   @@index([superAdmin2ApprovalStatus, status])
   @@index([isColdLead, assignedToId])
   @@index([creationSource])
@@ -964,7 +975,7 @@ model StorePurchaseOrderItem {
 // Bulk items (fiber, mtrs) carry no serial, so their origin lead can't be
 // verified — deferred.
 model MaterialReturn {
-  id                    String                 @id @default(uuid())
+  id                    String                  @id @default(uuid())
   serialNumber          String
   productId             String
   // Lead the material was recovered from.
@@ -975,24 +986,24 @@ model MaterialReturn {
   condition             MaterialReturnCondition
   // Admin gate. The store records the recovery; stock only moves once this is
   // APPROVED, so nothing unapproved becomes assignable.
-  status                MaterialReturnStatus   @default(PENDING_APPROVAL)
+  status                MaterialReturnStatus    @default(PENDING_APPROVAL)
   // Why it came back. Required at the API layer — it's the point of this page.
   remark                String
   // Where the stock actually landed. Null until approved (nothing has moved).
   targetPOItemId        String?
   returnedById          String
-  returnedAt            DateTime               @default(now())
+  returnedAt            DateTime                @default(now())
   reviewedById          String?
   reviewedAt            DateTime?
   rejectionReason       String?
-  createdAt             DateTime               @default(now())
+  createdAt             DateTime                @default(now())
 
-  product               StoreProduct           @relation("MaterialReturnProduct", fields: [productId], references: [id])
-  lead                  Lead                   @relation("MaterialReturns", fields: [leadId], references: [id], onDelete: Cascade)
-  deliveryRequestItem   DeliveryRequestItem?   @relation("MaterialReturnDeliveryItem", fields: [deliveryRequestItemId], references: [id])
-  targetPOItem          StorePurchaseOrderItem? @relation("MaterialReturnTargetPOItem", fields: [targetPOItemId], references: [id])
-  returnedBy            User                   @relation("MaterialReturnedBy", fields: [returnedById], references: [id])
-  reviewedBy            User?                  @relation("MaterialReturnReviewedBy", fields: [reviewedById], references: [id])
+  product             StoreProduct            @relation("MaterialReturnProduct", fields: [productId], references: [id])
+  lead                Lead                    @relation("MaterialReturns", fields: [leadId], references: [id], onDelete: Cascade)
+  deliveryRequestItem DeliveryRequestItem?    @relation("MaterialReturnDeliveryItem", fields: [deliveryRequestItemId], references: [id])
+  targetPOItem        StorePurchaseOrderItem? @relation("MaterialReturnTargetPOItem", fields: [targetPOItemId], references: [id])
+  returnedBy          User                    @relation("MaterialReturnedBy", fields: [returnedById], references: [id])
+  reviewedBy          User?                   @relation("MaterialReturnReviewedBy", fields: [reviewedById], references: [id])
 
   @@index([leadId])
   @@index([productId])
@@ -1590,36 +1601,36 @@ model ContactMessage {
 // Lives beside the plan: actualPlan*/arcAmount are never modified by BOD.
 enum BodStatus {
   PENDING_ACCOUNTS // raised by BDM/TL, waiting for accounts
-  SENT_BACK        // accounts returned it with a note; creator edits + resubmits
-  BILLED           // invoice generated; NOC notified to provision from startDate
-  ACTIVE           // startDate reached (set by daily job)
-  EXPIRED          // endDate passed (set by daily job); NOC notified to revert
+  SENT_BACK // accounts returned it with a note; creator edits + resubmits
+  BILLED // invoice generated; NOC notified to provision from startDate
+  ACTIVE // startDate reached (set by daily job)
+  EXPIRED // endDate passed (set by daily job); NOC notified to revert
   CANCELLED
 }
 
 model BandwidthOnDemand {
-  id                    String    @id @default(uuid())
-  bodNumber             String    @unique
-  leadId                String
-  currentPlanBandwidth  Int?      // snapshot of the plan bandwidth at request time (Mbps)
+  id                     String    @id @default(uuid())
+  bodNumber              String    @unique
+  leadId                 String
+  currentPlanBandwidth   Int? // snapshot of the plan bandwidth at request time (Mbps)
   requestedBandwidthMbps Int
-  durationDays          Int
-  startDate             DateTime
-  endDate               DateTime  // startDate + durationDays - 1
-  price                 Float     // base amount; GST added at billing
-  remarks               String?
-  accountsNote          String?   // reason when accounts sends it back
-  status                BodStatus @default(PENDING_ACCOUNTS)
-  invoiceId             String?   @unique
-  createdById           String
-  billedById            String?
-  billedAt              DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  lead                  Lead      @relation("LeadBodRequests", fields: [leadId], references: [id], onDelete: Restrict)
-  invoice               Invoice?  @relation("BodInvoice", fields: [invoiceId], references: [id])
-  createdBy             User      @relation("BodCreatedBy", fields: [createdById], references: [id])
-  billedBy              User?     @relation("BodBilledBy", fields: [billedById], references: [id])
+  durationDays           Int
+  startDate              DateTime
+  endDate                DateTime // startDate + durationDays - 1
+  price                  Float // base amount; GST added at billing
+  remarks                String?
+  accountsNote           String? // reason when accounts sends it back
+  status                 BodStatus @default(PENDING_ACCOUNTS)
+  invoiceId              String?   @unique
+  createdById            String
+  billedById             String?
+  billedAt               DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  lead                   Lead      @relation("LeadBodRequests", fields: [leadId], references: [id], onDelete: Restrict)
+  invoice                Invoice?  @relation("BodInvoice", fields: [invoiceId], references: [id])
+  createdBy              User      @relation("BodCreatedBy", fields: [createdById], references: [id])
+  billedBy               User?     @relation("BodBilledBy", fields: [billedById], references: [id])
 
   @@index([leadId, status])
   @@index([status, startDate])
@@ -1717,7 +1728,7 @@ model MspLead {
   mspStatusLabel String?
   mspAssignedTo  String?
   mspOrderNo     Int?
-  mspDropReason  String? @db.Text
+  mspDropReason  String?   @db.Text
   syncedAt       DateTime?
   removedAt      DateTime?
 
@@ -2791,8 +2802,8 @@ model LegacyCustomer {
   accountsInchargeEmail  String?
 
   // Plain-text labels (no FK linkage to other logins)
-  bdmName         String?
-  serviceManager  String?
+  bdmName          String?
+  serviceManager   String?
   samExecutiveName String?
 
   // Workflow
@@ -2817,4 +2828,41 @@ model LegacyCustomer {
   @@index([status])
   @@index([phone])
   @@index([status, createdAt])
+}
+
+// ============================================================
+// Service geography — Zone → City.
+//
+// Shaped after ComplaintCategory/ComplaintSubCategory: admin-managed,
+// soft-deleted via isActive so a zone retired today does not orphan the
+// leads already pointing at it. The feasibility team picks from these; the
+// zone name is what SAM stores as `circle`.
+// ============================================================
+
+model Zone {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  cities    City[]
+  leads     Lead[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model City {
+  id        String   @id @default(uuid())
+  zoneId    String
+  zone      Zone     @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  name      String
+  isActive  Boolean  @default(true)
+  leads     Lead[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Unique per zone, not globally: "Kolhapur" is both a zone and one of its
+  // cities, and two zones may legitimately share a city name.
+  @@unique([zoneId, name])
+  @@index([zoneId, isActive])
 }

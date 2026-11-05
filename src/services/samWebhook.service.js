@@ -89,6 +89,8 @@ const LEAD_PAYLOAD_SELECT = {
   billingAddress: true,
   customerIpAddresses: true,
   customerIpAssigned: true,
+  zone: { select: { name: true } },
+  city: { select: { name: true } },
   campaignData: {
     select: {
       company: true,
@@ -172,15 +174,17 @@ export function buildPayload(lead) {
         lead.fullAddress,
         lead.billingAddress
       ),
-      city: firstNonEmpty(cd.city),
+      // The feasibility-picked city wins; the BDM's typed one is the fallback
+      // so leads that predate the structured geography do not regress to
+      // blank while the backfill works through them.
+      city: firstNonEmpty(lead.city?.name, cd.city),
       gstNumber: firstNonEmpty(lead.customerGstNo),
       industryType: firstNonEmpty(cd.industry),
       ipDetails: formatIpDetails(lead),
-      // Network zone — SAM calls it "circle". There is no zone field on the
-      // CRM Lead yet; the whole path is wired so that adding `zone` to the
-      // schema and to LEAD_PAYLOAD_SELECT above is all it takes to start
-      // populating it. Until then this sends null, which SAM leaves alone.
-      circle: firstNonEmpty(lead.zone),
+      // Network zone — SAM calls it "circle". Chosen by the feasibility team
+      // from the admin-managed zone list; null on leads still waiting to be
+      // backfilled, which SAM leaves alone rather than blanking.
+      circle: firstNonEmpty(lead.zone?.name),
     },
   };
 }

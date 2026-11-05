@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/db.js';
+import { checkZoneCity } from '../utils/zoneCity.js';
 import { assertProductsAllowed } from '../utils/productVisibility.js';
 import { notifyLeadConverted, notifyFeasibilityAssigned, notifyFeasibilityReturned, notifyFeasibilityApproved, notifyVendorDocsReminder, notifyAllAdmins, createNotification } from '../services/notification.service.js';
 import { randomUUID } from 'crypto';
@@ -3071,6 +3072,10 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
       popLocation,
       popLatitude,
       popLongitude,
+      // Service geography — required to mark a lead FEASIBLE so new leads
+      // never reach SAM without a zone again.
+      zoneId,
+      cityId,
       // Legacy fields — still accepted for backward compatibility but no longer required
       vendorInfo,
       vendorId,
@@ -3090,6 +3095,15 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
     const effectiveVendorType = vendorType || vendorInfo?.vendorType;
     if (decision === 'FEASIBLE' && !effectiveVendorType) {
       return res.status(400).json({ message: 'Vendor type is required when marking as feasible.' });
+    }
+
+    // Zone and city are mandatory on the way through, validated as a pair.
+    // NOT_FEASIBLE skips this: a lead being rejected does not need geography,
+    // and demanding it would just block the rejection.
+    if (decision === 'FEASIBLE') {
+      const city = cityId ? await prisma.city.findUnique({ where: { id: cityId } }) : null;
+      const check = checkZoneCity(zoneId, cityId, city);
+      if (!check.ok) return res.status(400).json({ message: check.message });
     }
 
     const lead = await prisma.lead.findUnique({
@@ -3121,6 +3135,8 @@ export const feasibilityDisposition = asyncHandler(async function feasibilityDis
 
     if (decision === 'FEASIBLE') {
       updateData.status = 'FEASIBLE';
+      updateData.zoneId = zoneId;
+      updateData.cityId = cityId;
       // Store the simplified feasibility data
       updateData.feasibilityVendorType = effectiveVendorType;
       if (tentativeCapex !== undefined && tentativeCapex !== null && tentativeCapex !== '') {

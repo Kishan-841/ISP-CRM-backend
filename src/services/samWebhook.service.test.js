@@ -109,13 +109,25 @@ test('no IPs at all sends null', () => {
   assert.equal(c.ipDetails, null);
 });
 
-test('zone sends null until the CRM grows the field', () => {
-  // The path is wired end to end; only the source field is missing.
+test('a lead with no zone sends null, so SAM leaves its value alone', () => {
   assert.equal(customer().circle, null);
 });
 
-test('zone flows the moment a lead carries one', () => {
-  assert.equal(customer({ zone: 'Mundhwa' }).circle, 'Mundhwa');
+test('zone flows from the feasibility-picked zone', () => {
+  assert.equal(customer({ zone: { name: 'Pune' } }).circle, 'Pune');
+});
+
+test('the structured city beats the free-text one', () => {
+  // Feasibility picks from a managed list; the BDM types whatever. Once a
+  // lead has been backfilled, the clean value is what SAM should hold.
+  const c = customer({ city: { name: 'Pune- Chakan' } });
+  assert.equal(c.city, 'Pune- Chakan');
+});
+
+test('an un-backfilled lead keeps the typed city rather than going blank', () => {
+  // The whole point of a fallback: shipping this must not take a city away
+  // from the leads that already had one.
+  assert.equal(customer({ city: null }).city, 'Pune');
 });
 
 test('a lead with no campaign data does not throw', () => {

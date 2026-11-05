@@ -1,4 +1,8 @@
 import express from 'express';
+import {
+  getZoneCityQueue,
+  setLeadZoneCity,
+} from '../controllers/leadZoneCity.controller.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { BDM_LIKE_ROLES } from '../utils/bdmRoles.js';
 import { uploadToCloudinary, uploadTypedDocument } from '../config/cloudinary.js';
@@ -287,6 +291,12 @@ router.get('/feasibility-team/history', getFeasibilityReviewHistory);
 
 // Feasibility Team disposition (Feasible / Not Feasible)
 router.post('/feasibility-team/:id/disposition', feasibilityDisposition);
+
+// Zone/city backfill for leads that predate structured geography.
+// Safe alongside the '/:id/...' routes above: none of them has 'queue' as
+// its second segment, so Express cannot read 'zone-city' as a lead id here.
+router.get('/zone-city/queue', getZoneCityQueue);
+router.patch('/:id/zone-city', setLeadZoneCity);
 
 // ========== END FEASIBILITY TEAM ROUTES ==========
 
