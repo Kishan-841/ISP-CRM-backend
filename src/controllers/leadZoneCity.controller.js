@@ -40,11 +40,14 @@ export const getZoneCityQueue = asyncHandler(async function getZoneCityQueue(req
 
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
-  const { search, scope } = req.query;
+  const { search, scope, state } = req.query;
 
-  const where = {
-    OR: [{ zoneId: null }, { cityId: null }],
-  };
+  const where = {};
+  // state=missing (the default) is the worklist: leads with nothing set yet.
+  // state=all also returns leads that already have a zone and city, so a
+  // wrong entry can be corrected — without it a mistake is unreachable the
+  // moment it is saved.
+  if (state !== 'all') where.OR = [{ zoneId: null }, { cityId: null }];
   if (scope !== 'all') where.actualPlanIsActive = true;
 
   if (search?.trim()) {
@@ -71,10 +74,13 @@ export const getZoneCityQueue = asyncHandler(async function getZoneCityQueue(req
         actualPlanIsActive: true,
         zoneId: true,
         cityId: true,
+        zone: { select: { name: true } },
+        city: { select: { name: true } },
         installationAddress: true,
         campaignData: { select: { company: true, name: true, city: true } },
       },
-      orderBy: [{ actualPlanIsActive: 'desc' }, { createdAt: 'desc' }],
+      // Unfilled first, then live customers — the work worth doing, in order.
+      orderBy: [{ zoneId: 'asc' }, { actualPlanIsActive: 'desc' }, { createdAt: 'desc' }],
       take: limit,
       skip: (page - 1) * limit,
     }),
@@ -95,6 +101,8 @@ export const getZoneCityQueue = asyncHandler(async function getZoneCityQueue(req
       isLiveCustomer: l.actualPlanIsActive,
       zoneId: l.zoneId,
       cityId: l.cityId,
+      zoneName: l.zone?.name || null,
+      cityName: l.city?.name || null,
     })),
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   });
